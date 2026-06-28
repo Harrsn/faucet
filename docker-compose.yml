@@ -1,0 +1,69 @@
+# Cascade — one-command self-hosted media pipeline.
+#
+#   1. cp .env.example .env   &&   edit the few required values
+#   2. docker compose up -d
+#   3. open http://localhost:8088
+#
+# This bundles Cascade with Jackett (indexers) and Transmission (download client)
+# so you get a working stack out of the box. Already running your own Jackett or
+# a different client? Delete that service and point the env vars at yours.
+
+services:
+  cascade:
+    image: ghcr.io/harrsn/cascade:latest
+    # To build locally instead of pulling: comment image, uncomment build.
+    # build: .
+    container_name: cascade
+    restart: unless-stopped
+    ports:
+      - "8088:8088"
+    env_file: .env
+    environment:
+      # talk to the bundled services by their compose hostnames
+      JACKETT_URL: http://jackett:9117
+      DOWNLOAD_CLIENT: transmission
+      CLIENT_URL: http://transmission:9091/transmission/rpc
+      DOWNLOAD_DIR: /downloads
+      LIBRARY_ROOT: /library
+      DISK_PATH: /downloads
+      EVENTS_FILE: /config/events.jsonl
+    volumes:
+      - ./config:/config
+      - ${LIBRARY_PATH:-./library}:/library
+      - ${DOWNLOADS_PATH:-./downloads}:/downloads
+    depends_on:
+      - jackett
+      - transmission
+
+  jackett:
+    image: lscr.io/linuxserver/jackett:latest
+    container_name: cascade-jackett
+    restart: unless-stopped
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      TZ: ${TZ:-Etc/UTC}
+    volumes:
+      - ./config/jackett:/config
+    ports:
+      - "9117:9117"        # expose so you can add indexers in its UI
+
+  transmission:
+    image: lscr.io/linuxserver/transmission:latest
+    container_name: cascade-transmission
+    restart: unless-stopped
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      TZ: ${TZ:-Etc/UTC}
+      USER: ${CLIENT_USER:-cascade}
+      PASS: ${CLIENT_PASS:-cascade}
+    volumes:
+      - ./config/transmission:/config
+      - ${DOWNLOADS_PATH:-./downloads}:/downloads
+      - ${LIBRARY_PATH:-./library}:/library
+    ports:
+      - "9091:9091"
+
+# Named volumes aren't used so everything is visible under ./config, ./downloads,
+# ./library next to this file — easy to back up, easy to inspect.
