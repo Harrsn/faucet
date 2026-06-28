@@ -1,0 +1,269 @@
+#!/usr/bin/env python3
+"""
+mediasort.py — parse, rename, and file movie/TV releases into a Plex/Jellyfin tree.
+
+Modes:
+  Manual:  mediasort.py /path/to/file_or_dir [more paths...]
+  Hook:    invoked by transmission-daemon with TR_TORRENT_DIR / TR_TORRENT_NAME
+           in the environment (no args needed).
+
+Behavior:
+  Movies -> <MEDIA_ROOT>/movies/<Title> (<Year>)/<Title> (<Year>).<ext>
+  TV     -> <MEDIA_ROOT>/tvshows/<Show>/Season NN/<Show> - SNNENN.<ext>
+
+  - Operates on video files above MIN_SIZE_MB (skips samples/junk).
+  - Pulls along same-basename subtitle sidecars (.srt/.ass/.sub).
+  - HARDLINKs by default (instant, keeps seeding intact, no double disk use).
+    Falls back to copy across filesystems. Set MODE="move" to move instead.
+  - Dry-run with --dry-run or DRY_RUN=1.
+  - Idempotent: skips if destination already exists with same size.
+
+Requires: pip install guessit
+"""
+
+import os
+import sys
+import shutil
+import logging
+import argparse
+from pathlib import Path
+
+try:
+    from guessit import guessit
+except ImportError:
+    sys.stderr.write("guessit not installed. Run: pip3 install guessit\n")
+    sys.exit(2)
+
+# ----------------------------------------------------------------------------
+# Config
+# ----------------------------------------------------------------------------
+MEDIA_ROOT = Path(os.environ.get("LIBRARY_ROOT", os.environ.get("MEDIA_ROOT", "/library")))
+MOVIES_DIR = MEDIA_ROOT / "movies"
+TV_DIR = MEDIA_ROOT / "tvshows"
+
+MODE = os.environ.get("MEDIASORT_MODE", "hardlink")  # hardlink | copy | move
+MIN_SIZE_MB = int(os.environ.get("MEDIASORT_MIN_MB", "50"))
+LOG_FILE = os.environ.get("MEDIASORT_LOG", "/var/log/mediasort.log")
+
+VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".m4v", ".mov", ".wmv", ".ts", ".m2ts"}
+SUB_EXTS = {".srt", ".ass", ".ssa", ".sub", ".idx", ".vtt"}
+
+# Characters illegal on most filesystems (incl. CIFS/Windows-backed shares).
+ILLEGAL = '<>:"/\\|?*'
+
+
+# ----------------------------------------------------------------------------
+# Helpers
+# ----------------------------------------------------------------------------
+def setup_logging():
+    handlers = [logging.StreamHandler(sys.stdout)]
+    try:
+        handlers.append(logging.FileHandler(LOG_FILE))
+    except (PermissionError, FileNotFoundError):
+        pass  # no log file access (e.g. running unprivileged) — stdout only
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        handlers=handlers,
+    )
+
+
+def sanitize(name: str) -> str:
+    """Strip filesystem-illegal chars; collapse whitespace; trim trailing dots."""
+    cleaned = "".join(c for c in name if c not in ILLEGAL)
+    cleaned = " ".join(cleaned.split())
+    return cleaned.rstrip(". ")
+
+
+def iter_video_files(root: Path):
+    """Yield video files under root above the size threshold."""
+    if root.is_file():
+        candidates = [root]
+    else:
+        candidates = [p for p in root.rglob("*") if p.is_file()]
+    for p in candidates:
+        if p.suffix.lower() not in VIDEO_EXTS:
+            continue
+        if p.stat().st_size < MIN_SIZE_MB * 1024 * 1024:
+            logging.info("SKIP (under %dMB): %s", MIN_SIZE_MB, p.name)
+            continue
+        yield p
+
+
+def find_sidecars(video: Path):
+    """Find subtitle files sharing the video's basename stem in the same dir."""
+    stem = video.stem
+    for p in video.parent.iterdir():
+        if (
+            p.is_file()
+            and p.suffix.lower() in SUB_EXTS
+            and p.stem.startswith(stem)
+        ):
+            yield p
+
+
+def best_parse_source(video: Path):
+    """
+    Build the best string to feed guessit. Release metadata (show, season,
+    episode, proper casing) lives in the *release folder*, not always the inner
+    file — which may be generic ('info.mkv') or buried under junk subdirs like
+    'info/', 'sample/', 'subs/'. Walk up the ancestry, skip junk and generic
+    dirs, and prepend the first ancestor that actually parses as media so the
+    inner filename can't drag the result to a bogus title.
+    """
+    # Dirs that never carry useful release info.
+    JUNK = {"downloads", "incomplete", "complete", "info", "sample", "samples",
+            "subs", "subtitles", "extras", "featurettes", "proof", "screens"}
+
+    candidates = []
+    for anc in video.parents:
+        name = anc.name
+        if not name or name.lower() in JUNK:
+            continue
+        # Looks like a release name if it has separators and some length.
+        if any(c in name for c in ".-_ ") and len(name) >= 6:
+            candidates.append(name)
+        # Don't climb past the download root once we have something.
+        if len(candidates) >= 2:
+            break
+
+    # Prefer the richest candidate: the one guessit can pull a season/episode
+    # or year from. Fall back to the longest, then to the bare filename.
+    best = None
+    for c in candidates:
+        g = guessit(c)
+        if g.get("type") == "episode" and g.get("season") is not None \
+                and g.get("episode") is not None:
+            best = c
+            break
+        if g.get("type") == "movie" and g.get("year"):
+            best = best or c
+    if best is None and candidates:
+        best = max(candidates, key=len)
+
+    return f"{best}/{video.name}" if best else video.name
+
+
+def plan_destination(video: Path):
+    """Return (dest_dir, dest_basename) or None if unparseable."""
+    info = guessit(best_parse_source(video))
+    vtype = info.get("type")
+    ext = video.suffix.lower()
+
+    if vtype == "movie":
+        title = info.get("title")
+        if not title:
+            return None
+        year = info.get("year")
+        folder = sanitize(f"{title} ({year})" if year else title)
+        base = folder
+        return MOVIES_DIR / folder, base + ext
+
+    if vtype == "episode":
+        show = info.get("title")
+        season = info.get("season")
+        episode = info.get("episode")
+        if show is None or season is None or episode is None:
+            return None
+        # guessit can return a list for multi-episode files
+        if isinstance(episode, list):
+            ep_tag = "".join(f"E{e:02d}" for e in episode)
+        else:
+            ep_tag = f"E{int(episode):02d}"
+        show_s = sanitize(show)
+        dest_dir = TV_DIR / show_s / f"Season {int(season):02d}"
+        base = sanitize(f"{show_s} - S{int(season):02d}{ep_tag}")
+        return dest_dir, base + ext
+
+    return None
+
+
+def place(src: Path, dest: Path, dry: bool):
+    """Hardlink/copy/move src to dest per MODE. Idempotent on equal size."""
+    if dest.exists() and dest.stat().st_size == src.stat().st_size:
+        logging.info("EXISTS (same size), skipping: %s", dest)
+        return
+    if dry:
+        logging.info("DRY-RUN %s -> %s", src, dest)
+        return
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    if MODE == "move":
+        shutil.move(str(src), str(dest))
+        logging.info("MOVED %s -> %s", src.name, dest)
+        return
+
+    if MODE == "hardlink":
+        try:
+            if dest.exists():
+                dest.unlink()
+            os.link(src, dest)
+            logging.info("LINKED %s -> %s", src.name, dest)
+            return
+        except OSError:
+            # cross-device (very likely: local download dir -> CIFS NAS) -> copy
+            logging.info("hardlink failed (cross-fs), copying instead")
+
+    shutil.copy2(src, dest)
+    logging.info("COPIED %s -> %s", src.name, dest)
+
+
+# ----------------------------------------------------------------------------
+# Main
+# ----------------------------------------------------------------------------
+def resolve_inputs(args):
+    """CLI paths if given, else Transmission hook env vars."""
+    if args.paths:
+        return [Path(p) for p in args.paths]
+    cp = os.environ.get("CASCADE_PATH")
+    if cp:
+        return [Path(cp)]
+    td = os.environ.get("TR_TORRENT_DIR")
+    tn = os.environ.get("TR_TORRENT_NAME")
+    if td and tn:
+        return [Path(td) / tn]
+    return []
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Sort media into Plex/Jellyfin tree.")
+    ap.add_argument("paths", nargs="*", help="File(s) or dir(s) to process.")
+    ap.add_argument("--dry-run", action="store_true", help="Show actions only.")
+    args = ap.parse_args()
+
+    setup_logging()
+    dry = args.dry_run or os.environ.get("DRY_RUN") == "1"
+
+    inputs = resolve_inputs(args)
+    if not inputs:
+        logging.error("No input paths (no args and no TR_TORRENT_* env). Exiting.")
+        sys.exit(1)
+
+    if not MEDIA_ROOT.exists():
+        logging.error("MEDIA_ROOT %s not present — is the NAS mounted?", MEDIA_ROOT)
+        sys.exit(1)
+
+    processed = 0
+    for root in inputs:
+        if not root.exists():
+            logging.warning("Input not found: %s", root)
+            continue
+        for video in iter_video_files(root):
+            plan = plan_destination(video)
+            if not plan:
+                logging.warning("UNPARSEABLE, skipping: %s", video.name)
+                continue
+            dest_dir, dest_name = plan
+            dest = dest_dir / dest_name
+            place(video, dest, dry)
+            for sub in find_sidecars(video):
+                place(sub, dest_dir / (dest.stem + sub.suffix), dry)
+            processed += 1
+
+    logging.info("Done. %d video file(s) handled (mode=%s, dry=%s).",
+                 processed, MODE, dry)
+
+
+if __name__ == "__main__":
+    main()
