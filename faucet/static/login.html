@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Faucet — Sign in</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --line:#21262d; --line-hi:#30363d;
+    --txt:#e6edf3; --muted:#8b949e; --accent:#2f81f7; --good:#3fb950; --bad:#f85149;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:var(--mono);
+    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;}
+  .card{width:380px;max-width:100%;background:var(--panel);border:1px solid var(--line);
+    border-radius:14px;padding:30px 28px;box-shadow:0 20px 60px rgba(0,0,0,.5);}
+  .brand{display:flex;align-items:center;gap:10px;justify-content:center;margin-bottom:6px;}
+  .brand img{width:42px;height:42px;}
+  .brand h1{font-size:24px;margin:0;letter-spacing:.5px;}
+  .sub{text-align:center;color:var(--muted);font-size:12px;margin-bottom:22px;}
+  .tabs{display:flex;gap:6px;margin-bottom:18px;}
+  .tab{flex:1;text-align:center;padding:8px;border-radius:7px;cursor:pointer;font-size:13px;
+    color:var(--muted);border:1px solid transparent;}
+  .tab.on{background:var(--accent);color:#fff;}
+  label{display:block;font-size:12px;color:var(--muted);margin:12px 0 5px;}
+  input{width:100%;background:var(--bg);color:var(--txt);border:1px solid var(--line-hi);
+    border-radius:7px;padding:11px 12px;font-family:var(--mono);font-size:14px;}
+  input:focus{outline:2px solid var(--accent);outline-offset:-1px;}
+  button.go{width:100%;margin-top:18px;background:var(--accent);border:none;color:#fff;
+    border-radius:8px;padding:12px;font-family:var(--mono);font-size:14px;font-weight:600;cursor:pointer;}
+  button.go:hover{filter:brightness(1.08);} button.go:disabled{opacity:.5;cursor:default;}
+  .msg{margin-top:14px;padding:10px 12px;border-radius:7px;font-size:13px;display:none;}
+  .msg.err{display:block;background:rgba(248,81,73,.12);color:var(--bad);border:1px solid rgba(248,81,73,.3);}
+  .msg.ok{display:block;background:rgba(63,185,80,.12);color:var(--good);border:1px solid rgba(63,185,80,.3);}
+  .hint{font-size:11px;color:var(--muted);margin-top:14px;text-align:center;line-height:1.5;}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="brand"><img src="/static/favicon.svg" alt=""><h1>Faucet</h1></div>
+  <div class="sub" id="sub">Sign in to continue</div>
+
+  <div class="tabs" id="tabs">
+    <div class="tab on" data-mode="login">Sign in</div>
+    <div class="tab" data-mode="register">Register</div>
+  </div>
+
+  <div id="form">
+    <label id="lblUser">Username</label>
+    <input type="text" id="username" autocomplete="username" autofocus>
+    <div id="emailRow" style="display:none">
+      <label>Email <span style="opacity:.6">(optional)</span></label>
+      <input type="email" id="email" autocomplete="email">
+    </div>
+    <label id="lblPass">Password</label>
+    <input type="password" id="password" autocomplete="current-password">
+    <button class="go" id="submit">Sign in</button>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <div class="hint" id="hint"></div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+let mode="login", setupNeeded=false, resetToken=null;
+
+// reset mode if ?token= present
+const params=new URLSearchParams(location.search);
+if(location.pathname==="/reset" && params.get("token")){ mode="reset"; resetToken=params.get("token"); }
+if(location.pathname==="/register"){ mode="register"; }
+
+function setMsg(text,kind){const m=$("msg");m.textContent=text;m.className="msg "+(kind||"");}
+function render(){
+  document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on",t.dataset.mode===mode));
+  $("emailRow").style.display = mode==="register" ? "block" : "none";
+  $("tabs").style.display = mode==="reset" ? "none" : "flex";
+  if(mode==="login"){ $("sub").textContent="Sign in to continue"; $("submit").textContent="Sign in"; $("lblUser").style.display=""; $("username").style.display=""; $("lblPass").textContent="Password"; }
+  if(mode==="register"){ $("sub").textContent="Create an account"; $("submit").textContent="Register"; $("lblUser").style.display=""; $("username").style.display=""; $("lblPass").textContent="Password"; }
+  if(mode==="reset"){ $("sub").textContent="Set a new password"; $("submit").textContent="Set password"; $("lblUser").style.display="none"; $("username").style.display="none"; $("lblPass").textContent="New password"; }
+  setMsg("","");
+  $("hint").innerHTML = setupNeeded
+    ? "No accounts yet — the first account you create becomes the <b>admin</b>."
+    : (mode==="register" ? "New accounts require admin approval before sign-in." : "");
+}
+document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>{mode=t.dataset.mode;render();}));
+
+async function check(){
+  try{ const d=await (await fetch("/api/auth/me")).json();
+    if(d.authenticated){ location.href="/"; return; }
+    setupNeeded=!!d.setup_needed;
+    if(setupNeeded){ mode="register"; }
+  }catch(_){}
+  render();
+}
+
+async function submit(){
+  const btn=$("submit"); btn.disabled=true;
+  const u=$("username").value.trim(), p=$("password").value;
+  try{
+    if(mode==="login"){
+      const r=await fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u,password:p})});
+      const d=await r.json(); if(!r.ok) throw new Error(d.detail||"Login failed");
+      location.href="/";
+    } else if(mode==="register"){
+      const r=await fetch("/api/auth/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u,password:p,email:$("email").value.trim()||null})});
+      const d=await r.json(); if(!r.ok) throw new Error(d.detail||"Registration failed");
+      if(d.admin_created){ setMsg("Admin account created. Signing you in…","ok");
+        const lr=await fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u,password:p})});
+        if(lr.ok){ location.href="/"; return; } mode="login"; render(); setMsg("Account created — please sign in.","ok");
+      } else { mode="login"; render(); setMsg(d.message||"Account created and awaiting approval.","ok"); }
+    } else if(mode==="reset"){
+      const r=await fetch("/api/auth/reset/consume",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token:resetToken,new_password:p})});
+      const d=await r.json(); if(!r.ok) throw new Error(d.detail||"Reset failed");
+      mode="login"; render(); setMsg("Password set — please sign in.","ok");
+    }
+  }catch(err){ setMsg(err.message,"err"); }
+  finally{ btn.disabled=false; }
+}
+$("submit").addEventListener("click",submit);
+$("password").addEventListener("keydown",e=>{if(e.key==="Enter")submit();});
+$("username").addEventListener("keydown",e=>{if(e.key==="Enter")submit();});
+check();
+</script>
+</body>
+</html>
