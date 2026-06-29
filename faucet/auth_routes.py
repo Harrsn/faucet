@@ -100,6 +100,74 @@ class ResetConsumeIn(BaseModel):
     new_password: str
 
 
+class RequestIn(BaseModel):
+    media_type: str
+    tmdb_id: int
+    title: str
+    year: int | None = None
+    poster: str | None = None
+
+
+# ── request / approval flow ─────────────────────────────────────────────────
+
+@router.post("/api/requests")
+def create_request_ep(body: RequestIn, request: Request,
+                      user: dict = Depends(require_user)):
+    verify_csrf(request)
+    from . import requests_flow
+    return requests_flow.create_request(
+        user, body.media_type, body.tmdb_id, body.title, body.year, body.poster)
+
+
+@router.get("/api/requests")
+def list_requests_ep(request: Request, scope: str = "auto",
+                     user: dict = Depends(require_user)):
+    from . import requests_flow
+    return {"requests": requests_flow.list_requests(user, scope)}
+
+
+@router.get("/api/requests/pending_count")
+def pending_count_ep(admin: dict = Depends(require_admin)):
+    from . import requests_flow
+    return {"pending": requests_flow.pending_count()}
+
+
+@router.post("/api/requests/{req_id}/approve")
+def approve_request_ep(req_id: int, request: Request,
+                       admin: dict = Depends(require_admin)):
+    verify_csrf(request)
+    from . import requests_flow
+    return requests_flow.approve_request(req_id, decider=admin)
+
+
+@router.post("/api/requests/{req_id}/decline")
+def decline_request_ep(req_id: int, request: Request,
+                       admin: dict = Depends(require_admin)):
+    verify_csrf(request)
+    from . import requests_flow
+    return requests_flow.decline_request(req_id, decider=admin)
+
+
+@router.delete("/api/requests/{req_id}")
+def delete_request_ep(req_id: int, request: Request,
+                      admin: dict = Depends(require_admin)):
+    verify_csrf(request)
+    from . import requests_flow
+    requests_flow.delete_request(req_id)
+    return {"status": "ok"}
+
+
+@router.post("/api/admin/users/{uid}/autoapprove")
+def admin_set_autoapprove(uid: int, request: Request, enabled: int,
+                          admin: dict = Depends(require_admin)):
+    verify_csrf(request)
+    from . import db as _db
+    with _db.connect() as c:
+        c.execute("UPDATE users SET can_autoapprove=? WHERE id=?",
+                  (1 if enabled else 0, uid))
+    return {"status": "ok"}
+
+
 # ── public auth endpoints ───────────────────────────────────────────────────
 
 @router.get("/api/auth/me")

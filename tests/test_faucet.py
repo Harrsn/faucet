@@ -669,3 +669,73 @@ def test_auth_lockout(tmp_path, monkeypatch):
         auth.authenticate("admin1", "wrong")
     _, err = auth.authenticate("admin1", "supersecret123")
     assert "locked" in err.lower()
+
+
+def test_request_flow_lifecycle(tmp_path, monkeypatch):
+    """User requests -> pending -> admin approves -> monitored; trusted users
+    auto-approve; duplicates are blocked."""
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "events.jsonl"))
+    monkeypatch.setenv("SESSION_SECRET", "test")
+    import importlib
+    from faucet import config as cfgmod
+    importlib.reload(cfgmod)
+    from faucet import db
+    importlib.reload(db)
+    db.init()
+    from faucet import auth
+    importlib.reload(auth)
+    from faucet import series as smod
+    importlib.reload(smod)
+    smod.add_series = lambda *a, **k: 999
+    smod.reconcile = lambda sid: None
+    from faucet import requests_flow
+    importlib.reload(requests_flow)
+
+    aid, _ = auth.create_user("admin", "adminpass123")
+    admin = auth.get_user(aid)
+    bid, _ = auth.create_user("bob", "bobpass1234")
+    auth.set_status(bid, "active")
+    bob = auth.get_user(bid)
+
+    r = requests_flow.create_request(bob, "tv", 1396, "Breaking Bad", 2008)
+    assert r["status"] == "pending"
+    a = requests_flow.approve_request(r["request_id"], decider=admin)
+    assert a["status"] == "approved" and a.get("series_id") == 999
+    assert requests_flow.list_requests(admin)[0]["status"] == "approved"
+
+    with db.connect() as c:
+        c.execute("UPDATE users SET can_autoapprove=1 WHERE id=?", (bid,))
+    bob = auth.get_user(bid)
+    r2 = requests_flow.create_request(bob, "tv", 1100, "Some Show", 2020)
+    assert r2["status"] == "auto_approved"
+
+    r3 = requests_flow.create_request(bob, "tv", 1396, "Breaking Bad", 2008)
+    assert r3["status"] in ("already_requested", "already_available")
+
+
+def test_request_gating(tmp_path, monkeypatch):
+    """Regular users can browse library + TMDb but not indexer search/torrents."""
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "events.jsonl"))
+    monkeypatch.setenv("SESSION_SECRET", "test")
+    monkeypatch.setenv("JACKETT_API_KEY", "k")
+    import importlib
+    for m in ["config", "db", "auth", "requests_flow", "auth_routes", "app"]:
+        importlib.reload(importlib.import_module("faucet." + m))
+    from faucet import db, app as appmod
+    db.init()
+    from fastapi.testclient import TestClient
+    admin = TestClient(appmod.app, follow_redirects=False)
+    admin.post("/api/auth/register", json={"username": "admin", "password": "adminpass123"})
+    admin.post("/api/auth/login", json={"username": "admin", "password": "adminpass123"})
+    acsrf = admin.cookies.get("faucet_csrf")
+    admin.post("/api/admin/users",
+               json={"username": "bob", "password": "bobpass1234", "role": "user", "status": "active"},
+               headers={"X-CSRF-Token": acsrf})
+    bob = TestClient(appmod.app, follow_redirects=False)
+    bob.post("/api/auth/login", json={"username": "bob", "password": "bobpass1234"})
+    bcsrf = bob.cookies.get("faucet_csrf")
+    assert bob.get("/api/series").status_code == 200          # browse library
+    assert bob.get("/api/search?q=x").status_code == 403       # indexer blocked
+    assert bob.get("/api/transfers").status_code == 403        # torrents blocked
+    assert bob.post("/api/add", json={}, headers={"X-CSRF-Token": bcsrf}).status_code == 403
+    assert bob.post("/api/series", json={}, headers={"X-CSRF-Token": bcsrf}).status_code == 403
