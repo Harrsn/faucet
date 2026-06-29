@@ -244,6 +244,7 @@
     <div class="page-head">
       <h1>Shows</h1><span class="count" id="showsCount"></span>
       <div class="ph-actions">
+        <button class="btn ghost" id="showsImport">import library</button>
         <button class="btn ghost" id="showsScan">scan + hunt</button>
         <button class="btn" id="showsAdd">+ add show</button>
       </div>
@@ -442,6 +443,15 @@ function renderShows(){
 }
 $("showsAdd").addEventListener("click",()=>addMediaForm("show"));
 $("showsScan").addEventListener("click",()=>scanHunt("show"));
+$("showsImport").addEventListener("click",async()=>{
+  if(!confirm("Scan your library folders and auto-monitor every show and movie found? This matches each against TMDb and may take a minute for a large library."))return;
+  $("showsImport").disabled=true;$("showsImport").textContent="importing…";
+  try{const r=await jsend("/api/library/import","POST");
+    if(r.error){toast(r.error,"err");}
+    else{toast(`Imported ${r.shows_imported} shows, ${r.movies_imported} movies (${(r.unmatched||[]).length} unmatched).`);loadShows();}
+  }catch(_){toast("Import failed","err");}
+  finally{$("showsImport").disabled=false;$("showsImport").textContent="import library";}
+});
 
 // ============ movies ============
 let moviesData=[];

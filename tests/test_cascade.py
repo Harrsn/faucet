@@ -437,3 +437,36 @@ def test_movie_monitor_and_reconcile(tmp_path, monkeypatch):
     assert M.get_movie(m1)["status"] == "have"
     assert M.get_movie(m2)["status"] == "wanted"
     assert M.reconcile_all() == {"have": 1, "wanted": 1}
+
+
+def test_library_auto_import(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "events.jsonl"))
+    tv = tmp_path / "lib" / "tvshows" / "The Office" / "Season 01"
+    tv.mkdir(parents=True)
+    (tv / "The Office - S01E01.mkv").write_bytes(b"x" * (60 * 1024 * 1024))
+    monkeypatch.setenv("LIBRARY_ROOT", str(tmp_path / "lib"))
+    import importlib
+    from cascade import config as cfgmod
+    importlib.reload(cfgmod)
+    from cascade import db
+    importlib.reload(db)
+    db.init()
+    db.set_setting("tmdb_key", "k")
+    from cascade import library as L
+    importlib.reload(L)
+    from cascade import tmdb as T
+    importlib.reload(T)
+    T.enabled = lambda: True
+    T.search = lambda q, kind="multi": [{"tmdb_id": 1, "media_type": "tv",
+        "title": "The Office", "year": "2005", "poster": None, "search_query": "The Office"}]
+    T.details = lambda tid, mt: {"seasons": 1, "title": "x"}
+    T.episodes = lambda tid, n: []
+    from cascade import series as S
+    importlib.reload(S)
+    from cascade import movies as M
+    importlib.reload(M)
+    from cascade import importer as I
+    importlib.reload(I)
+    r = I.import_library()
+    assert r["shows_imported"] == 1
+    assert any(s["title"] == "The Office" for s in S.list_series())

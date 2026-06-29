@@ -587,6 +587,14 @@ def api_series_wanted(sid: int):
     return {"wanted": [w for w in series_mod.list_wanted() if w.get("series_id") == sid]}
 
 
+@app.post("/api/library/import")
+def api_library_import(profile_id: int | None = Query(None)):
+    """Auto-discover shows + movies on disk and monitor them (Sonarr-style
+    library import). Requires a TMDb key."""
+    from . import importer
+    return importer.import_library(profile_id)
+
+
 @app.post("/api/library/scan")
 def api_library_scan():
     from . import library
