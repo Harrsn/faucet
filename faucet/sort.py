@@ -35,7 +35,7 @@ except ImportError:
     sys.exit(2)
 
 try:
-    from cascade.classify import classify, dest_folder
+    from faucet.classify import classify, dest_folder
 except Exception:                                # noqa: BLE001 - sorter can run standalone
     classify = None
     dest_folder = None
@@ -230,7 +230,7 @@ def resolve_inputs(args):
     """CLI paths if given, else Transmission hook env vars."""
     if args.paths:
         return [Path(p) for p in args.paths]
-    cp = os.environ.get("CASCADE_PATH")
+    cp = os.environ.get("FAUCET_PATH") or os.environ.get("CASCADE_PATH")
     if cp:
         return [Path(cp)]
     td = os.environ.get("TR_TORRENT_DIR")

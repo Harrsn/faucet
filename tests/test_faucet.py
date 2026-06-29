@@ -6,9 +6,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pytest
-from cascade import search
-from cascade.clients import make_client, DownloadClientError
-from cascade.clients.base import Transfer, TransferFile, AddResult
+from faucet import search
+from faucet.clients import make_client, DownloadClientError
+from faucet.clients.base import Transfer, TransferFile, AddResult
 
 
 # ---------------- search / badges ----------------
@@ -48,7 +48,7 @@ def test_factory_unknown():
 
 # ---------------- transmission parsing (no network) ----------------
 def test_transmission_transfer_mapping(monkeypatch):
-    from cascade.clients.transmission import TransmissionClient
+    from faucet.clients.transmission import TransmissionClient
     c = TransmissionClient("http://x")
     monkeypatch.setattr(c, "_rpc", lambda m, a: {"torrents": [
         {"id": 1, "name": "T", "percentDone": 0.5, "rateDownload": 1000,
@@ -69,7 +69,7 @@ def test_transmission_done_flag():
 @pytest.fixture
 def client_app(monkeypatch):
     os.environ["JACKETT_API_KEY"] = "test"
-    from cascade import app as appmod
+    from faucet import app as appmod
 
     class Mock:
         name = "transmission"
@@ -133,9 +133,9 @@ def test_api_config(client_app):
 def test_db_settings_and_history(tmp_path, monkeypatch):
     monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "events.jsonl"))
     import importlib
-    from cascade import config as cfgmod
+    from faucet import config as cfgmod
     importlib.reload(cfgmod)
-    from cascade import db
+    from faucet import db
     importlib.reload(db)
     db.init()
     db.set_setting("k", {"a": 1})
@@ -149,9 +149,9 @@ def test_db_settings_and_history(tmp_path, monkeypatch):
 def test_db_default_profile(tmp_path, monkeypatch):
     monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "events.jsonl"))
     import importlib
-    from cascade import config as cfgmod
+    from faucet import config as cfgmod
     importlib.reload(cfgmod)
-    from cascade import db
+    from faucet import db
     importlib.reload(db)
     db.init()
     with db.connect() as c:
@@ -164,12 +164,12 @@ def test_tmdb_disabled_without_key(tmp_path, monkeypatch):
     monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "events.jsonl"))
     monkeypatch.delenv("TMDB_API_KEY", raising=False)
     import importlib
-    from cascade import config as cfgmod
+    from faucet import config as cfgmod
     importlib.reload(cfgmod)
-    from cascade import db
+    from faucet import db
     importlib.reload(db)
     db.init()
-    from cascade import tmdb
+    from faucet import tmdb
     importlib.reload(tmdb)
     assert not tmdb.enabled()
     assert tmdb.search("dune") == []
@@ -178,12 +178,12 @@ def test_tmdb_disabled_without_key(tmp_path, monkeypatch):
 def test_tmdb_parse_and_cache(tmp_path, monkeypatch):
     monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "events.jsonl"))
     import importlib
-    from cascade import config as cfgmod
+    from faucet import config as cfgmod
     importlib.reload(cfgmod)
-    from cascade import db
+    from faucet import db
     importlib.reload(db)
     db.init()
-    from cascade import tmdb
+    from faucet import tmdb
     importlib.reload(tmdb)
     db.set_setting("tmdb_key", "k")
     tmdb._get = lambda path, params: {"results": [
@@ -202,7 +202,7 @@ def test_config_save_reload(tmp_path, monkeypatch):
     for k in ("JACKETT_API_KEY", "CLIENT_URL", "DOWNLOAD_CLIENT", "UI_ACCENT"):
         monkeypatch.delenv(k, raising=False)
     import importlib
-    from cascade import config as cfgmod
+    from faucet import config as cfgmod
     importlib.reload(cfgmod)
     assert not cfgmod.config.configured()
     cfgmod.save({"JACKETT_API_KEY": "k", "CLIENT_URL": "http://c",
@@ -215,7 +215,7 @@ def test_config_save_reload(tmp_path, monkeypatch):
 def test_config_save_whitelist(tmp_path, monkeypatch):
     monkeypatch.setenv("CASCADE_CONFIG_FILE", str(tmp_path / "cascade.env"))
     import importlib
-    from cascade import config as cfgmod
+    from faucet import config as cfgmod
     importlib.reload(cfgmod)
     cfgmod.save({"EVIL": "x", "JACKETT_INDEXER": "1337x"})
     body = (tmp_path / "cascade.env").read_text()
@@ -225,33 +225,33 @@ def test_config_save_whitelist(tmp_path, monkeypatch):
 
 # ---------------- content classification ----------------
 def test_classify_game_by_platform():
-    from cascade.classify import classify, dest_folder
+    from faucet.classify import classify, dest_folder
     r = classify("Lego Harry Potter Years 1-4 PS3", 1000)
     assert r["type"] == "game" and r["platform"] == "PS3"
     assert dest_folder("game") == "games"
 
 
 def test_classify_movie_and_tv_by_category():
-    from cascade.classify import classify
+    from faucet.classify import classify
     assert classify("Dune 2024 1080p BluRay", 2000)["type"] == "movie"
     assert classify("The Office S03E07", 5000)["type"] == "tv"
 
 
 def test_classify_game_by_scene_group_no_category():
-    from cascade.classify import classify
+    from faucet.classify import classify
     r = classify("Cyberpunk 2077 v2.1 REPACK FitGirl", None)
     assert r["type"] == "game"
 
 
 def test_classify_switch_and_console():
-    from cascade.classify import classify
+    from faucet.classify import classify
     assert classify("Super Mario Odyssey NSW", None)["platform"] == "Nintendo Switch"
     assert classify("Elden Ring PS5", None)["type"] == "game"
 
 
 # ---------------- quality profiles ----------------
 def test_profile_passes_and_score():
-    from cascade import profiles as p
+    from faucet import profiles as p
     GB = 1024 ** 3
     prof = {"min_seeders": 3, "resolutions": ["1080p", "720p"],
             "sources": ["WEB-DL", "BluRay"], "max_size_gb": 8, "min_size_gb": 0}
@@ -264,7 +264,7 @@ def test_profile_passes_and_score():
 
 
 def test_profile_ranking_prefers_better():
-    from cascade import profiles as p
+    from faucet import profiles as p
     GB = 1024 ** 3
     prof = {"min_seeders": 0, "resolutions": ["1080p", "720p"],
             "sources": ["WEB-DL", "BluRay"], "max_size_gb": 0}
@@ -288,9 +288,9 @@ def test_profile_api_crud(client_app):
 def test_subscription_crud(tmp_path, monkeypatch):
     monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "events.jsonl"))
     import importlib
-    from cascade import config as cfgmod
+    from faucet import config as cfgmod
     importlib.reload(cfgmod)
-    from cascade import db
+    from faucet import db
     importlib.reload(db)
     db.init()
     sid = db.create_subscription("Show", "show s01", "tv", 1)
@@ -305,9 +305,9 @@ def test_subscription_crud(tmp_path, monkeypatch):
 def test_grabbed_dedupe(tmp_path, monkeypatch):
     monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "events.jsonl"))
     import importlib
-    from cascade import config as cfgmod
+    from faucet import config as cfgmod
     importlib.reload(cfgmod)
-    from cascade import db
+    from faucet import db
     importlib.reload(db)
     db.init()
     assert db.mark_grabbed("Release.X.1080p") is True
@@ -319,12 +319,12 @@ def test_scheduler_grabs_and_dedupes(tmp_path, monkeypatch):
     monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "events.jsonl"))
     monkeypatch.setenv("JACKETT_API_KEY", "k")
     import importlib
-    from cascade import config as cfgmod
+    from faucet import config as cfgmod
     importlib.reload(cfgmod)
-    from cascade import db
+    from faucet import db
     importlib.reload(db)
     db.init()
-    from cascade import scheduler as sch
+    from faucet import scheduler as sch
     importlib.reload(sch)
     GB = 1024 ** 3
     db.create_subscription("Show", "show s01", "tv", 1)
@@ -358,12 +358,12 @@ def test_library_scan_and_have(tmp_path, monkeypatch):
     monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "events.jsonl"))
     monkeypatch.setenv("LIBRARY_ROOT", str(_fake_library(tmp_path)))
     import importlib
-    from cascade import config as cfgmod
+    from faucet import config as cfgmod
     importlib.reload(cfgmod)
-    from cascade import db
+    from faucet import db
     importlib.reload(db)
     db.init()
-    from cascade import library as L
+    from faucet import library as L
     importlib.reload(L)
     s = L.scan()
     assert s["episodes"] == 2
@@ -377,22 +377,22 @@ def test_reconcile_missing_and_upgrade(tmp_path, monkeypatch):
     monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "events.jsonl"))
     monkeypatch.setenv("LIBRARY_ROOT", str(_fake_library(tmp_path)))
     import importlib, json
-    from cascade import config as cfgmod
+    from faucet import config as cfgmod
     importlib.reload(cfgmod)
-    from cascade import db
+    from faucet import db
     importlib.reload(db)
     db.init()
-    from cascade import library as L
+    from faucet import library as L
     importlib.reload(L)
     L.scan()
-    from cascade import tmdb as T
+    from faucet import tmdb as T
     importlib.reload(T)
     T.details = lambda tid, mt: {"seasons": 1, "title": "Test Show"}
     T.episodes = lambda tid, n: [
         {"season": 1, "episode": 1, "title": "P", "air_date": "2020-01-01"},
         {"season": 1, "episode": 2, "title": "T", "air_date": "2020-01-08"},
         {"season": 1, "episode": 3, "title": "Th", "air_date": "2020-01-15"}]
-    from cascade import series as S
+    from faucet import series as S
     importlib.reload(S)
     with db.connect() as c:
         c.execute("INSERT INTO profiles (name,min_seeders,resolutions,sources,max_size_gb) "
@@ -406,7 +406,7 @@ def test_reconcile_missing_and_upgrade(tmp_path, monkeypatch):
 
 
 def test_title_normalization():
-    from cascade.library import normalize_title as nt
+    from faucet.library import normalize_title as nt
     # real-world mismatches that must collapse to the same key
     assert nt("Bobs Burgers") == nt("Bob's Burgers")
     assert nt("American Dad") == nt("American Dad!")
@@ -422,15 +422,15 @@ def test_movie_monitor_and_reconcile(tmp_path, monkeypatch):
     (lib / "Dune (2021) 1080p.mkv").write_bytes(b"x" * (60 * 1024 * 1024))
     monkeypatch.setenv("LIBRARY_ROOT", str(tmp_path / "lib"))
     import importlib
-    from cascade import config as cfgmod
+    from faucet import config as cfgmod
     importlib.reload(cfgmod)
-    from cascade import db
+    from faucet import db
     importlib.reload(db)
     db.init()
-    from cascade import library as L
+    from faucet import library as L
     importlib.reload(L)
     L.scan()
-    from cascade import movies as M
+    from faucet import movies as M
     importlib.reload(M)
     m1 = M.add_movie(1, "Dune", 2021, None, None)
     m2 = M.add_movie(2, "Dune Part Two", 2024, None, None)
@@ -446,26 +446,26 @@ def test_library_auto_import(tmp_path, monkeypatch):
     (tv / "The Office - S01E01.mkv").write_bytes(b"x" * (60 * 1024 * 1024))
     monkeypatch.setenv("LIBRARY_ROOT", str(tmp_path / "lib"))
     import importlib
-    from cascade import config as cfgmod
+    from faucet import config as cfgmod
     importlib.reload(cfgmod)
-    from cascade import db
+    from faucet import db
     importlib.reload(db)
     db.init()
     db.set_setting("tmdb_key", "k")
-    from cascade import library as L
+    from faucet import library as L
     importlib.reload(L)
-    from cascade import tmdb as T
+    from faucet import tmdb as T
     importlib.reload(T)
     T.enabled = lambda: True
     T.search = lambda q, kind="multi": [{"tmdb_id": 1, "media_type": "tv",
         "title": "The Office", "year": "2005", "poster": None, "search_query": "The Office"}]
     T.details = lambda tid, mt: {"seasons": 1, "title": "x"}
     T.episodes = lambda tid, n: []
-    from cascade import series as S
+    from faucet import series as S
     importlib.reload(S)
-    from cascade import movies as M
+    from faucet import movies as M
     importlib.reload(M)
-    from cascade import importer as I
+    from faucet import importer as I
     importlib.reload(I)
     r = I.import_library()
     assert r["shows_imported"] == 1
@@ -473,7 +473,7 @@ def test_library_auto_import(tmp_path, monkeypatch):
 
 
 def test_movie_subset_matching():
-    from cascade.movies import _movie_matches as mm
+    from faucet.movies import _movie_matches as mm
     # truncated disk folders should match full TMDb titles when years agree
     assert mm("The Chronicles of Narnia", 2005,
               "The Chronicles of Narnia: The Lion, the Witch and the Wardrobe", 2005)
@@ -490,7 +490,7 @@ def test_movie_subset_matching():
 
 
 def test_pack_classification():
-    from cascade.packs import classify_pack as cp
+    from faucet.packs import classify_pack as cp
     assert cp("American Dad S01E07 1080p")["kind"] == "single"
     assert cp("American Dad S03 1080p WEB-DL") == {"kind": "season", "season": 3}
     assert cp("American Dad Season 3 Complete 1080p") == {"kind": "season", "season": 3}
@@ -507,12 +507,12 @@ def test_scan_report(tmp_path, monkeypatch):
     (tv / "mysteryfile.mkv").write_bytes(b"x" * (60 * 1024 * 1024))  # unparsable
     monkeypatch.setenv("LIBRARY_ROOT", str(tmp_path / "lib"))
     import importlib
-    from cascade import config as cfgmod
+    from faucet import config as cfgmod
     importlib.reload(cfgmod)
-    from cascade import db
+    from faucet import db
     importlib.reload(db)
     db.init()
-    from cascade import library as L
+    from faucet import library as L
     importlib.reload(L)
     L.scan()
     rep = L.scan_report()
@@ -525,20 +525,20 @@ def test_monitor_mode_future_skips_backlog(tmp_path, monkeypatch):
     (tmp_path / "lib" / "tvshows").mkdir(parents=True)
     monkeypatch.setenv("LIBRARY_ROOT", str(tmp_path / "lib"))
     import importlib
-    from cascade import config as cfgmod
+    from faucet import config as cfgmod
     importlib.reload(cfgmod)
-    from cascade import db
+    from faucet import db
     importlib.reload(db)
     db.init()
-    from cascade import library as L
+    from faucet import library as L
     importlib.reload(L)
     L.scan()
-    from cascade import tmdb as T
+    from faucet import tmdb as T
     importlib.reload(T)
     T.details = lambda tid, mt: {"seasons": 1, "title": "Show"}
     T.episodes = lambda tid, n: [{"season": 1, "episode": e, "title": f"E{e}",
                                   "air_date": f"2020-01-0{e}"} for e in range(1, 4)]
-    from cascade import series as S
+    from faucet import series as S
     importlib.reload(S)
     sid = S.add_series(1, "Show", 2020, None, None)
     assert S.reconcile(sid)["missing"] == 3

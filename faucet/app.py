@@ -26,7 +26,7 @@ from .notify import notify
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s %(message)s")
-log = logging.getLogger("cascade")
+log = logging.getLogger("faucet")
 
 from contextlib import asynccontextmanager
 
@@ -688,6 +688,14 @@ def health():
     except Exception as e:
         status["client"] = f"error: {e}"
     return status
+
+
+@app.get("/favicon.svg")
+def favicon():
+    f = STATIC / "favicon.svg"
+    if f.exists():
+        return FileResponse(f, media_type="image/svg+xml")
+    raise HTTPException(404)
 
 
 @app.get("/")

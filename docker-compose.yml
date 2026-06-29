@@ -1,19 +1,19 @@
-# Cascade — one-command self-hosted media pipeline.
+# Faucet — one-command self-hosted media pipeline.
 #
 #   1. cp .env.example .env   &&   edit the few required values
 #   2. docker compose up -d
 #   3. open http://localhost:8088
 #
-# This bundles Cascade with Jackett (indexers) and Transmission (download client)
+# This bundles Faucet with Jackett (indexers) and Transmission (download client)
 # so you get a working stack out of the box. Already running your own Jackett or
 # a different client? Delete that service and point the env vars at yours.
 
 services:
-  cascade:
-    image: ghcr.io/harrsn/cascade:latest
+  faucet:
+    image: ghcr.io/harrsn/faucet:latest
     # To build locally instead of pulling: comment image, uncomment build.
     # build: .
-    container_name: cascade
+    container_name: faucet
     restart: unless-stopped
     ports:
       - "8088:8088"
@@ -37,7 +37,7 @@ services:
 
   jackett:
     image: lscr.io/linuxserver/jackett:latest
-    container_name: cascade-jackett
+    container_name: faucet-jackett
     restart: unless-stopped
     environment:
       PUID: ${PUID:-1000}
@@ -50,14 +50,14 @@ services:
 
   transmission:
     image: lscr.io/linuxserver/transmission:latest
-    container_name: cascade-transmission
+    container_name: faucet-transmission
     restart: unless-stopped
     environment:
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
       TZ: ${TZ:-Etc/UTC}
-      USER: ${CLIENT_USER:-cascade}
-      PASS: ${CLIENT_PASS:-cascade}
+      USER: ${CLIENT_USER:-faucet}
+      PASS: ${CLIENT_PASS:-faucet}
     volumes:
       - ./config/transmission:/config
       - ${DOWNLOADS_PATH:-./downloads}:/downloads

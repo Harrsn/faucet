@@ -15,7 +15,7 @@ from . import db
 from . import tmdb
 from . import library
 
-log = logging.getLogger("cascade.movies")
+log = logging.getLogger("faucet.movies")
 
 
 def add_movie(tmdb_id: int, title: str, year: int | None, poster: str | None,

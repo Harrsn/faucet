@@ -23,7 +23,7 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
       - name: Lint
-        run: ruff check cascade/ || true   # advisory until baseline is clean
+        run: ruff check faucet/ || true   # advisory until baseline is clean
       - name: Test
         run: pytest -q
 
@@ -52,5 +52,5 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ steps.repo.outputs.owner }}/cascade:latest
-            ghcr.io/${{ steps.repo.outputs.owner }}/cascade:${{ github.sha }}
+            ghcr.io/${{ steps.repo.outputs.owner }}/faucet:latest
+            ghcr.io/${{ steps.repo.outputs.owner }}/faucet:${{ github.sha }}

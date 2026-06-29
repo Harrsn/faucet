@@ -25,6 +25,8 @@ _initialized = False
 
 def _db_path() -> Path:
     # store next to the config/events files
+    # Keep the historical db filename so existing deployments don't lose data
+    # on the rename. New installs and old installs both use cascade.db.
     return Path(config.events_file).parent / "cascade.db"
 
 

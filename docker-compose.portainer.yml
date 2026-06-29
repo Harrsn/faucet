@@ -1,18 +1,18 @@
-# Cascade — reuse existing Jackett + Transmission, full app cutover.
+# Faucet — reuse existing Jackett + Transmission, full app cutover.
 #
 # Deploy in Portainer: Stacks → Add stack → "Repository" or "Web editor".
 # This builds the image from the cloned repo on the box (no GHCR needed).
 #
-# Assumes Jackett and Transmission are already running on this host. Cascade
+# Assumes Jackett and Transmission are already running on this host. Faucet
 # reaches them over the host network or by host IP — see CLIENT_URL/JACKETT_URL.
 
 services:
-  cascade:
+  faucet:
     build:
-      context: /opt/cascade        # where you git-cloned the repo on the box
+      context: /opt/faucet        # where you git-cloned the repo on the box
       dockerfile: Dockerfile
-    image: cascade:local
-    container_name: cascade
+    image: faucet:local
+    container_name: faucet
     restart: unless-stopped
     ports:
       - "8090:8088"                 # host 8090 -> container 8088 (old app stays on 8088)
@@ -39,9 +39,9 @@ services:
       # --- UI ---
       UI_THEME: "dark"
       UI_ACCENT: "blue"
-      APP_TITLE: "Cascade"
+      APP_TITLE: "Faucet"
     volumes:
-      - /opt/cascade-config:/config
+      - /opt/faucet-config:/config
       - /mnt/nas/media:/library
       - /var/lib/transmission-daemon/downloads:/downloads
     # If Jackett/Transmission are reachable only on localhost, the simplest fix
