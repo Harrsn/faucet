@@ -300,6 +300,14 @@ def api_setup_save(w: WizardSave):
     return {"status": "ok", "configured": cfg().configured()}
 
 
+@app.get("/api/indexers")
+def api_indexers():
+    """Configured indexers from Jackett for the settings dropdown."""
+    c = cfg()
+    items = searchmod.indexers(c.jackett_url, c.jackett_api_key, c.request_timeout)
+    return {"indexers": items}
+
+
 @app.get("/api/meta/search")
 def api_meta_search(q: str = Query(..., min_length=1), kind: str = Query("multi")):
     """TMDb title search -> poster results. Empty list if no key configured."""

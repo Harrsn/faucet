@@ -52,6 +52,29 @@ def _attr(item, name):
     return None
 
 
+def indexers(jackett_url: str, api_key: str, timeout: int = 15) -> list[dict]:
+    """List configured indexers from Jackett (its Torznab 'all' caps endpoint
+    exposes the set, but the cleaner source is the admin indexers API). Returns
+    [{id, name}] for the UI dropdown. Empty list on any failure (UI falls back
+    to a plain text field)."""
+    if not api_key:
+        return []
+    # Jackett admin API: configured indexers with their ids + names.
+    url = f"{jackett_url}/api/v2.0/indexers?configured=true&apikey={api_key}"
+    try:
+        r = requests.get(url, timeout=timeout)
+        r.raise_for_status()
+        data = r.json()
+    except (requests.RequestException, ValueError):
+        return []
+    out = []
+    for ix in data:
+        if isinstance(ix, dict) and ix.get("id"):
+            out.append({"id": ix["id"], "name": ix.get("name", ix["id"])})
+    out.sort(key=lambda x: x["name"].lower())
+    return out
+
+
 def search(jackett_url: str, api_key: str, indexer: str, query: str,
            category: str, limit: int, timeout: int = 30) -> list[dict]:
     if not api_key:

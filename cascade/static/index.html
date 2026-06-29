@@ -846,7 +846,9 @@ async function openSettings(){
     </div>
     <div class="set-group"><h3>Indexer</h3>
       <div class="set-row"><label>Jackett URL</label><input id="set_jurl" value="${esc(env.JACKETT_URL||'')}"></div>
-      <div class="set-row"><label>Indexer</label><input id="set_jidx" value="${esc(env.JACKETT_INDEXER||'all')}"></div>
+      <div class="set-row"><label>Indexer</label>
+        <select id="set_jidx"><option value="all" ${(env.JACKETT_INDEXER||'all')==='all'?'selected':''}>all (every configured indexer)</option></select>
+        <div class="hint" id="set_jidx_hint" style="margin-top:4px"></div></div>
     </div>
     <div class="set-group"><h3>Behavior</h3>
       <div class="set-row"><label>Auto-remove finished torrents</label>
@@ -861,7 +863,26 @@ async function openSettings(){
         ${['blue','green','purple','amber','rose'].map(a=>`<option ${env.UI_ACCENT===a?'selected':''}>${a}</option>`).join('')}</select></div>
     </div>`;
   $("setOverlay").classList.add("show");
+  // populate the indexer dropdown from Jackett's configured list
+  populateIndexers(env.JACKETT_INDEXER || "all");
 }
+
+async function populateIndexers(current){
+  const sel=$("set_jidx"); const hint=$("set_jidx_hint");
+  hint.textContent="loading indexers…";
+  try{
+    const r=await fetch("/api/indexers"); const d=await r.json();
+    const list=d.indexers||[];
+    // keep the "all" option, append each configured indexer
+    sel.innerHTML=`<option value="all" ${current==='all'?'selected':''}>all (every configured indexer)</option>`
+      + list.map(ix=>`<option value="${esc(ix.id)}" ${current===ix.id?'selected':''}>${esc(ix.name)}</option>`).join("");
+    hint.textContent = list.length ? `${list.length} indexer${list.length>1?'s':''} configured in Jackett`
+      : "No indexers found — add some in Jackett, or check the connection.";
+  }catch(_){
+    // fall back to a free-text option so the field is never unusable
+    sel.innerHTML=`<option value="${esc(current)}" selected>${esc(current)}</option><option value="all">all</option>`;
+    hint.textContent="Couldn't reach Jackett to list indexers; showing current value.";
+  }
 $("settingsBtn").addEventListener("click",openSettings);
 $("setClose").addEventListener("click",()=>$("setOverlay").classList.remove("show"));
 $("setOverlay").addEventListener("click",e=>{ if(e.target.id==="setOverlay") $("setOverlay").classList.remove("show"); });
