@@ -252,6 +252,13 @@
   .chip{background:var(--panel2);border:1px solid var(--line-hi);border-radius:14px;padding:4px 12px;
     font-size:12px;cursor:pointer;color:var(--muted);user-select:none;}
   .chip.on{background:var(--accent);border-color:var(--accent);color:#fff;}
+  /* toggle switch */
+  .switch{position:relative;display:inline-block;width:34px;height:18px;vertical-align:middle;}
+  .switch input{opacity:0;width:0;height:0;}
+  .switch span{position:absolute;cursor:pointer;inset:0;background:var(--line-hi);border-radius:18px;transition:.2s;}
+  .switch span:before{content:"";position:absolute;height:12px;width:12px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.2s;}
+  .switch input:checked+span{background:var(--accent);}
+  .switch input:checked+span:before{transform:translateX(16px);}
   @media (max-width:640px){td.trk,th.trk{display:none;}}
 </style>
 </head>
@@ -261,6 +268,7 @@
     <h1>cascade<span class="dot">·</span></h1>
     <span class="sub">search &amp; manage</span>
     <span class="spacer"></span>
+    <button class="activity-btn" id="subsBtn" title="Auto-grab subscriptions">📡</button>
     <button class="activity-btn" id="profilesBtn" title="Quality profiles">🎯</button>
     <button class="activity-btn" id="statsBtn" title="History &amp; stats">📊</button>
     <button class="activity-btn" id="settingsBtn" title="Settings">⚙️</button>
@@ -343,6 +351,19 @@
     <div class="modal-head"><h2>Quality profiles</h2><button class="modal-close" id="profClose">×</button></div>
     <div class="modal-body" id="profBody"></div>
     <div class="modal-foot"><button class="wiz-btn" id="profNew">+ new profile</button></div>
+  </div>
+</div>
+
+<!-- subscriptions (auto-grab) modal -->
+<div class="modal-overlay" id="subsOverlay">
+  <div class="modal">
+    <div class="modal-head"><h2>Auto-grab subscriptions</h2><button class="modal-close" id="subsClose">×</button></div>
+    <div class="modal-body" id="subsBody"></div>
+    <div class="modal-foot" style="display:flex;justify-content:space-between;align-items:center">
+      <span id="subsStatus" style="font-size:11px;color:var(--muted)"></span>
+      <span><button class="wiz-btn ghost" id="subsCheck">check now</button>
+      <button class="wiz-btn" id="subsNew">+ follow</button></span>
+    </div>
   </div>
 </div>
 
@@ -1025,6 +1046,85 @@ $("profilesBtn").addEventListener("click",openProfiles);
 $("profClose").addEventListener("click",()=>$("profOverlay").classList.remove("show"));
 $("profOverlay").addEventListener("click",e=>{ if(e.target.id==="profOverlay") $("profOverlay").classList.remove("show"); });
 $("profNew").addEventListener("click",()=>profileForm(null));
+
+/* ---------------- subscriptions (auto-grab) ---------------- */
+let subs=[], subsProfiles=[];
+async function openSubs(){
+  $("subsOverlay").classList.add("show");
+  $("subsBody").innerHTML="<div style='color:var(--muted)'>loading…</div>";
+  try{
+    [subs,subsProfiles]=await Promise.all([
+      fetch("/api/subscriptions").then(r=>r.json()).then(d=>d.subscriptions||[]),
+      fetch("/api/profiles").then(r=>r.json()).then(d=>d.profiles||[]),
+    ]);
+    renderSubs();
+    const st=await (await fetch("/api/subscriptions/status")).json();
+    const mins=Math.round((st.interval_seconds||0)/60);
+    const last=st.last_run&&st.last_run.ts?`last check ${st.last_run.ts.replace('T',' ').slice(5,16)} (${st.last_run.grabbed} grabbed)`:"no checks yet";
+    $("subsStatus").textContent=`auto-checks every ${mins} min · ${last}`;
+  }catch(_){ $("subsBody").innerHTML="<div style='color:var(--bad)'>Couldn't load subscriptions.</div>"; }
+}
+function renderSubs(){
+  if(!subs.length){ $("subsBody").innerHTML="<div style='color:var(--muted);padding:10px 0'>No subscriptions. Follow a show or search to auto-grab new releases.</div>"; return; }
+  $("subsBody").innerHTML=subs.map(s=>{
+    const prof=subsProfiles.find(p=>p.id===s.profile_id);
+    return `<div class="prof-card">
+      <div class="prof-head"><b>${esc(s.title)}</b>
+        <span class="prof-actions">
+          <label class="switch" title="enabled"><input type="checkbox" data-toggle="${s.id}" ${s.enabled?'checked':''}><span></span></label>
+          <button class="link-btn" data-sedit="${s.id}">edit</button>
+          <button class="link-btn danger" data-sdel="${s.id}">delete</button></span></div>
+      <div class="prof-meta">
+        <span class="muted">query:</span> <code>${esc(s.query)}</code>
+        <span class="muted">· ${prof?esc(prof.name):'best-seeded'}</span>
+        ${s.last_grab?`<span class="muted">· last grab ${esc((s.last_grab||'').replace('T',' ').slice(5,16))}</span>`:''}
+      </div></div>`;
+  }).join("");
+  $("subsBody").querySelectorAll("[data-sedit]").forEach(b=>b.addEventListener("click",()=>subForm(subs.find(s=>s.id===+b.dataset.sedit))));
+  $("subsBody").querySelectorAll("[data-sdel]").forEach(b=>b.addEventListener("click",()=>delSub(+b.dataset.sdel)));
+  $("subsBody").querySelectorAll("[data-toggle]").forEach(b=>b.addEventListener("change",()=>toggleSub(+b.dataset.toggle,b.checked)));
+}
+function subForm(s){
+  s=s||{title:"",query:"",media_type:"tv",profile_id:null,enabled:true};
+  const opts=`<option value="">best-seeded (no profile)</option>`+subsProfiles.map(p=>`<option value="${p.id}" ${s.profile_id===p.id?'selected':''}>${esc(p.name)}</option>`).join("");
+  $("subsBody").innerHTML=`
+    <div class="set-row"><label>Name</label><input id="sf_title" value="${esc(s.title)}" placeholder="e.g. The Office"></div>
+    <div class="set-row"><label>Search query (what to look for each check)</label><input id="sf_query" value="${esc(s.query)}" placeholder="e.g. the office s03"></div>
+    <div class="set-row"><label>Quality profile</label><select id="sf_profile">${opts}</select></div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="wiz-btn" id="sf_save">${s.id?'save':'create'}</button>
+      <button class="wiz-btn ghost" id="sf_cancel">cancel</button></div>
+    <div class="hint" style="margin-top:10px">Cascade searches this query on a timer and grabs the best new release matching your profile. Already-grabbed releases are skipped automatically.</div>`;
+  $("sf_cancel").addEventListener("click",renderSubs);
+  $("sf_save").addEventListener("click",async()=>{
+    const body={title:$("sf_title").value.trim(),query:$("sf_query").value.trim(),
+      media_type:"tv",profile_id:$("sf_profile").value?+$("sf_profile").value:null,enabled:true};
+    if(!body.title){ toast("Name required","err"); return; }
+    if(!body.query) body.query=body.title;
+    const url=s.id?`/api/subscriptions/${s.id}`:"/api/subscriptions";
+    try{ await fetch(url,{method:s.id?"PUT":"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+      toast("Subscription saved."); await openSubs();
+    }catch(_){ toast("Save failed","err"); }
+  });
+}
+async function delSub(id){ try{ await fetch(`/api/subscriptions/${id}`,{method:"DELETE"}); toast("Deleted."); await openSubs(); }catch(_){ toast("Delete failed","err"); } }
+async function toggleSub(id,on){
+  const s=subs.find(x=>x.id===id); if(!s) return;
+  try{ await fetch(`/api/subscriptions/${id}`,{method:"PUT",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({title:s.title,query:s.query,media_type:s.media_type,profile_id:s.profile_id,enabled:on})}); }
+  catch(_){ toast("Toggle failed","err"); }
+}
+$("subsBtn").addEventListener("click",openSubs);
+$("subsClose").addEventListener("click",()=>$("subsOverlay").classList.remove("show"));
+$("subsOverlay").addEventListener("click",e=>{ if(e.target.id==="subsOverlay") $("subsOverlay").classList.remove("show"); });
+$("subsNew").addEventListener("click",()=>subForm(null));
+$("subsCheck").addEventListener("click",async()=>{
+  $("subsCheck").disabled=true; $("subsCheck").textContent="checking…";
+  try{ const r=await (await fetch("/api/subscriptions/check",{method:"POST"})).json();
+    toast(`Checked ${r.checked} · grabbed ${r.grabbed}.`); await openSubs();
+  }catch(_){ toast("Check failed","err"); }
+  finally{ $("subsCheck").disabled=false; $("subsCheck").textContent="check now"; }
+});
 
 async function refreshMeta(){
   try{ const r=await fetch("/api/meta/search?q=test"); const d=await r.json(); metaEnabled=!!d.enabled; }
