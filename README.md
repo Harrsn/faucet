@@ -1,6 +1,8 @@
 <div align="center">
 
-# 💧 Faucet
+<img src="docs/logo.svg" alt="Faucet logo" width="90">
+
+# Faucet
 
 **A complete self-hosted media manager — search, grab, sort, and track your shows and movies — in one lightweight app.**
 
