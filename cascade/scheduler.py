@@ -109,15 +109,39 @@ def check_subscription(sub: dict) -> dict:
 
 
 def hunt_wanted() -> dict:
-    """Search for and grab wanted episodes (missing + upgrades). Builds an
-    episode-specific query per wanted item, ranks by the series' profile, and
-    grabs the best. Reuses the same grab+dedupe path as subscriptions."""
+    """Search for and grab wanted items (missing + upgrades), respecting two
+    caps so an unattended run can't flood the client:
+      MAX_ACTIVE  — don't grab if this many torrents are already downloading
+      MAX_PER_RUN — grab at most this many per cycle
+    Remaining wants stay 'wanted' and get picked up on the next tick."""
     from . import series as series_mod
     db.init()
+
+    max_active = int(os.environ.get("HUNT_MAX_ACTIVE", "5"))
+    max_per_run = int(os.environ.get("HUNT_MAX_PER_RUN", "3"))
+
+    # how many torrents are already downloading right now?
+    active = 0
+    try:
+        client0 = make_client(config.client_kind, config.client_url,
+                             config.client_user, config.client_pass, config.request_timeout)
+        active = sum(1 for t in client0.list_transfers()
+                     if getattr(t, "status", "") == "downloading")
+    except Exception:                            # noqa: BLE001
+        active = 0
+
     wanted = series_mod.list_wanted("wanted")
     grabbed = 0
     details = []
+    if active >= max_active:
+        log.info("Hunt skipped: %d already downloading (cap %d).", active, max_active)
+        return {"wanted": len(wanted), "grabbed": 0, "details": [],
+                "skipped_reason": f"{active} active >= cap {max_active}"}
+
+    budget = min(max_per_run, max_active - active)
     for w in wanted:
+        if grabbed >= budget:
+            break
         kind = w.get("kind", "episode")
         if kind == "movie":
             query = w.get("title") or ""
