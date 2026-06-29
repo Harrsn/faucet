@@ -58,6 +58,63 @@ try:
 except Exception as e:                       # noqa: BLE001 - never block startup
     log.warning("DB init failed: %s", e)
 
+# ── authentication wiring ──
+from fastapi import Request as _Request
+from fastapi.responses import JSONResponse as _JSONResponse
+from . import auth as _auth
+from . import auth_routes as _auth_routes
+
+app.include_router(_auth_routes.router)
+
+# Paths reachable without a session. Everything else requires login. This is
+# fail-closed: any new route is protected by default unless added here.
+_PUBLIC_PREFIXES = ("/static/", "/favicon", "/login", "/register", "/reset",
+                    "/api/auth/", "/health")
+
+
+def _is_public(path: str) -> bool:
+    if path in ("/login", "/register", "/reset"):
+        return True
+    return any(path.startswith(p) for p in _PUBLIC_PREFIXES)
+
+
+@app.middleware("http")
+async def _auth_gate(request: _Request, call_next):
+    path = request.url.path
+    # Before any user exists, allow through so the first-run admin setup works.
+    try:
+        no_users = _auth.user_count() == 0
+    except Exception:                            # noqa: BLE001
+        no_users = False
+    if no_users or _is_public(path):
+        return await call_next(request)
+    user = _auth.session_user(request.cookies.get(_auth.SESSION_COOKIE))
+    if not user:
+        # API calls get 401 JSON; page loads redirect to the login screen.
+        if path.startswith("/api/"):
+            return _JSONResponse({"detail": "Authentication required."}, status_code=401)
+        from fastapi.responses import RedirectResponse as _Redirect
+        return _Redirect(url="/login", status_code=302)
+    # admin-only: management endpoints
+    if _admin_only(path) and user.get("role") != "admin":
+        if path.startswith("/api/"):
+            return _JSONResponse({"detail": "Admin access required."}, status_code=403)
+        from fastapi.responses import RedirectResponse as _Redirect
+        return _Redirect(url="/", status_code=302)
+    request.state.user = user
+    return await call_next(request)
+
+
+# Management surfaces are admin-only. Regular users get search/activity/(requests).
+_ADMIN_PREFIXES = (
+    "/api/series", "/api/movies", "/api/profiles", "/api/subscriptions",
+    "/api/library", "/api/settings", "/api/torrent", "/api/admin",
+)
+
+
+def _admin_only(path: str) -> bool:
+    return any(path.startswith(p) for p in _ADMIN_PREFIXES)
+
 
 def cfg():
     """Always return the live (possibly hot-reloaded) config object."""
@@ -695,6 +752,30 @@ def favicon():
     f = STATIC / "favicon.svg"
     if f.exists():
         return FileResponse(f, media_type="image/svg+xml")
+    raise HTTPException(404)
+
+
+@app.get("/login")
+def login_page():
+    f = STATIC / "login.html"
+    if f.exists():
+        return FileResponse(f)
+    raise HTTPException(404, "Login page not installed.")
+
+
+@app.get("/register")
+def register_page():
+    f = STATIC / "login.html"  # same page, register tab
+    if f.exists():
+        return FileResponse(f)
+    raise HTTPException(404)
+
+
+@app.get("/reset")
+def reset_page():
+    f = STATIC / "login.html"
+    if f.exists():
+        return FileResponse(f)
     raise HTTPException(404)
 
 

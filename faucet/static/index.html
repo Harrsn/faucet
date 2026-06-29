@@ -122,6 +122,12 @@
   .link-btn{background:none;border:none;color:var(--accent);cursor:pointer;font-family:var(--mono);font-size:12px;padding:0;}
   .link-btn.danger{color:var(--bad);}
   .pill{font-size:10px;padding:1px 7px;border-radius:10px;border:1px solid var(--line-hi);}
+  .tbl{border-collapse:collapse;font-size:13px;}
+  .tbl th{text-align:left;color:var(--muted);font-weight:normal;padding:6px 10px;border-bottom:1px solid var(--line);}
+  .tbl td{padding:7px 10px;border-bottom:1px solid var(--line);}
+  .lnk{color:var(--accent);cursor:pointer;margin-left:10px;font-size:12px;}
+  .lnk:hover{text-decoration:underline;}
+  .lnk.danger{color:var(--bad);}
   .pill.want{background:rgba(210,153,34,.15);color:var(--warn);border-color:rgba(210,153,34,.3);}
   .pill.have{background:rgba(63,185,80,.15);color:var(--good);border-color:rgba(63,185,80,.3);}
 
@@ -216,6 +222,8 @@
   <span class="navspacer"></span>
   <button class="navbtn" id="activityBtn">Activity <span class="badge zero" id="activeCount">0</span></button>
   <button class="navbtn" id="settingsBtn">Settings</button>
+  <button class="navbtn" id="usersBtn" style="display:none">Users</button>
+  <button class="navbtn" id="accountBtn">Account</button>
 </nav>
 
 <div class="wrap">
@@ -365,8 +373,9 @@ const $=id=>document.getElementById(id);
 function toast(msg,kind){const t=$("toast");t.textContent=msg;t.className="toast show"+(kind==="err"?" err":"");setTimeout(()=>t.className="toast",2600);}
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));}
 function human(n){if(!n)return"0 B";const u=["B","KB","MB","GB","TB"];let i=0,v=n;while(v>=1024&&i<u.length-1){v/=1024;i++;}return v.toFixed(v<10&&i>0?1:0)+" "+u[i];}
+function csrfToken(){const m=document.cookie.match(/(?:^|;\s*)faucet_csrf=([^;]+)/);return m?decodeURIComponent(m[1]):"";}
 async function jget(u){const r=await fetch(u);if(!r.ok)throw new Error(r.status);return r.json();}
-async function jsend(u,m,b){const r=await fetch(u,{method:m,headers:{"Content-Type":"application/json"},body:b?JSON.stringify(b):undefined});if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||r.status);return r.json();}
+async function jsend(u,m,b){const r=await fetch(u,{method:m,headers:{"Content-Type":"application/json","X-CSRF-Token":csrfToken()},body:b?JSON.stringify(b):undefined});if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||r.status);return r.json();}
 
 // ============ navigation ============
 const PAGES=["search","shows","movies","subs","profiles"];
@@ -810,6 +819,80 @@ async function openScanReport(){
   }catch(_){$("modalBody").innerHTML="<div class='empty'>Couldn't load report.</div>";}
 }
 
+// ============ auth: account menu + admin users ============
+let ME=null;
+async function loadMe(){
+  try{ const d=await jget("/api/auth/me");
+    if(d.authenticated){ ME=d.user;
+      if(ME.role==="admin") $("usersBtn").style.display="";
+    }
+  }catch(_){}
+}
+$("accountBtn").addEventListener("click",()=>{
+  if(!ME){location.href="/login";return;}
+  openModal("Account",`
+    <div class="muted" style="margin-bottom:14px">Signed in as <b style="color:var(--txt)">${esc(ME.username)}</b> · ${esc(ME.role)}</div>
+    <label class="fld">Change password</label>
+    <input type="password" id="ac_cur" placeholder="Current password" style="width:100%;margin-bottom:8px">
+    <input type="password" id="ac_new" placeholder="New password (min 8 chars)" style="width:100%">
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="btn" id="ac_save">Update password</button>
+      <button class="btn ghost" id="ac_logout">Log out</button>
+    </div>`);
+  $("ac_save").addEventListener("click",async()=>{
+    try{ await jsend("/api/auth/change-password","POST",{current_password:$("ac_cur").value,new_password:$("ac_new").value});
+      toast("Password updated"); closeModal();
+    }catch(e){ toast(e.message,"err"); }
+  });
+  $("ac_logout").addEventListener("click",async()=>{
+    try{ await jsend("/api/auth/logout","POST"); }catch(_){}
+    location.href="/login";
+  });
+});
+
+async function renderUsers(){
+  let users=[];
+  try{ users=(await jget("/api/admin/users")).users; }catch(e){ toast(e.message,"err"); return; }
+  const rows=users.map(u=>`<tr>
+    <td>${esc(u.username)}</td>
+    <td class="muted">${esc(u.role)}</td>
+    <td><span class="pill ${u.status==='active'?'have':(u.status==='pending'?'want':'')}">${esc(u.status)}</span></td>
+    <td style="text-align:right;white-space:nowrap">
+      ${u.status!=='active'?`<a class="lnk" data-act="status" data-id="${u.id}" data-val="active">approve</a>`:''}
+      ${u.status==='active'&&u.id!==ME.id?`<a class="lnk" data-act="status" data-id="${u.id}" data-val="disabled">disable</a>`:''}
+      ${u.id!==ME.id?`<a class="lnk" data-act="role" data-id="${u.id}" data-val="${u.role==='admin'?'user':'admin'}">${u.role==='admin'?'demote':'make admin'}</a>`:''}
+      <a class="lnk" data-act="reset" data-id="${u.id}">reset pw</a>
+      ${u.id!==ME.id?`<a class="lnk danger" data-act="delete" data-id="${u.id}">delete</a>`:''}
+    </td></tr>`).join("");
+  openModal("Users",`<table class="tbl" style="width:100%"><thead><tr><th>User</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+    <div style="margin-top:16px;border-top:1px solid var(--line);padding-top:14px">
+      <label class="fld">Create user</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input type="text" id="nu_user" placeholder="username" style="flex:1;min-width:120px">
+        <input type="password" id="nu_pass" placeholder="password" style="flex:1;min-width:120px">
+        <select id="nu_role"><option value="user">user</option><option value="admin">admin</option></select>
+        <button class="btn" id="nu_create">Create</button>
+      </div>
+    </div>`);
+  $("modalBody").querySelectorAll("a.lnk").forEach(a=>a.addEventListener("click",async()=>{
+    const id=a.dataset.id, act=a.dataset.act, val=a.dataset.val;
+    try{
+      if(act==="status") await jsend(`/api/admin/users/${id}/status?status=${val}`,"POST");
+      else if(act==="role") await jsend(`/api/admin/users/${id}/role?role=${val}`,"POST");
+      else if(act==="delete"){ if(!confirm("Delete this user?"))return; await jsend(`/api/admin/users/${id}`,"DELETE"); }
+      else if(act==="reset"){ const d=await jsend(`/api/admin/users/${id}/reset`,"POST");
+        prompt("Give this one-time reset link to the user:", location.origin+d.reset_path); return; }
+      renderUsers();
+    }catch(e){ toast(e.message,"err"); }
+  }));
+  $("nu_create").addEventListener("click",async()=>{
+    try{ await jsend("/api/admin/users","POST",{username:$("nu_user").value.trim(),password:$("nu_pass").value,role:$("nu_role").value,status:"active"});
+      toast("User created"); renderUsers();
+    }catch(e){ toast(e.message,"err"); }
+  });
+}
+$("usersBtn").addEventListener("click",renderUsers);
+
 // ============ modal helpers ============
 function openModal(title,html){$("modalTitle").textContent=title;$("modalBody").innerHTML=html;$("modal").classList.add("show");}
 function closeModal(){$("modal").classList.remove("show");}
@@ -817,6 +900,7 @@ $("modalClose").addEventListener("click",closeModal);
 $("modal").addEventListener("click",e=>{if(e.target.id==="modal")closeModal();});
 
 // ============ init ============
+loadMe();
 loadStatsbar();setInterval(loadStatsbar,8000);refreshMeta();
 </script>
 </body>
