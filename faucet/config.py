@@ -14,7 +14,11 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-CONFIG_FILE = os.environ.get("CASCADE_CONFIG_FILE", "/config/cascade.env")
+_explicit_cfg = os.environ.get("FAUCET_CONFIG_FILE") or os.environ.get("CASCADE_CONFIG_FILE")
+CONFIG_FILE = _explicit_cfg or "/config/faucet.env"
+# Back-compat: only when no env var was set, prefer an existing legacy cascade.env
+if not _explicit_cfg and not os.path.exists(CONFIG_FILE) and os.path.exists("/config/cascade.env"):
+    CONFIG_FILE = "/config/cascade.env"
 
 
 def _load_persisted(into_env: bool = True) -> dict:

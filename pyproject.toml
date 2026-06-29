@@ -1,5 +1,5 @@
 [project]
-name = "cascade-media"
+name = "faucet-media"
 version = "1.0.0"
 description = "Self-hosted search, download, sort, and manage for your media library."
 readme = "README.md"
@@ -15,12 +15,12 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Harrsn/cascade"
-Issues = "https://github.com/Harrsn/cascade/issues"
+Homepage = "https://github.com/Harrsn/faucet"
+Issues = "https://github.com/Harrsn/faucet/issues"
 
 [project.scripts]
-cascade-sort = "cascade.sort:main"
-cascade-tidy = "cascade.libtidy:main"
+faucet-sort = "faucet.sort:main"
+faucet-tidy = "faucet.libtidy:main"
 
 [tool.setuptools.packages.find]
-include = ["cascade*"]
+include = ["faucet*"]

@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 
 import requests
 
-log = logging.getLogger("cascade.notify")
+log = logging.getLogger("faucet.notify")
 
 _TIMEOUT = 10
 

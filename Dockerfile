@@ -6,7 +6,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY cascade ./cascade
+COPY faucet ./faucet
 COPY pyproject.toml .
 
 # config + events live on a mounted volume; library + downloads mounted at runtime
@@ -19,4 +19,4 @@ ENV EVENTS_FILE=/config/events.jsonl \
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
   CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8088/health',timeout=3).status==200 else 1)" || exit 1
 
-CMD ["uvicorn", "cascade.app:app", "--host", "0.0.0.0", "--port", "8088"]
+CMD ["uvicorn", "faucet.app:app", "--host", "0.0.0.0", "--port", "8088"]

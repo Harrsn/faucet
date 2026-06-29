@@ -25,14 +25,14 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-# Make the cascade package importable whether installed or run from source.
+# Make the faucet package importable whether installed or run from source.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from cascade.config import config           # noqa: E402
-from cascade.notify import notify           # noqa: E402
-from cascade.clients import make_client, DownloadClientError  # noqa: E402
+from faucet.config import config           # noqa: E402
+from faucet.notify import notify           # noqa: E402
+from faucet.clients import make_client, DownloadClientError  # noqa: E402
 try:
-    from cascade import db                  # noqa: E402
+    from faucet import db                  # noqa: E402
 except Exception:                            # noqa: BLE001 - DB is optional for the hook
     db = None
 
@@ -67,10 +67,11 @@ def resolve_completion():
     td, tn = os.environ.get("TR_TORRENT_DIR"), os.environ.get("TR_TORRENT_NAME")
     if td and tn:
         return os.path.join(td, tn), tn, os.environ.get("TR_TORRENT_ID")
-    # Generic (qBittorrent / Deluge / manual) via CASCADE_* vars
-    path = os.environ.get("CASCADE_PATH")
-    name = os.environ.get("CASCADE_NAME") or (os.path.basename(path) if path else "")
-    tid = os.environ.get("CASCADE_ID")
+    # Generic (qBittorrent / Deluge / manual) via FAUCET_* (CASCADE_* still works)
+    path = os.environ.get("FAUCET_PATH") or os.environ.get("CASCADE_PATH")
+    name = (os.environ.get("FAUCET_NAME") or os.environ.get("CASCADE_NAME")
+            or (os.path.basename(path) if path else ""))
+    tid = os.environ.get("FAUCET_ID") or os.environ.get("CASCADE_ID")
     if path:
         return path, name, tid
     return None, None, None
@@ -99,7 +100,7 @@ def main():
 
     # 1. sort — delegate to the sorter script, pointed at the completed path
     sorter = Path(__file__).resolve().parent / "sort.py"
-    env = dict(os.environ, CASCADE_PATH=path)
+    env = dict(os.environ, FAUCET_PATH=path, CASCADE_PATH=path)
     res = subprocess.run([sys.executable, str(sorter)], env=env)
     if res.returncode != 0:
         record("sort_failed", name, f"sort failed (rc={res.returncode})")

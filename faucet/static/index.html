@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cascade</title>
+<title>Faucet</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="alternate icon" href="/static/favicon.svg">
 <style>
   :root{
     --bg:#0d1117; --panel:#161b22; --panel2:#1b2230; --line:#21262d; --line-hi:#30363d;
@@ -205,7 +207,7 @@
 <body>
 
 <nav class="topnav">
-  <span class="brand">Cascade<span class="dot">.</span></span>
+  <span class="brand">Faucet<span class="dot">.</span></span>
   <span class="navlink on" data-page="search">Search</span>
   <span class="navlink" data-page="shows">Shows</span>
   <span class="navlink" data-page="movies">Movies</span>
@@ -264,7 +266,7 @@
       </div>
     </div>
     <div class="cardgrid" id="showsGrid"></div>
-    <div class="empty" id="showsEmpty" hidden>No monitored shows yet. Add one and Cascade tracks its episodes, scans your library, and hunts the missing ones.</div>
+    <div class="empty" id="showsEmpty" hidden>No monitored shows yet. Add one and Faucet tracks its episodes, scans your library, and hunts the missing ones.</div>
   </section>
 
   <!-- ============ MOVIES PAGE ============ -->
@@ -278,7 +280,7 @@
       </div>
     </div>
     <div class="cardgrid" id="moviesGrid"></div>
-    <div class="empty" id="moviesEmpty" hidden>No monitored movies yet. Add one and Cascade will grab it if it's not already in your library.</div>
+    <div class="empty" id="moviesEmpty" hidden>No monitored movies yet. Add one and Faucet will grab it if it's not already in your library.</div>
   </section>
 
   <!-- ============ SHOW DETAIL PAGE ============ -->
@@ -687,7 +689,7 @@ $("subsNew").addEventListener("click",()=>{
     <label class="fld">Search query</label><input type="text" id="sf_q" placeholder="e.g. the office s03" style="width:100%">
     <label class="fld">Quality profile</label><select id="sf_p" style="width:100%">${opts}</select>
     <div style="margin-top:14px"><button class="btn" id="sf_save">create</button></div>
-    <div class="hint" style="margin-top:8px">Cascade searches this on a timer and grabs the best new release matching your profile.</div>`);
+    <div class="hint" style="margin-top:8px">Faucet searches this on a timer and grabs the best new release matching your profile.</div>`);
   $("sf_save").addEventListener("click",async()=>{const t=$("sf_t").value.trim();if(!t){toast("Name required","err");return;}
     await jsend("/api/subscriptions","POST",{title:t,query:$("sf_q").value.trim()||t,media_type:"tv",profile_id:$("sf_p").value?+$("sf_p").value:null,enabled:true});
     toast("Subscription saved.");closeModal();loadSubs();});

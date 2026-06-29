@@ -24,7 +24,7 @@ from . import profiles as prof
 from .config import config
 from .clients import make_client, DownloadClientError
 
-log = logging.getLogger("cascade.scheduler")
+log = logging.getLogger("faucet.scheduler")
 
 # how often the loop wakes, in seconds (default 30 min)
 INTERVAL = int(os.environ.get("RSS_INTERVAL_SECONDS", str(30 * 60)))

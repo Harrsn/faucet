@@ -18,7 +18,7 @@ from . import db
 from . import tmdb
 from . import library
 
-log = logging.getLogger("cascade.series")
+log = logging.getLogger("faucet.series")
 
 # resolution rank for upgrade comparison (higher = better)
 _RES_RANK = {"2160p": 4, "1080p": 3, "720p": 2, "480p": 1, None: 0, "": 0}

@@ -1,12 +1,12 @@
 <div align="center">
 
-# 🌊 Cascade
+# 🌊 Faucet
 
 **The whole search → download → sort → manage loop for your media, in one lightweight self-hosted app.**
 
 No five-container *arr stack. One service over your indexer and torrent client, with a clean web UI.
 
-[![CI](https://github.com/Harrsn/cascade/actions/workflows/ci.yml/badge.svg)](https://github.com/Harrsn/cascade/actions/workflows/ci.yml)
+[![CI](https://github.com/Harrsn/faucet/actions/workflows/ci.yml/badge.svg)](https://github.com/Harrsn/faucet/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 
@@ -16,7 +16,7 @@ No five-container *arr stack. One service over your indexer and torrent client, 
 
 ## What it does
 
-Search across your indexers, pick a result, and Cascade hands it to your torrent
+Search across your indexers, pick a result, and Faucet hands it to your torrent
 client, watches it download, then automatically renames and files it into your
 library in a Plex/Jellyfin layout — all from one page.
 
@@ -29,7 +29,7 @@ library in a Plex/Jellyfin layout — all from one page.
 - **⌨️ Keyboard-driven** — arrow-key through results, Enter to add, search history.
 - **🪄 First-run wizard** — guided setup with live connection testing; no config files to edit.
 
-> **Heads up:** Cascade is a tool for managing your own downloads. You're responsible
+> **Heads up:** Faucet is a tool for managing your own downloads. You're responsible
 > for what you download and for complying with the law where you live.
 
 ## Screenshots
@@ -42,8 +42,8 @@ library in a Plex/Jellyfin layout — all from one page.
 ## Quickstart (Docker)
 
 ```bash
-git clone https://github.com/Harrsn/cascade.git
-cd cascade
+git clone https://github.com/Harrsn/faucet.git
+cd faucet
 cp .env.example .env        # set JACKETT_API_KEY (and client creds if not default)
 docker compose up -d
 ```
@@ -56,10 +56,10 @@ that service from `docker-compose.yml` and point the env vars at yours.
 
 ### First run
 
-On first launch Cascade opens a **setup wizard** — no file editing needed:
+On first launch Faucet opens a **setup wizard** — no file editing needed:
 
 1. Open Jackett at `http://localhost:9117`, add a few indexers, copy the **API key**.
-2. In Cascade, the wizard walks you through indexer → client → library, testing each
+2. In Faucet, the wizard walks you through indexer → client → library, testing each
    connection live before saving.
 3. Search, click **add**, watch it download and get filed into `./library`.
 
@@ -69,10 +69,10 @@ On first launch Cascade opens a **setup wizard** — no file editing needed:
 pip install -e .
 cp .env.example .env        # fill in URLs + key
 set -a; . ./.env; set +a
-uvicorn cascade.app:app --host 0.0.0.0 --port 8088
+uvicorn faucet.app:app --host 0.0.0.0 --port 8088
 ```
 
-Wire the completion hook in your client to run `python -m cascade.hook` so finished
+Wire the completion hook in your client to run `python -m faucet.hook` so finished
 downloads get sorted — see [docs/HOOKS.md](docs/HOOKS.md) for per-client setup.
 
 ## Configuration
@@ -100,13 +100,13 @@ Full list and notification URL formats are in [.env.example](.env.example).
 Normalize existing season folders to `Season NN` and merge scattered duplicates:
 
 ```bash
-python -m cascade.libtidy                 # dry-run, shows the plan
-python -m cascade.libtidy --tv --apply    # execute TV renames
+python -m faucet.libtidy                 # dry-run, shows the plan
+python -m faucet.libtidy --tv --apply    # execute TV renames
 ```
 
 ## How it compares
 
-Cascade isn't trying to replace Sonarr/Radarr's deep per-series automation. It's for
+Faucet isn't trying to replace Sonarr/Radarr's deep per-series automation. It's for
 people who want **one simple app** that does search, grab, sort, and manage without
 running Prowlarr + Sonarr + Radarr + a request frontend. If you want a single pane of
 glass and minimal moving parts, that's the niche.
@@ -114,7 +114,7 @@ glass and minimal moving parts, that's the niche.
 ## Contributing
 
 Issues and PRs welcome. `pytest -q` runs the suite; new client backends just implement
-`cascade/clients/base.py`'s `DownloadClient` interface.
+`faucet/clients/base.py`'s `DownloadClient` interface.
 
 ## License
 

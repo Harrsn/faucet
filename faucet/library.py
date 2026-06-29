@@ -23,7 +23,7 @@ try:
 except ImportError:                              # pragma: no cover
     guessit = None
 
-log = logging.getLogger("cascade.library")
+log = logging.getLogger("faucet.library")
 
 VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".m4v", ".mov", ".wmv", ".ts", ".m2ts"}
 MIN_SIZE = 50 * 1024 * 1024  # ignore sub-50MB junk/samples

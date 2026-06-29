@@ -20,7 +20,7 @@ from . import library
 from . import series as series_mod
 from . import movies as movies_mod
 
-log = logging.getLogger("cascade.import")
+log = logging.getLogger("faucet.import")
 
 
 def _distinct_shows() -> list[str]:

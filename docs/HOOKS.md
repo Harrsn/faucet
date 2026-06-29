@@ -1,7 +1,7 @@
 # Completion hooks
 
-Cascade sorts and (optionally) cleans up a download when it finishes. Your
-torrent client triggers this by running `python -m cascade.hook` on completion.
+Faucet sorts and (optionally) cleans up a download when it finishes. Your
+torrent client triggers this by running `python -m faucet.hook` on completion.
 The hook figures out *what* finished from environment variables the client sets.
 
 In Docker, the bundled Transmission is wired for you. For bare-metal or your own
@@ -14,15 +14,15 @@ automatically. In `settings.json` (stop the daemon first — it rewrites on exit
 
 ```json
 "script-torrent-done-enabled": true,
-"script-torrent-done-filename": "/path/to/cascade-hook.sh"
+"script-torrent-done-filename": "/path/to/faucet-hook.sh"
 ```
 
-Where `cascade-hook.sh` is:
+Where `faucet-hook.sh` is:
 
 ```bash
 #!/usr/bin/env bash
-set -a; . /path/to/cascade/.env; set +a
-exec python3 -m cascade.hook
+set -a; . /path/to/faucet/.env; set +a
+exec python3 -m faucet.hook
 ```
 
 ## qBittorrent
@@ -30,16 +30,16 @@ exec python3 -m cascade.hook
 Options → Downloads → **Run external program on torrent completion**:
 
 ```
-/path/to/cascade-hook.sh "%F" "%I"
+/path/to/faucet-hook.sh "%F" "%I"
 ```
 
 `%F` is the content path, `%I` is the hash. Map them in the wrapper:
 
 ```bash
 #!/usr/bin/env bash
-set -a; . /path/to/cascade/.env; set +a
+set -a; . /path/to/faucet/.env; set +a
 export CASCADE_PATH="$1" CASCADE_ID="$2"
-exec python3 -m cascade.hook
+exec python3 -m faucet.hook
 ```
 
 ## Deluge
@@ -49,14 +49,14 @@ wrapper. Deluge passes `torrentid`, `torrentname`, `torrentpath` as arguments:
 
 ```bash
 #!/usr/bin/env bash
-set -a; . /path/to/cascade/.env; set +a
+set -a; . /path/to/faucet/.env; set +a
 export CASCADE_ID="$1" CASCADE_NAME="$2" CASCADE_PATH="$3/$2"
-exec python3 -m cascade.hook
+exec python3 -m faucet.hook
 ```
 
 ## What the hook does
 
-1. Runs the sorter (`cascade/sort.py`) on the completed path — renames and files
+1. Runs the sorter (`faucet/sort.py`) on the completed path — renames and files
    it under `LIBRARY_ROOT/{movies,tvshows}`.
 2. Appends an event to `EVENTS_FILE` (shown in the UI's Events tab).
 3. Fires notifications per `NOTIFY_ON`.
