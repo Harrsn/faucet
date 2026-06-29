@@ -108,6 +108,35 @@ def check_subscription(sub: dict) -> dict:
     return result
 
 
+def _try_season_pack(title, season, profile):
+    """Search for a season pack for this show/season. Returns the best matching
+    pack release (a dict with title/href) or None. Only returns true season
+    packs (classify_pack -> 'season' for the right season); ignores series packs
+    (too large, per design) and individual episodes."""
+    from . import packs
+    query = f"{title} S{int(season):02d}"
+    try:
+        results = searchmod.search(
+            config.jackett_url, config.jackett_api_key, config.jackett_indexer,
+            query, "all", config.search_limit, config.request_timeout)
+    except searchmod.SearchError:
+        return None
+    candidates = []
+    for r in results:
+        if db.already_grabbed(r["title"]):
+            continue
+        cls = packs.classify_pack(r["title"])
+        if cls["kind"] == "season" and (cls["season"] in (season, None)):
+            candidates.append(r)
+    if not candidates:
+        return None
+    if profile:
+        ranked = prof.rank(candidates, profile)
+    else:
+        ranked = sorted(candidates, key=lambda x: x.get("seeders", 0), reverse=True)
+    return ranked[0] if ranked else None
+
+
 def hunt_wanted(series_filter=None, max_override=None) -> dict:
     """Search for and grab wanted items (missing + upgrades), respecting two
     caps so an unattended run can't flood the client:
@@ -143,9 +172,63 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
                 "skipped_reason": f"{active} active >= cap {max_active}"}
 
     budget = min(max_per_run, max_active - active)
+
+    # ── Season-pack pre-pass ──
+    # Group episode-wants by (series, season); for any season with 2+ wanted
+    # episodes, try to grab a single season pack instead of N episodes. A pack
+    # uses one client slot but satisfies many wants. Episodes covered by a
+    # grabbed pack are removed from the per-episode pass below.
+    covered_episode_wants = set()        # ids of wanted rows a pack will cover
+    if budget > 0:
+        from collections import defaultdict
+        by_season = defaultdict(list)
+        for w in wanted:
+            if w.get("kind", "episode") == "movie":
+                continue
+            if w.get("series_id") is None or w.get("season") is None:
+                continue
+            by_season[(w["series_id"], w["season"])].append(w)
+        for (sid, season), eps in by_season.items():
+            if grabbed >= budget:
+                break
+            if len(eps) < 2:                 # need 2+ missing to prefer a pack
+                continue
+            title = eps[0].get("series_title") or ""
+            if not title:
+                continue
+            pack = _try_season_pack(title, season, _load_profile_for_series(sid))
+            if not pack:
+                continue
+            # grab the pack
+            if not db.mark_grabbed(pack["title"], None):
+                continue
+            try:
+                client = make_client(config.client_kind, config.client_url,
+                                     config.client_user, config.client_pass, config.request_timeout)
+                client.add(pack["href"], config.download_dir or None)
+                grabbed += 1
+                db.add_history("added", pack["title"], f"season pack: {title} S{int(season):02d} ({len(eps)} eps)")
+                # mark every wanted episode in this season as grabbed-by-pack
+                with db.connect() as c:
+                    for w in eps:
+                        c.execute("UPDATE wanted SET status='grabbed', last_search=? WHERE id=?",
+                                  (datetime.now().isoformat(timespec="seconds"), w["id"]))
+                        covered_episode_wants.add(w["id"])
+                details.append({"want": f"{title} S{int(season):02d} (pack)",
+                                "reason": "pack", "grabbed": pack["title"], "error": None,
+                                "covers": len(eps)})
+                log.info("Grabbed season pack '%s' covering %d episodes", pack["title"], len(eps))
+            except DownloadClientError as e:
+                with db.connect() as c:
+                    c.execute("DELETE FROM grabbed WHERE title=?", (pack["title"],))
+                details.append({"want": f"{title} S{int(season):02d} (pack)",
+                                "reason": "pack", "grabbed": None, "error": f"add failed: {e}"})
+
     for w in wanted:
         if grabbed >= budget:
             break
+        if w.get("id") in covered_episode_wants:
+            continue
         kind = w.get("kind", "episode")
         if kind == "movie":
             query = w.get("title") or ""

@@ -487,3 +487,13 @@ def test_movie_subset_matching():
     # exact title tolerates 1-year metadata fuzz; unrelated titles don't match
     assert mm("Dune", 2021, "Dune", 2020)
     assert not mm("The Batman", 2022, "Batman Begins", 2005)
+
+
+def test_pack_classification():
+    from cascade.packs import classify_pack as cp
+    assert cp("American Dad S01E07 1080p")["kind"] == "single"
+    assert cp("American Dad S03 1080p WEB-DL") == {"kind": "season", "season": 3}
+    assert cp("American Dad Season 3 Complete 1080p") == {"kind": "season", "season": 3}
+    assert cp("American Dad Seasons 1-15 1080p")["kind"] == "series"
+    assert cp("Stranger Things Complete Series")["kind"] == "series"
+    assert cp("The Office Season 2 1080p")["season"] == 2
