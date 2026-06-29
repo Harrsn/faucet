@@ -66,13 +66,17 @@ def _scan_tv(root: Path, stats: dict) -> None:
             continue
 
         info = guessit(f.name) if guessit else {}
-        # prefer the show folder name for the series title (more reliable)
+        # Derive the show name from the folder structure, NOT guessit's filename
+        # parse — release tags like [BDRip][1080p][h.265] often throw guessit's
+        # title off. The show folder is the level directly under tvshows/.
         show = None
-        for anc in f.parents:
-            if anc == tv:
-                break
-            show = anc.name  # last one before tvshows root wins after loop
-        show = (info.get("title") or show or "").strip()
+        rel = f.relative_to(tv)
+        if len(rel.parts) >= 1:
+            show = rel.parts[0]          # e.g. "Rick and Morty"
+        # fall back to guessit only if there's no folder (file directly in tvshows/)
+        if not show:
+            show = (info.get("title") or "").strip()
+        show = (show or "").strip()
         season = info.get("season")
         episode = info.get("episode")
         if not show or season is None or episode is None:
