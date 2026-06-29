@@ -129,8 +129,11 @@ def reconcile(series_id: int) -> dict:
             missing += 1
         else:
             have += 1
-            # upgrade check: have it, but below the profile's target resolution
-            if target_rank and _RES_RANK.get(owned.get("quality"), 0) < target_rank:
+            # Upgrade check: only when we KNOW the owned quality and it's below
+            # the profile target. Unknown quality (None) is left alone — we won't
+            # re-grab an episode just because its resolution couldn't be detected.
+            owned_q = owned.get("quality")
+            if target_rank and owned_q and _RES_RANK.get(owned_q, 0) < target_rank:
                 _add_wanted(series_id, season, episode, ep["title"], "upgrade")
                 upgrades += 1
             else:
