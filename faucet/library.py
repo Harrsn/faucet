@@ -32,6 +32,31 @@ _RES_TOKENS = [("2160p", ("2160p", "4k", "uhd")), ("1080p", ("1080p",)),
                ("720p", ("720p",)), ("480p", ("480p",))]
 
 
+def _clean_episode_filename(name: str) -> str:
+    """Strip multi-segment episode suffixes that break guessit's parser.
+    Shows like SpongeBob name combined-segment files 'S01E01ab' / 'S12E03a' /
+    'S01E01abc' (two or three cartoons in one file). guessit returns no episode
+    for those, so collapse the trailing segment letters right after the episode
+    number: 'S01E01abc' -> 'S01E01'. Leaves normal names untouched."""
+    import re
+    # S01E01ab / s01e01abc / S1E1a  ->  S01E01
+    return re.sub(r"(?i)(s\d{1,2}e\d{1,3})[a-d]{1,3}(?=\b|[ ._\-+])", r"\1", name)
+
+
+def _regex_episode(name: str):
+    """Last-resort season/episode extraction when guessit fails, covering
+    SxxExx, SxxExxExx (multi-ep), and Nx NN forms. Returns (season, episode)
+    or (None, None)."""
+    import re
+    m = re.search(r"(?i)s(\d{1,2})\s*e(\d{1,3})", name)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    m = re.search(r"\b(\d{1,2})x(\d{1,3})\b", name)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    return None, None
+
+
 def normalize_title(name: str) -> str:
     """Canonical key for matching a library folder name to a TMDb title.
     Strips bracketed tags ([1080p], [720p]), trailing year in parens, and
@@ -93,7 +118,7 @@ def _scan_tv(root: Path, stats: dict) -> None:
             stats["skipped"] += 1
             continue
 
-        info = guessit(f.name) if guessit else {}
+        info = guessit(_clean_episode_filename(f.name)) if guessit else {}
         # Derive the show name from the folder structure, NOT guessit's filename
         # parse — release tags like [BDRip][1080p][h.265] often throw guessit's
         # title off. The show folder is the level directly under tvshows/.
@@ -107,6 +132,13 @@ def _scan_tv(root: Path, stats: dict) -> None:
         show = (show or "").strip()
         season = info.get("season")
         episode = info.get("episode")
+        # last-resort regex parse for names guessit still can't read
+        if season is None or episode is None:
+            rs, re_ = _regex_episode(f.name)
+            if season is None:
+                season = rs
+            if episode is None:
+                episode = re_
         if not show or season is None or episode is None:
             stats["unparsed"] += 1
             why = "no show name" if not show else "no season/episode number"

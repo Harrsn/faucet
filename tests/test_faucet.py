@@ -586,3 +586,31 @@ def test_episode_hunt_rejects_series_packs(tmp_path, monkeypatch):
     r = SCH.hunt_wanted()
     grabbed = [d["grabbed"] for d in r["details"] if d.get("grabbed")]
     assert grabbed and "S01E01" in grabbed[0] and "S01-S21" not in grabbed[0]
+
+
+def test_multisegment_episode_parsing(tmp_path, monkeypatch):
+    """SpongeBob-style multi-segment files (S01E01ab) should parse, while real
+    extras with no season/episode stay unmatched."""
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "events.jsonl"))
+    sb = tmp_path / "lib" / "tvshows" / "SpongeBob SquarePants" / "Season 01"
+    sb.mkdir(parents=True)
+    (sb / "SpongeBob SquarePants - S01E01abc - Help Wanted WEBDL-1080p.mkv").write_bytes(b"x" * (60 * 1024 * 1024))
+    (sb / "SpongeBob.SquarePants.S01E02a.Bubblestand.1080p.mkv").write_bytes(b"x" * (60 * 1024 * 1024))
+    (sb / "Behind the Scenes.mkv").write_bytes(b"x" * (60 * 1024 * 1024))  # real extra
+    monkeypatch.setenv("LIBRARY_ROOT", str(tmp_path / "lib"))
+    import importlib
+    from faucet import config as cfgmod
+    importlib.reload(cfgmod)
+    from faucet import db
+    importlib.reload(db)
+    db.init()
+    from faucet import library as L
+    importlib.reload(L)
+    s = L.scan()
+    assert s["episodes"] == 2          # the two multi-segment files parsed
+    assert L.have_episode("SpongeBob SquarePants", 1, 1)
+    assert L.have_episode("SpongeBob SquarePants", 1, 2)
+    rep = L.scan_report()
+    # only the genuine extra remains unparsed
+    assert rep["total"] == 1
+    assert "Behind the Scenes" in rep["unparsed_tv"][0]["name"]
