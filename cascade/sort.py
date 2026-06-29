@@ -34,12 +34,26 @@ except ImportError:
     sys.stderr.write("guessit not installed. Run: pip3 install guessit\n")
     sys.exit(2)
 
+try:
+    from cascade.classify import classify, dest_folder
+except Exception:                                # noqa: BLE001 - sorter can run standalone
+    classify = None
+    dest_folder = None
+
 # ----------------------------------------------------------------------------
 # Config
 # ----------------------------------------------------------------------------
 MEDIA_ROOT = Path(os.environ.get("LIBRARY_ROOT", os.environ.get("MEDIA_ROOT", "/library")))
 MOVIES_DIR = MEDIA_ROOT / "movies"
 TV_DIR = MEDIA_ROOT / "tvshows"
+GAMES_DIR = MEDIA_ROOT / "games"
+OTHER_DIR = MEDIA_ROOT / "other"
+
+# Non-video content (games, software) is filed as a whole release rather than
+# per-file. These extensions/markers identify game/disc releases.
+GAME_EXTS = {".iso", ".bin", ".cue", ".nsp", ".xci", ".rom", ".pkg", ".rvz",
+             ".wbfs", ".chd", ".rpx", ".cia", ".3ds", ".nds", ".gba"}
+ARCHIVE_EXTS = {".zip", ".rar", ".7z", ".tar", ".gz"}
 
 MODE = os.environ.get("MEDIASORT_MODE", "hardlink")  # hardlink | copy | move
 MIN_SIZE_MB = int(os.environ.get("MEDIASORT_MIN_MB", "50"))
@@ -226,6 +240,53 @@ def resolve_inputs(args):
     return []
 
 
+def handle_game(root: Path, platform: str | None, dry: bool) -> bool:
+    """File a whole game/software release into /games/<Platform>/<Name>.
+
+    Games aren't single video files — they're ISOs, archives, or folders of
+    files that must stay together. So we move/link the entire release directory
+    (or file) intact rather than picking through it. No renaming: game release
+    names carry version/scene info worth preserving.
+    """
+    sub = sanitize(platform) if platform else "PC"
+    name = sanitize(root.stem if root.is_file() else root.name)
+    dest = GAMES_DIR / sub / name
+    if dest.exists():
+        logging.info("GAME EXISTS, skipping: %s", dest)
+        return False
+    if dry:
+        logging.info("DRY-RUN game %s -> %s", root.name, dest)
+        return True
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if MODE == "move":
+            shutil.move(str(root), str(dest))
+        else:
+            # copy tree/file (hardlinking a whole tree across CIFS isn't reliable)
+            if root.is_dir():
+                shutil.copytree(str(root), str(dest))
+            else:
+                shutil.copy2(str(root), str(dest))
+        logging.info("GAME filed %s -> %s", root.name, dest)
+        return True
+    except (OSError, shutil.Error) as e:
+        logging.error("game file failed for %s: %s", root.name, e)
+        return False
+
+
+def release_is_game(root: Path) -> bool:
+    """Heuristic: does this release look like a game/disc rather than video?
+    Checks for game/disc file extensions anywhere in the tree."""
+    files = [root] if root.is_file() else [p for p in root.rglob("*") if p.is_file()]
+    for p in files:
+        if p.suffix.lower() in GAME_EXTS:
+            return True
+    # archive-only release with no video inside also leans game/software
+    has_video = any(p.suffix.lower() in VIDEO_EXTS for p in files)
+    has_archive = any(p.suffix.lower() in ARCHIVE_EXTS for p in files)
+    return has_archive and not has_video
+
+
 def main():
     ap = argparse.ArgumentParser(description="Sort media into Plex/Jellyfin tree.")
     ap.add_argument("paths", nargs="*", help="File(s) or dir(s) to process.")
@@ -249,6 +310,20 @@ def main():
         if not root.exists():
             logging.warning("Input not found: %s", root)
             continue
+
+        # Classify the release first. Games/software file as a whole release;
+        # video falls through to the existing per-file movie/TV logic.
+        ctype = None
+        platform = None
+        if classify is not None:
+            k = classify(root.stem if root.is_file() else root.name)
+            ctype, platform = k["type"], k["platform"]
+
+        if ctype == "game" or release_is_game(root):
+            if handle_game(root, platform, dry):
+                processed += 1
+            continue
+
         for video in iter_video_files(root):
             plan = plan_destination(video)
             if not plan:
