@@ -1,0 +1,5 @@
+# Test/dev dependencies (not needed at runtime).
+# Installed by CI on top of requirements.txt.
+pytest>=8.0
+httpx>=0.27          # required by fastapi.testclient.TestClient
+ruff>=0.4
