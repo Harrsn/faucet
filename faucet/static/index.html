@@ -371,6 +371,8 @@ async function jsend(u,m,b){const r=await fetch(u,{method:m,headers:{"Content-Ty
 // ============ navigation ============
 const PAGES=["search","shows","movies","subs","profiles"];
 function nav(page){
+  // hide the detail sub-pages whenever we navigate to a top-level page
+  ["showdetail","moviedetail"].forEach(p=>{const el=$("page-"+p);if(el)el.classList.remove("on");});
   PAGES.forEach(p=>{ $("page-"+p).classList.toggle("on",p===page);
     document.querySelector(`.navlink[data-page="${p}"]`).classList.toggle("on",p===page); });
   if(page==="shows")loadShows();
