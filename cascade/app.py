@@ -530,6 +530,71 @@ def api_subs_status():
     return {"last_run": scheduler.last_run(), "interval_seconds": scheduler.INTERVAL}
 
 
+# --- monitored series (library-aware tracking) ---
+class SeriesAdd(BaseModel):
+    tmdb_id: int
+    title: str
+    year: int | None = None
+    poster: str | None = None
+    profile_id: int | None = None
+
+
+@app.get("/api/series")
+def api_series_list():
+    from . import series as series_mod
+    out = []
+    for s in series_mod.list_series():
+        with db.connect() as c:
+            have = c.execute("SELECT COUNT(*) AS n FROM library_episodes WHERE show_name=?",
+                             (s["title"],)).fetchone()["n"]
+            total = c.execute("SELECT COUNT(*) AS n FROM series_episodes WHERE series_id=?",
+                              (s["id"],)).fetchone()["n"]
+            want = c.execute("SELECT COUNT(*) AS n FROM wanted WHERE series_id=? AND status='wanted'",
+                             (s["id"],)).fetchone()["n"]
+        s.update(have=have, total=total, wanted=want)
+        out.append(s)
+    return {"series": out}
+
+
+@app.post("/api/series")
+def api_series_add(s: SeriesAdd):
+    from . import series as series_mod
+    sid = series_mod.add_series(s.tmdb_id, s.title, s.year, s.poster, s.profile_id)
+    series_mod.reconcile(sid)
+    return {"status": "ok", "id": sid}
+
+
+@app.delete("/api/series/{sid}")
+def api_series_delete(sid: int):
+    from . import series as series_mod
+    series_mod.delete_series(sid)
+    return {"status": "ok"}
+
+
+@app.get("/api/series/{sid}/wanted")
+def api_series_wanted(sid: int):
+    from . import series as series_mod
+    return {"wanted": [w for w in series_mod.list_wanted() if w.get("series_id") == sid]}
+
+
+@app.post("/api/library/scan")
+def api_library_scan():
+    from . import library
+    return library.scan()
+
+
+@app.post("/api/library/reconcile")
+def api_library_reconcile():
+    from . import series as series_mod
+    return series_mod.reconcile_all()
+
+
+@app.get("/api/wanted")
+def api_wanted():
+    from . import series as series_mod
+    return {"wanted": series_mod.list_wanted()}
+
+
 @app.get("/health")
 def health():
     status = {"indexer": "unknown", "client": "unknown"}
