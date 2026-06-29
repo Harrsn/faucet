@@ -403,3 +403,13 @@ def test_reconcile_missing_and_upgrade(tmp_path, monkeypatch):
     assert r["missing"] == 1   # S01E03
     assert r["upgrades"] == 1  # S01E02 in 720p, want 1080p
     assert r["have"] == 2
+
+
+def test_title_normalization():
+    from cascade.library import normalize_title as nt
+    # real-world mismatches that must collapse to the same key
+    assert nt("Bobs Burgers") == nt("Bob's Burgers")
+    assert nt("American Dad") == nt("American Dad!")
+    assert nt("Stranger Things [1080p]") == nt("Stranger Things")
+    assert nt("Ted (2024) [720p]") == nt("Ted")
+    assert nt("Rick and Morty") == nt("Rick & Morty")

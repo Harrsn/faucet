@@ -542,15 +542,25 @@ class SeriesAdd(BaseModel):
 @app.get("/api/series")
 def api_series_list():
     from . import series as series_mod
+    from .library import normalize_title
     out = []
     for s in series_mod.list_series():
         with db.connect() as c:
-            have = c.execute("SELECT COUNT(*) AS n FROM library_episodes WHERE show_name=?",
-                             (s["title"],)).fetchone()["n"]
-            total = c.execute("SELECT COUNT(*) AS n FROM series_episodes WHERE series_id=?",
-                              (s["id"],)).fetchone()["n"]
+            # canonical episodes for this series
+            canon = c.execute(
+                "SELECT season, episode FROM series_episodes WHERE series_id=?",
+                (s["id"],)).fetchall()
+            total = len(canon)
+            # library episodes, matched to this show by normalized title
+            lib = c.execute("SELECT show_name, season, episode FROM library_episodes").fetchall()
             want = c.execute("SELECT COUNT(*) AS n FROM wanted WHERE series_id=? AND status='wanted'",
                              (s["id"],)).fetchone()["n"]
+        key = normalize_title(s["title"])
+        owned = {(r["season"], r["episode"]) for r in lib
+                 if normalize_title(r["show_name"]) == key}
+        canon_set = {(r["season"], r["episode"]) for r in canon}
+        # "have" = canonical episodes we actually own (so it can't exceed total)
+        have = len(owned & canon_set) if canon_set else len(owned)
         s.update(have=have, total=total, wanted=want)
         out.append(s)
     return {"series": out}

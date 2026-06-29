@@ -32,6 +32,23 @@ _RES_TOKENS = [("2160p", ("2160p", "4k", "uhd")), ("1080p", ("1080p",)),
                ("720p", ("720p",)), ("480p", ("480p",))]
 
 
+def normalize_title(name: str) -> str:
+    """Canonical key for matching a library folder name to a TMDb title.
+    Strips bracketed tags ([1080p], [720p]), trailing year in parens, and
+    normalizes punctuation/whitespace/case so 'Bobs Burgers', \"Bob's Burgers\",
+    'American Dad' / 'American Dad!', and 'Stranger Things [1080p]' all collapse
+    to the same key."""
+    import re
+    n = name or ""
+    n = re.sub(r"\[[^\]]*\]", " ", n)        # drop [1080p], [BDRip], etc.
+    n = re.sub(r"\((19|20)\d{2}\)", " ", n)  # drop a trailing (YEAR)
+    n = n.lower()
+    n = n.replace("&", "and")
+    n = n.replace("'", "").replace("\u2019", "")  # drop apostrophes: Bob's -> Bobs
+    n = re.sub(r"[^a-z0-9]+", " ", n)         # remaining punctuation -> space
+    return " ".join(n.split()).strip()
+
+
 def _library_root() -> Path:
     return Path(os.environ.get("LIBRARY_ROOT", "/library"))
 
@@ -151,12 +168,17 @@ def scan() -> dict:
 
 
 def have_episode(show_name: str, season: int, episode: int) -> dict | None:
-    """Is this episode already on disk? Returns the row (with quality) or None."""
+    """Is this episode already on disk? Matches on the normalized show title so
+    folder-name quirks (tags, punctuation, apostrophes) don't cause misses."""
+    key = normalize_title(show_name)
     with db.connect() as c:
-        r = c.execute(
-            "SELECT * FROM library_episodes WHERE show_name=? AND season=? AND episode=?",
-            (show_name, season, episode)).fetchone()
-    return dict(r) if r else None
+        rows = c.execute(
+            "SELECT * FROM library_episodes WHERE season=? AND episode=?",
+            (season, episode)).fetchall()
+    for r in rows:
+        if normalize_title(r["show_name"]) == key:
+            return dict(r)
+    return None
 
 
 def have_movie(title: str, year: int | None = None) -> dict | None:
