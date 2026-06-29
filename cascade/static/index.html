@@ -186,6 +186,19 @@
   .modal-head h2{font-size:16px;margin:0;}
   .modal-close{margin-left:auto;background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;}
   .modal-body{overflow-y:auto;padding:18px 22px;flex:1;}
+  /* show detail episode grid */
+  .season{margin-bottom:22px;}
+  .season-head{font-size:14px;font-weight:600;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--line);}
+  .ep-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;}
+  .ep{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:7px;border:1px solid var(--line);
+    background:var(--panel);font-size:12px;}
+  .ep.have{border-color:rgba(63,185,80,.3);background:rgba(63,185,80,.07);}
+  .ep.missing{border-color:rgba(210,153,34,.3);background:rgba(210,153,34,.07);}
+  .ep.unaired{opacity:.5;}
+  .ep .epn{font-weight:600;flex-shrink:0;}
+  .ep .ept{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted);}
+  .ep .eps{font-size:10px;flex-shrink:0;}
+  .ep.have .eps{color:var(--good);} .ep.missing .eps{color:var(--warn);}
   @media (max-width:640px){.navlink{padding:8px 10px;} td.trk,th.trk{display:none;}}
 </style>
 </head>
@@ -264,6 +277,16 @@
     </div>
     <div class="cardgrid" id="moviesGrid"></div>
     <div class="empty" id="moviesEmpty" hidden>No monitored movies yet. Add one and Cascade will grab it if it's not already in your library.</div>
+  </section>
+
+  <!-- ============ SHOW DETAIL PAGE ============ -->
+  <section class="page" id="page-showdetail">
+    <div class="page-head">
+      <button class="btn ghost" id="sdBack">← shows</button>
+      <h1 id="sdTitle"></h1><span class="count" id="sdCount"></span>
+      <div class="ph-actions"><button class="btn" id="sdHunt">hunt missing</button></div>
+    </div>
+    <div id="sdBody"></div>
   </section>
 
   <!-- ============ AUTO-GRAB PAGE ============ -->
@@ -430,7 +453,7 @@ function renderShows(){
   $("showsGrid").innerHTML=showsData.map(s=>{
     const pct=s.total?Math.round(s.have/s.total*100):0;
     const prof=profilesCache.find(p=>p.id===s.profile_id);
-    return `<div class="lcard">
+    return `<div class="lcard" data-sid="${s.id}" style="cursor:pointer">
       <div class="pimg" style="${s.poster?`background-image:url('${esc(s.poster)}')`:''}">${s.poster?'':'no art'}</div>
       <div class="body"><div class="lt">${esc(s.title)}</div><div class="ly">${s.year||''}</div>
         <div class="lmeta"><span>${s.have}/${s.total} eps</span>
@@ -439,8 +462,43 @@ function renderShows(){
         <div class="lbar"><i class="${pct<100?'partial':''}" style="width:${pct}%"></i></div>
         <div class="lact"><button class="link-btn danger" data-del="${s.id}">remove</button></div>
       </div></div>`;}).join("");
-  $("showsGrid").querySelectorAll("[data-del]").forEach(b=>b.addEventListener("click",async()=>{await jsend(`/api/series/${b.dataset.del}`,"DELETE");toast("Removed.");loadShows();}));
+  $("showsGrid").querySelectorAll("[data-del]").forEach(b=>b.addEventListener("click",async e=>{e.stopPropagation();await jsend(`/api/series/${b.dataset.del}`,"DELETE");toast("Removed.");loadShows();}));
+  $("showsGrid").querySelectorAll(".lcard").forEach(card=>card.addEventListener("click",e=>{
+    if(e.target.closest("[data-del]"))return;
+    const id=+card.dataset.sid;if(id)openShowDetail(id);
+  }));
 }
+
+// show detail view
+let sdCurrentId=null;
+function showPage(page){PAGES.concat(["showdetail"]).forEach(p=>{const el=$("page-"+p);if(el)el.classList.toggle("on",p===page);});}
+async function openShowDetail(sid){
+  sdCurrentId=sid;showPage("showdetail");
+  document.querySelectorAll(".navlink").forEach(l=>l.classList.toggle("on",l.dataset.page==="shows"));
+  $("sdBody").innerHTML="<div class='muted'>loading…</div>";$("sdTitle").textContent="";$("sdCount").textContent="";
+  try{
+    const d=await jget(`/api/series/${sid}/episodes`);
+    $("sdTitle").textContent=d.series.title+(d.series.year?` (${d.series.year})`:"");
+    $("sdCount").textContent=`${d.have}/${d.total} episodes`;
+    $("sdBody").innerHTML=d.seasons.map(s=>`
+      <div class="season">
+        <div class="season-head">Season ${s.season} <span class="muted">${s.have}/${s.total}</span></div>
+        <div class="ep-grid">${s.episodes.map(e=>`
+          <div class="ep ${e.have?'have':e.aired?'missing':'unaired'}" title="${esc(e.title||'')}">
+            <span class="epn">E${String(e.episode).padStart(2,'0')}</span>
+            <span class="ept">${esc(e.title||'')}</span>
+            <span class="eps">${e.have?(e.quality||'✓'):e.aired?'missing':'unaired'}</span>
+          </div>`).join("")}</div>
+      </div>`).join("")||"<div class='empty'>No episode data. Make sure a TMDb key is set, then scan.</div>";
+  }catch(_){$("sdBody").innerHTML="<div class='empty'>Couldn't load episodes.</div>";}
+}
+$("sdBack").addEventListener("click",()=>{showPage("shows");document.querySelectorAll(".navlink").forEach(l=>l.classList.toggle("on",l.dataset.page==="shows"));loadShows();});
+$("sdHunt").addEventListener("click",async()=>{
+  if(!sdCurrentId)return;$("sdHunt").disabled=true;$("sdHunt").textContent="hunting…";
+  try{const r=await jsend(`/api/series/${sdCurrentId}/hunt`,"POST");toast(`Grabbed ${r.grabbed||0} (cap applies).`);openShowDetail(sdCurrentId);}
+  catch(_){toast("Hunt failed","err");}
+  finally{$("sdHunt").disabled=false;$("sdHunt").textContent="hunt missing";}
+});
 $("showsAdd").addEventListener("click",()=>addMediaForm("show"));
 $("showsScan").addEventListener("click",()=>scanHunt("show"));
 $("showsImport").addEventListener("click",async()=>{

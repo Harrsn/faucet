@@ -108,17 +108,19 @@ def check_subscription(sub: dict) -> dict:
     return result
 
 
-def hunt_wanted() -> dict:
+def hunt_wanted(series_filter=None, max_override=None) -> dict:
     """Search for and grab wanted items (missing + upgrades), respecting two
     caps so an unattended run can't flood the client:
       MAX_ACTIVE  — don't grab if this many torrents are already downloading
       MAX_PER_RUN — grab at most this many per cycle
-    Remaining wants stay 'wanted' and get picked up on the next tick."""
+    Remaining wants stay 'wanted' and get picked up on the next tick.
+    series_filter: if set, only hunt wants for that series id (per-show hunt).
+    max_override: override the per-run cap (used by per-show hunt)."""
     from . import series as series_mod
     db.init()
 
     max_active = int(os.environ.get("HUNT_MAX_ACTIVE", "5"))
-    max_per_run = int(os.environ.get("HUNT_MAX_PER_RUN", "3"))
+    max_per_run = max_override if max_override is not None else int(os.environ.get("HUNT_MAX_PER_RUN", "3"))
 
     # how many torrents are already downloading right now?
     active = 0
@@ -131,6 +133,8 @@ def hunt_wanted() -> dict:
         active = 0
 
     wanted = series_mod.list_wanted("wanted")
+    if series_filter is not None:
+        wanted = [w for w in wanted if w.get("series_id") == series_filter]
     grabbed = 0
     details = []
     if active >= max_active:

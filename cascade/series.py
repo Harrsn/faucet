@@ -178,3 +178,46 @@ def list_wanted(status: str = "wanted") -> list[dict]:
             "LEFT JOIN series s ON s.id=w.series_id WHERE w.status=? ORDER BY w.id",
             (status,)).fetchall()
     return [dict(r) for r in rows]
+
+
+def episode_breakdown(series_id: int) -> dict:
+    """Full season/episode view for the detail page: every canonical episode
+    with whether it's owned (and at what quality). Grouped by season."""
+    from . import library
+    s = get_series(series_id)
+    if not s:
+        return {"series": None, "seasons": []}
+    with db.connect() as c:
+        canon = c.execute(
+            "SELECT season, episode, title, air_date FROM series_episodes "
+            "WHERE series_id=? ORDER BY season, episode", (series_id,)).fetchall()
+    from datetime import datetime
+    today = datetime.now().date().isoformat()
+    seasons = {}
+    have = total = 0
+    for ep in canon:
+        if ep["season"] == 0:
+            continue  # specials shown separately if ever needed
+        owned = library.have_episode(s["title"], ep["season"], ep["episode"])
+        aired = not ep["air_date"] or ep["air_date"] <= today
+        if aired:
+            total += 1
+            if owned:
+                have += 1
+        seasons.setdefault(ep["season"], []).append({
+            "episode": ep["episode"], "title": ep["title"], "air_date": ep["air_date"],
+            "have": bool(owned), "quality": owned.get("quality") if owned else None,
+            "aired": aired,
+        })
+    season_list = [{"season": k, "episodes": v,
+                    "have": sum(1 for e in v if e["have"]),
+                    "total": sum(1 for e in v if e["aired"])}
+                   for k, v in sorted(seasons.items())]
+    return {"series": s, "seasons": season_list, "have": have, "total": total}
+
+
+def hunt_series(series_id: int, max_grabs: int = 3) -> dict:
+    """Reconcile then hunt wanted episodes for ONE series, respecting a cap."""
+    from . import scheduler
+    reconcile(series_id)
+    return scheduler.hunt_wanted(series_filter=series_id, max_override=max_grabs)

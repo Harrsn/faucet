@@ -581,6 +581,18 @@ def api_series_delete(sid: int):
     return {"status": "ok"}
 
 
+@app.get("/api/series/{sid}/episodes")
+def api_series_episodes(sid: int):
+    from . import series as series_mod
+    return series_mod.episode_breakdown(sid)
+
+
+@app.post("/api/series/{sid}/hunt")
+def api_series_hunt(sid: int):
+    from . import series as series_mod
+    return series_mod.hunt_series(sid)
+
+
 @app.get("/api/series/{sid}/wanted")
 def api_series_wanted(sid: int):
     from . import series as series_mod
