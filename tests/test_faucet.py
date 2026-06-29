@@ -547,3 +547,42 @@ def test_monitor_mode_future_skips_backlog(tmp_path, monkeypatch):
         w = c.execute("SELECT COUNT(*) n FROM wanted WHERE series_id=? AND status='wanted'",
                       (sid,)).fetchone()["n"]
     assert w == 0  # backlog skipped
+
+
+def test_episode_hunt_rejects_series_packs(tmp_path, monkeypatch):
+    """A per-episode hunt must never grab a multi-season pack that merely
+    contains the wanted episode (re-downloading seasons you own)."""
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "events.jsonl"))
+    monkeypatch.setenv("JACKETT_API_KEY", "k")
+    monkeypatch.setenv("HUNT_MAX_PER_RUN", "5")
+    monkeypatch.setenv("HUNT_MAX_ACTIVE", "10")
+    import importlib
+    from faucet import config as cfgmod
+    importlib.reload(cfgmod)
+    from faucet import db
+    importlib.reload(db)
+    db.init()
+    from faucet import scheduler as SCH
+    importlib.reload(SCH)
+    GB = 1024 ** 3
+    with db.connect() as c:
+        c.execute("INSERT INTO series (tmdb_id,title,total_seasons,monitored) VALUES (1,'AD',21,1)")
+        sid = c.execute("SELECT id FROM series WHERE title='AD'").fetchone()["id"]
+        c.execute("INSERT INTO wanted (kind,series_id,season,episode,title,reason,status) "
+                  "VALUES ('episode',?,1,1,'AD S01E01','missing','wanted')", (sid,))
+    SCH.searchmod.search = lambda *a, **k: [
+        {"title": "AD 2005.S01-S21.720p-Zero00", "href": "magnet:s", "seeders": 500,
+         "size": int(200 * GB), "badges": {"res": "720p"}},
+        {"title": "AD S01E01 720p", "href": "magnet:e", "seeders": 10,
+         "size": int(GB), "badges": {"res": "720p"}}]
+
+    class FA:
+        id = "a"; name = "x"; duplicate = False
+
+    class FC:
+        def list_transfers(self): return []
+        def add(self, *a, **k): return FA()
+    SCH.make_client = lambda *a, **k: FC()
+    r = SCH.hunt_wanted()
+    grabbed = [d["grabbed"] for d in r["details"] if d.get("grabbed")]
+    assert grabbed and "S01E01" in grabbed[0] and "S01-S21" not in grabbed[0]

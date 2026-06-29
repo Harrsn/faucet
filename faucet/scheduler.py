@@ -254,6 +254,14 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
             continue
 
         fresh = [r for r in results if not db.already_grabbed(r["title"])]
+        # For episode wants, never grab a season or series pack here — the pack
+        # pre-pass already handled pack-worthy seasons, and an episode search can
+        # return huge multi-season packs (e.g. "S01-S21") that contain the query
+        # episode. Grabbing those re-downloads seasons we already own.
+        if kind != "movie":
+            from . import packs as _packs
+            fresh = [r for r in fresh
+                     if _packs.classify_pack(r["title"]).get("kind") == "single"]
         if profile:
             ranked = prof.rank(fresh, profile)
         else:
