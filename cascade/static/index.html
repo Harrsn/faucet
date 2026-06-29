@@ -241,6 +241,17 @@
   .tag.ctype.movie{background:rgba(47,129,247,.15);color:var(--accent);border-color:rgba(47,129,247,.3);}
   .tag.ctype.tv{background:rgba(63,185,80,.15);color:var(--good);border-color:rgba(63,185,80,.3);}
   .tag.platform{background:var(--panel2);color:var(--muted);}
+  /* quality profiles */
+  .prof-card{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:12px 14px;margin-bottom:10px;}
+  .prof-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+  .prof-meta{display:flex;flex-wrap:wrap;gap:5px;align-items:center;font-size:12px;}
+  .prof-meta .muted{color:var(--muted);}
+  .link-btn{background:none;border:none;color:var(--accent);cursor:pointer;font-family:var(--mono);font-size:12px;padding:0 4px;}
+  .link-btn.danger{color:var(--bad);}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;}
+  .chip{background:var(--panel2);border:1px solid var(--line-hi);border-radius:14px;padding:4px 12px;
+    font-size:12px;cursor:pointer;color:var(--muted);user-select:none;}
+  .chip.on{background:var(--accent);border-color:var(--accent);color:#fff;}
   @media (max-width:640px){td.trk,th.trk{display:none;}}
 </style>
 </head>
@@ -250,6 +261,7 @@
     <h1>cascade<span class="dot">·</span></h1>
     <span class="sub">search &amp; manage</span>
     <span class="spacer"></span>
+    <button class="activity-btn" id="profilesBtn" title="Quality profiles">🎯</button>
     <button class="activity-btn" id="statsBtn" title="History &amp; stats">📊</button>
     <button class="activity-btn" id="settingsBtn" title="Settings">⚙️</button>
     <button class="activity-btn" id="activityBtn">Activity <span class="badge-count zero" id="activeCount">0</span></button>
@@ -322,6 +334,15 @@
   <div class="modal">
     <div class="modal-head"><h2>History &amp; stats</h2><button class="modal-close" id="statsClose">×</button></div>
     <div class="modal-body" id="statsBody"></div>
+  </div>
+</div>
+
+<!-- quality profiles modal -->
+<div class="modal-overlay" id="profOverlay">
+  <div class="modal">
+    <div class="modal-head"><h2>Quality profiles</h2><button class="modal-close" id="profClose">×</button></div>
+    <div class="modal-body" id="profBody"></div>
+    <div class="modal-foot"><button class="wiz-btn" id="profNew">+ new profile</button></div>
   </div>
 </div>
 
@@ -933,6 +954,77 @@ async function openStats(){
 $("statsBtn").addEventListener("click",openStats);
 $("statsClose").addEventListener("click",()=>$("statsOverlay").classList.remove("show"));
 $("statsOverlay").addEventListener("click",e=>{ if(e.target.id==="statsOverlay") $("statsOverlay").classList.remove("show"); });
+
+/* ---------------- quality profiles ---------------- */
+const ALL_RES=["2160p","1080p","720p","480p"];
+const ALL_SRC=["REMUX","BluRay","WEB-DL","WEBRip","HDTV","DVDRip"];
+let profiles=[];
+
+async function openProfiles(){
+  $("profOverlay").classList.add("show");
+  $("profBody").innerHTML="<div style='color:var(--muted)'>loading…</div>";
+  try{
+    profiles=(await (await fetch("/api/profiles")).json()).profiles||[];
+    renderProfiles();
+  }catch(_){ $("profBody").innerHTML="<div style='color:var(--bad)'>Couldn't load profiles.</div>"; }
+}
+function renderProfiles(){
+  if(!profiles.length){ $("profBody").innerHTML="<div style='color:var(--muted);padding:10px 0'>No profiles yet. Create one to enable auto-pick.</div>"; return; }
+  $("profBody").innerHTML=profiles.map(p=>`
+    <div class="prof-card" data-id="${p.id}">
+      <div class="prof-head"><b>${esc(p.name)}</b>
+        <span class="prof-actions"><button class="link-btn" data-edit="${p.id}">edit</button>
+        <button class="link-btn danger" data-del="${p.id}">delete</button></span></div>
+      <div class="prof-meta">
+        ${(p.resolutions||[]).map(r=>`<span class="tag res">${esc(r)}</span>`).join("")||'<span class="muted">any res</span>'}
+        ${(p.sources||[]).map(s=>`<span class="tag src">${esc(s)}</span>`).join("")}
+        <span class="muted">· ${p.min_seeders}+ seeders${p.max_size_gb?` · ≤${p.max_size_gb}GB`:''}${p.min_size_gb?` · ≥${p.min_size_gb}GB`:''}</span>
+      </div>
+    </div>`).join("");
+  $("profBody").querySelectorAll("[data-edit]").forEach(b=>b.addEventListener("click",()=>editProfile(+b.dataset.edit)));
+  $("profBody").querySelectorAll("[data-del]").forEach(b=>b.addEventListener("click",()=>delProfile(+b.dataset.del)));
+}
+function profileForm(p){
+  p=p||{name:"",min_seeders:1,resolutions:[],sources:[],max_size_gb:0,min_size_gb:0};
+  $("profBody").innerHTML=`
+    <div class="set-row"><label>Profile name</label><input id="pf_name" value="${esc(p.name)}" placeholder="e.g. 1080p WEB"></div>
+    <div class="set-row"><label>Resolutions (preference order — click to toggle)</label>
+      <div class="chips" id="pf_res">${ALL_RES.map(r=>`<span class="chip ${p.resolutions.includes(r)?'on':''}" data-v="${r}">${r}</span>`).join("")}</div></div>
+    <div class="set-row"><label>Sources (preference order)</label>
+      <div class="chips" id="pf_src">${ALL_SRC.map(s=>`<span class="chip ${p.sources.includes(s)?'on':''}" data-v="${s}">${s}</span>`).join("")}</div></div>
+    <div class="wiz-grid2">
+      <div class="set-row"><label>Min seeders</label><input id="pf_seed" type="number" min="0" value="${p.min_seeders}"></div>
+      <div class="set-row"><label>Max size GB (0=none)</label><input id="pf_max" type="number" min="0" step="0.5" value="${p.max_size_gb}"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="wiz-btn" id="pf_save">${p.id?'save':'create'}</button>
+      <button class="wiz-btn ghost" id="pf_cancel">cancel</button>
+    </div>`;
+  // chips toggle + track order
+  $("profBody").querySelectorAll(".chip").forEach(ch=>ch.addEventListener("click",()=>ch.classList.toggle("on")));
+  $("pf_cancel").addEventListener("click",renderProfiles);
+  $("pf_save").addEventListener("click",async()=>{
+    const body={ name:$("pf_name").value.trim(),
+      resolutions:[...$("pf_res").querySelectorAll(".chip.on")].map(c=>c.dataset.v),
+      sources:[...$("pf_src").querySelectorAll(".chip.on")].map(c=>c.dataset.v),
+      min_seeders:+$("pf_seed").value||0, max_size_gb:+$("pf_max").value||0, min_size_gb:0 };
+    if(!body.name){ toast("Name required","err"); return; }
+    const url=p.id?`/api/profiles/${p.id}`:"/api/profiles";
+    const method=p.id?"PUT":"POST";
+    try{ await fetch(url,{method,headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+      toast("Profile saved."); await openProfiles();
+    }catch(_){ toast("Save failed","err"); }
+  });
+}
+function editProfile(id){ profileForm(profiles.find(p=>p.id===id)); }
+async function delProfile(id){
+  try{ await fetch(`/api/profiles/${id}`,{method:"DELETE"}); toast("Deleted."); await openProfiles(); }
+  catch(_){ toast("Delete failed","err"); }
+}
+$("profilesBtn").addEventListener("click",openProfiles);
+$("profClose").addEventListener("click",()=>$("profOverlay").classList.remove("show"));
+$("profOverlay").addEventListener("click",e=>{ if(e.target.id==="profOverlay") $("profOverlay").classList.remove("show"); });
+$("profNew").addEventListener("click",()=>profileForm(null));
 
 async function refreshMeta(){
   try{ const r=await fetch("/api/meta/search?q=test"); const d=await r.json(); metaEnabled=!!d.enabled; }
