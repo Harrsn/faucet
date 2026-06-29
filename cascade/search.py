@@ -7,6 +7,8 @@ from urllib.parse import quote
 
 import requests
 
+from .classify import classify
+
 CATS = {"movies": "2000", "tv": "5000", "all": ""}
 _NS = "{http://torznab.com/schemas/2015/feed}"
 
@@ -119,16 +121,25 @@ def search(jackett_url: str, api_key: str, indexer: str, query: str,
         peers = _attr(item, "peers")
         size = item.findtext("size") or _attr(item, "size") or "0"
         tracker = _attr(item, "tracker") or item.findtext("jackettindexer") or ""
+        # capture the indexer category (authoritative for content type)
+        cat_attr = _attr(item, "category")
+        try:
+            cat_num = int(cat_attr) if cat_attr else None
+        except (ValueError, TypeError):
+            cat_num = None
         try:
             size_i = int(size)
         except (ValueError, TypeError):
             size_i = 0
+        klass = classify(title, cat_num)
         results.append({
             "title": title, "href": href, "is_magnet": href.startswith("magnet:"),
             "seeders": int(seeders) if seeders and seeders.isdigit() else 0,
             "peers": int(peers) if peers and peers.isdigit() else 0,
             "size": size_i, "size_h": human_size(size_i),
             "tracker": tracker, "badges": parse_badges(title),
+            "ctype": klass["type"], "platform": klass["platform"],
+            "category": cat_num,
         })
     results.sort(key=lambda x: x["seeders"], reverse=True)
     return results[:limit]
