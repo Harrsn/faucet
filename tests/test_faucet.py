@@ -739,3 +739,34 @@ def test_request_gating(tmp_path, monkeypatch):
     assert bob.get("/api/transfers").status_code == 403        # torrents blocked
     assert bob.post("/api/add", json={}, headers={"X-CSRF-Token": bcsrf}).status_code == 403
     assert bob.post("/api/series", json={}, headers={"X-CSRF-Token": bcsrf}).status_code == 403
+
+
+def test_sorter_no_duplicate_on_same_share(tmp_path, monkeypatch):
+    """On CIFS (hardlink unsupported) but same share, files MOVE without
+    duplicating; only genuine cross-fs falls back to copy."""
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "ev.jsonl"))
+    import importlib, os, logging
+    from faucet import sort as S
+    importlib.reload(S)
+    S.MODE = "auto"
+    logging.disable(logging.CRITICAL)
+
+    # simulate CIFS: hardlink unsupported
+    monkeypatch.setattr(os, "link", lambda *a, **k: (_ for _ in ()).throw(OSError("cifs")))
+
+    src = tmp_path / "torrents" / "show.mkv"
+    src.parent.mkdir(parents=True)
+    src.write_bytes(b"x" * 1000)
+    dest = tmp_path / "media" / "tvshows" / "show.mkv"
+    S.place(src, dest, dry=False)
+    assert dest.exists() and not src.exists()      # moved, no duplicate
+
+    # cross-fs: rename also fails -> copy (source kept)
+    monkeypatch.setattr(os, "rename", lambda *a, **k: (_ for _ in ()).throw(OSError("xdev")))
+    src2 = tmp_path / "dl" / "m.mkv"
+    src2.parent.mkdir(parents=True)
+    src2.write_bytes(b"q" * 800)
+    dest2 = tmp_path / "lib2" / "m.mkv"
+    S.place(src2, dest2, dry=False)
+    assert dest2.exists() and src2.exists()        # copied (last resort)
+    logging.disable(logging.NOTSET)

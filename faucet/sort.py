@@ -55,7 +55,7 @@ GAME_EXTS = {".iso", ".bin", ".cue", ".nsp", ".xci", ".rom", ".pkg", ".rvz",
              ".wbfs", ".chd", ".rpx", ".cia", ".3ds", ".nds", ".gba"}
 ARCHIVE_EXTS = {".zip", ".rar", ".7z", ".tar", ".gz"}
 
-MODE = os.environ.get("MEDIASORT_MODE", "hardlink")  # hardlink | copy | move
+MODE = os.environ.get("MEDIASORT_MODE", "auto")  # auto | hardlink | copy | move
 MIN_SIZE_MB = int(os.environ.get("MEDIASORT_MIN_MB", "50"))
 LOG_FILE = os.environ.get("MEDIASORT_LOG", "/var/log/mediasort.log")
 
@@ -193,7 +193,19 @@ def plan_destination(video: Path):
 
 
 def place(src: Path, dest: Path, dry: bool):
-    """Hardlink/copy/move src to dest per MODE. Idempotent on equal size."""
+    """Place src at dest using the best available method. Idempotent on equal size.
+
+    Strategy (MODE='auto', the default):
+      1. hardlink — one copy of bytes, source kept so torrents keep seeding.
+         Works only on the same *local* filesystem (not CIFS/SMB).
+      2. move (rename) — instant, no duplication, when 1 isn't supported but
+         src and dest share a filesystem (e.g. both on the same NAS share).
+         Source disappears, so seeding of that torrent stops.
+      3. copy — last resort, only when src and dest are genuinely on different
+         filesystems. This is the one that duplicates bytes; we avoid it unless
+         nothing else works.
+    Explicit MODE='move'/'copy'/'hardlink' forces a single method.
+    """
     if dest.exists() and dest.stat().st_size == src.stat().st_size:
         logging.info("EXISTS (same size), skipping: %s", dest)
         return
@@ -203,12 +215,21 @@ def place(src: Path, dest: Path, dry: bool):
 
     dest.parent.mkdir(parents=True, exist_ok=True)
 
+    # explicit single-method modes
     if MODE == "move":
         shutil.move(str(src), str(dest))
         logging.info("MOVED %s -> %s", src.name, dest)
         return
+    if MODE == "copy":
+        if dest.exists():
+            dest.unlink()
+        shutil.copy2(src, dest)
+        logging.info("COPIED %s -> %s", src.name, dest)
+        return
 
-    if MODE == "hardlink":
+    # auto / hardlink: try hardlink, then move (same-fs rename), then copy.
+    # 1. hardlink (keeps seeding, zero extra space — same local fs only)
+    if MODE in ("auto", "hardlink"):
         try:
             if dest.exists():
                 dest.unlink()
@@ -216,11 +237,24 @@ def place(src: Path, dest: Path, dry: bool):
             logging.info("LINKED %s -> %s", src.name, dest)
             return
         except OSError:
-            # cross-device (very likely: local download dir -> CIFS NAS) -> copy
-            logging.info("hardlink failed (cross-fs), copying instead")
+            logging.info("hardlink not supported here (likely CIFS/SMB)")
 
+    # 2. move via rename — instant and dup-free when src/dest share a filesystem
+    #    (your case: download dir and library both on the same NAS share).
+    try:
+        if dest.exists():
+            dest.unlink()
+        os.rename(src, dest)
+        logging.info("MOVED (same-fs rename) %s -> %s", src.name, dest)
+        return
+    except OSError:
+        logging.info("same-fs rename not possible (cross-filesystem) — copying")
+
+    # 3. copy — genuinely different filesystems; the only case that duplicates.
+    if dest.exists():
+        dest.unlink()
     shutil.copy2(src, dest)
-    logging.info("COPIED %s -> %s", src.name, dest)
+    logging.info("COPIED (cross-fs) %s -> %s", src.name, dest)
 
 
 # ----------------------------------------------------------------------------
@@ -262,11 +296,14 @@ def handle_game(root: Path, platform: str | None, dry: bool) -> bool:
         if MODE == "move":
             shutil.move(str(root), str(dest))
         else:
-            # copy tree/file (hardlinking a whole tree across CIFS isn't reliable)
-            if root.is_dir():
-                shutil.copytree(str(root), str(dest))
-            else:
-                shutil.copy2(str(root), str(dest))
+            # try same-fs rename first (instant, no dup), then copy the tree.
+            try:
+                os.rename(str(root), str(dest))
+            except OSError:
+                if root.is_dir():
+                    shutil.copytree(str(root), str(dest))
+                else:
+                    shutil.copy2(str(root), str(dest))
         logging.info("GAME filed %s -> %s", root.name, dest)
         return True
     except (OSError, shutil.Error) as e:
