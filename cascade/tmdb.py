@@ -94,6 +94,38 @@ def search(query: str, kind: str = "multi") -> list[dict]:
     return out
 
 
+def episodes(tmdb_id: int, total_seasons: int) -> list[dict]:
+    """Fetch the full canonical episode list across all seasons.
+    Returns [{season, episode, title, air_date}] — the 'what should exist'
+    data reconciliation diffs against the library. Cached per season."""
+    if not enabled():
+        return []
+    out = []
+    for season_no in range(1, (total_seasons or 0) + 1):
+        ck = f"season:{tmdb_id}:{season_no}"
+        cached = _cache_get(ck)
+        if cached is not None:
+            out.extend(cached)
+            continue
+        try:
+            data = _get(f"/tv/{tmdb_id}/season/{season_no}", {})
+        except requests.RequestException:
+            continue
+        season_eps = []
+        for ep in data.get("episodes", []):
+            if ep.get("episode_number") is None:
+                continue
+            season_eps.append({
+                "season": ep.get("season_number", season_no),
+                "episode": ep.get("episode_number"),
+                "title": ep.get("name", ""),
+                "air_date": ep.get("air_date") or "",
+            })
+        _cache_put(ck, season_eps)
+        out.extend(season_eps)
+    return out
+
+
 def details(tmdb_id: int, media_type: str) -> dict:
     if not enabled():
         return {}
