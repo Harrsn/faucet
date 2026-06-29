@@ -263,6 +263,14 @@ def _migrate(c) -> None:
         return {r["name"] for r in c.execute(f"PRAGMA table_info({table})").fetchall()}
     add = [
         ("series", "monitor_mode", "TEXT DEFAULT 'all'"),
+        # request/approval flow: tie requests to a real user account, track who
+        # approved/decided and when; default-approve trusted users.
+        ("requests", "user_id", "INTEGER"),
+        ("requests", "decided_by", "INTEGER"),
+        ("requests", "decided_ts", "TEXT"),
+        ("requests", "series_id", "INTEGER"),   # link once it becomes monitored
+        ("requests", "movie_id", "INTEGER"),
+        ("users", "can_autoapprove", "INTEGER DEFAULT 0"),
     ]
     for table, col, decl in add:
         try:

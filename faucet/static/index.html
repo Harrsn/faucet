@@ -128,6 +128,12 @@
   .lnk{color:var(--accent);cursor:pointer;margin-left:10px;font-size:12px;}
   .lnk:hover{text-decoration:underline;}
   .lnk.danger{color:var(--bad);}
+  /* regular (non-admin) users: hide destructive/management controls */
+  body.role-user .remove,body.role-user [data-act="remove"],body.role-user .huntbtn{display:none !important;}
+  .reqcard{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:12px;}
+  .reqacts{display:flex;gap:6px;flex-shrink:0;}
+  .btn.sm{padding:5px 10px;font-size:12px;}
+  .pagetitle{margin:0 0 14px;}
   .pill.want{background:rgba(210,153,34,.15);color:var(--warn);border-color:rgba(210,153,34,.3);}
   .pill.have{background:rgba(63,185,80,.15);color:var(--good);border-color:rgba(63,185,80,.3);}
 
@@ -649,11 +655,12 @@ async function scanHunt(kind){
 
 // add show/movie via TMDb poster search (shared modal)
 function addMediaForm(kind){
+  const admin = ME && ME.role==="admin";
   const opts=`<option value="">no profile (best-seeded)</option>`+profilesCache.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join("");
-  openModal(kind==="show"?"Add show":"Add movie",`
+  openModal(admin?(kind==="show"?"Add show":"Add movie"):(kind==="show"?"Request a show":"Request a movie"),`
     <label class="fld">Search ${kind==="show"?"a show":"a movie"} (TMDb)</label>
     <input type="text" id="am_q" placeholder="${kind==="show"?'e.g. the office':'e.g. dune'}" autocomplete="off" style="width:100%">
-    <label class="fld">Quality profile</label><select id="am_prof" style="width:100%">${opts}</select>
+    ${admin?`<label class="fld">Quality profile</label><select id="am_prof" style="width:100%">${opts}</select>`:`<div class="muted" style="font-size:12px;margin-top:8px">Pick a title to request it. An admin reviews requests unless you're trusted.</div>`}
     <div id="am_results" class="poster-grid" style="margin-top:10px"></div>`);
   let t=null;
   $("am_q").addEventListener("input",()=>{clearTimeout(t);t=setTimeout(()=>amSearch(kind),400);});
@@ -672,7 +679,20 @@ async function amSearch(kind){
   }catch(_){$("am_results").innerHTML="<div class='muted'>Search failed.</div>";}
 }
 async function amAdd(kind,d){
-  const body={tmdb_id:+d.tmdb,title:d.title,year:d.year?+d.year:null,poster:d.poster||null,profile_id:$("am_prof").value?+$("am_prof").value:null};
+  const admin = ME && ME.role==="admin";
+  if(!admin){
+    // regular users REQUEST instead of directly monitoring
+    try{
+      const res=await jsend("/api/requests","POST",{media_type:kind==="show"?"tv":"movie",tmdb_id:+d.tmdb,title:d.title,year:d.year?+d.year:null,poster:d.poster||null});
+      if(res.status==="already_available") toast(`${d.title} is already in the library.`);
+      else if(res.status==="already_requested") toast(`${d.title} was already requested.`);
+      else if(res.status==="auto_approved") toast(`Requested — auto-approved and being added.`);
+      else toast(`Requested ${d.title}. An admin will review it.`);
+      closeModal();
+    }catch(e){toast(e.message||"Couldn't request","err");}
+    return;
+  }
+  const body={tmdb_id:+d.tmdb,title:d.title,year:d.year?+d.year:null,poster:d.poster||null,profile_id:$("am_prof")&&$("am_prof").value?+$("am_prof").value:null};
   try{await jsend(kind==="show"?"/api/series":"/api/movies","POST",body);toast(`Now monitoring ${d.title}.`);closeModal();kind==="show"?loadShows():loadMovies();}
   catch(_){toast("Couldn't add","err");}
 }
@@ -824,9 +844,71 @@ let ME=null;
 async function loadMe(){
   try{ const d=await jget("/api/auth/me");
     if(d.authenticated){ ME=d.user;
-      if(ME.role==="admin") $("usersBtn").style.display="";
+      applyRoleUI();
     }
   }catch(_){}
+}
+function applyRoleUI(){
+  const admin = ME && ME.role==="admin";
+  // admin-only nav surfaces
+  if(admin) $("usersBtn").style.display="";
+  // hide indexer Search, Auto-grab, Profiles, Settings, Activity from non-admins
+  ["search","subs","profiles"].forEach(p=>{
+    const el=document.querySelector(`.navlink[data-page="${p}"]`);
+    if(el) el.style.display = admin ? "" : "none";
+  });
+  if(!admin){
+    $("settingsBtn").style.display="none";
+    $("activityBtn").style.display="none";
+  }
+  // everyone gets a Requests nav entry; build it once
+  if(!document.querySelector('.navlink[data-page="requests"]')){
+    const reqLink=document.createElement("span");
+    reqLink.className="navlink"; reqLink.dataset.page="requests";
+    reqLink.textContent= admin ? "Requests" : "My Requests";
+    reqLink.addEventListener("click",()=>navRequests());
+    // insert after Movies
+    const movies=document.querySelector('.navlink[data-page="movies"]');
+    movies.parentNode.insertBefore(reqLink, movies.nextSibling);
+  }
+  // non-admins land on Shows (library browse) instead of indexer Search
+  if(!admin){
+    try{ nav("shows"); }catch(_){}
+    // relabel add -> Request, hide admin-only library management controls
+    const sa=$("showsAdd"), ma=$("moviesAdd");
+    if(sa) sa.textContent="+ Request show";
+    if(ma) ma.textContent="+ Request movie";
+    ["showsReport","showsImport","showsScan","moviesImport","moviesScan"].forEach(id=>{const el=$(id);if(el)el.style.display="none";});
+    // CSS hook to hide remove links and detail hunt controls for users
+    document.body.classList.add("role-user");
+  }
+}
+
+async function navRequests(){
+  document.querySelectorAll(".navlink").forEach(l=>l.classList.toggle("on",l.dataset.page==="requests"));
+  ["search","shows","movies","subs","profiles","showdetail","moviedetail"].forEach(p=>{const el=$("page-"+p);if(el)el.classList.remove("on");});
+  let host=$("page-requests");
+  if(!host){ host=document.createElement("section"); host.className="page"; host.id="page-requests";
+    document.querySelector(".wrap").appendChild(host); }
+  host.classList.add("on");
+  host.innerHTML=`<div class="muted">loading…</div>`;
+  const admin = ME && ME.role==="admin";
+  let reqs=[];
+  try{ reqs=(await jget("/api/requests")).requests; }catch(e){ host.innerHTML=`<div class="empty">Couldn't load requests.</div>`; return; }
+  if(!reqs.length){ host.innerHTML=`<div class="empty">No requests yet. ${admin?"":"Browse Shows or Movies and hit <b>Request</b> on something not in the library."}</div>`; return; }
+  const card=r=>`<div class="reqcard">
+    <div class="reqmeta"><b>${esc(r.title)}</b> ${r.year?`<span class="muted">(${r.year})</span>`:""}
+      <span class="pill ${r.status==='approved'?'have':(r.status==='pending'?'want':'')}">${esc(r.status)}</span>
+      <span class="muted" style="font-size:11px"> · ${esc(r.media_type)} · by ${esc(r.user||'?')}</span></div>
+    ${admin && r.status==='pending' ? `<div class="reqacts">
+      <button class="btn sm" data-act="approve" data-id="${r.id}">approve</button>
+      <button class="btn sm ghost" data-act="decline" data-id="${r.id}">decline</button></div>`:""}
+  </div>`;
+  host.innerHTML=`<h2 class="pagetitle">${admin?"Requests":"My Requests"}</h2>`+reqs.map(card).join("");
+  host.querySelectorAll("button[data-act]").forEach(b=>b.addEventListener("click",async()=>{
+    try{ await jsend(`/api/requests/${b.dataset.id}/${b.dataset.act}`,"POST"); navRequests(); }
+    catch(e){ toast(e.message,"err"); }
+  }));
 }
 $("accountBtn").addEventListener("click",()=>{
   if(!ME){location.href="/login";return;}
@@ -861,6 +943,7 @@ async function renderUsers(){
       ${u.status!=='active'?`<a class="lnk" data-act="status" data-id="${u.id}" data-val="active">approve</a>`:''}
       ${u.status==='active'&&u.id!==ME.id?`<a class="lnk" data-act="status" data-id="${u.id}" data-val="disabled">disable</a>`:''}
       ${u.id!==ME.id?`<a class="lnk" data-act="role" data-id="${u.id}" data-val="${u.role==='admin'?'user':'admin'}">${u.role==='admin'?'demote':'make admin'}</a>`:''}
+      <a class="lnk" data-act="autoapprove" data-id="${u.id}" data-val="${u.can_autoapprove?0:1}">${u.can_autoapprove?'require approval':'trust (auto-approve)'}</a>
       <a class="lnk" data-act="reset" data-id="${u.id}">reset pw</a>
       ${u.id!==ME.id?`<a class="lnk danger" data-act="delete" data-id="${u.id}">delete</a>`:''}
     </td></tr>`).join("");
@@ -879,6 +962,7 @@ async function renderUsers(){
     try{
       if(act==="status") await jsend(`/api/admin/users/${id}/status?status=${val}`,"POST");
       else if(act==="role") await jsend(`/api/admin/users/${id}/role?role=${val}`,"POST");
+      else if(act==="autoapprove") await jsend(`/api/admin/users/${id}/autoapprove?enabled=${val}`,"POST");
       else if(act==="delete"){ if(!confirm("Delete this user?"))return; await jsend(`/api/admin/users/${id}`,"DELETE"); }
       else if(act==="reset"){ const d=await jsend(`/api/admin/users/${id}/reset`,"POST");
         prompt("Give this one-time reset link to the user:", location.origin+d.reset_path); return; }

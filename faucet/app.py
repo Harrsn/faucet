@@ -95,8 +95,10 @@ async def _auth_gate(request: _Request, call_next):
             return _JSONResponse({"detail": "Authentication required."}, status_code=401)
         from fastapi.responses import RedirectResponse as _Redirect
         return _Redirect(url="/login", status_code=302)
-    # admin-only: management endpoints
-    if _admin_only(path) and user.get("role") != "admin":
+    # admin-only: management endpoints (writes, search, torrents, settings).
+    # Library *reads* (GET series/movies) are allowed for any logged-in user so
+    # they can browse what's available; everything else stays admin-only.
+    if _admin_only(path, request.method) and user.get("role") != "admin":
         if path.startswith("/api/"):
             return _JSONResponse({"detail": "Admin access required."}, status_code=403)
         from fastapi.responses import RedirectResponse as _Redirect
@@ -105,15 +107,33 @@ async def _auth_gate(request: _Request, call_next):
     return await call_next(request)
 
 
-# Management surfaces are admin-only. Regular users get search/activity/(requests).
-_ADMIN_PREFIXES = (
-    "/api/series", "/api/movies", "/api/profiles", "/api/subscriptions",
-    "/api/library", "/api/settings", "/api/torrent", "/api/admin",
+# Endpoints regular users may READ: browse the monitored library and search
+# TMDb (to request). Safe, non-indexer, non-torrent reads.
+_USER_READABLE = ("/api/series", "/api/movies", "/api/meta/")
+
+# Always admin-only regardless of method — raw indexer search, torrent client,
+# download management, settings, profiles, subscriptions, hunts, library ops.
+_ADMIN_ALWAYS = (
+    "/api/search", "/api/indexers", "/api/torrent", "/api/transfers",
+    "/api/add", "/api/profiles", "/api/subscriptions", "/api/library",
+    "/api/settings", "/api/setup", "/api/admin", "/api/stats", "/api/config",
+    "/api/events", "/api/history", "/api/wanted",
 )
 
 
-def _admin_only(path: str) -> bool:
-    return any(path.startswith(p) for p in _ADMIN_PREFIXES)
+def _admin_only(path: str, method: str) -> bool:
+    # /api/requests is user-level (router enforces per-action perms).
+    if path.startswith("/api/requests"):
+        return False
+    if any(path.startswith(p) for p in _ADMIN_ALWAYS):
+        return True
+    # series/movies/meta: GET is user-readable; writes are admin-only.
+    if any(path.startswith(p) for p in _USER_READABLE):
+        return method not in ("GET", "HEAD")
+    # any other /api/ not explicitly public/readable: admin-only by default
+    if path.startswith("/api/"):
+        return True
+    return False
 
 
 def cfg():

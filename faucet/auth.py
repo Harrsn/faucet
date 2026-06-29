@@ -125,8 +125,8 @@ def get_user_by_name(username: str) -> dict | None:
 def list_users() -> list[dict]:
     with db.connect() as c:
         rows = c.execute(
-            "SELECT id, username, email, role, status, created_ts, last_login "
-            "FROM users ORDER BY id").fetchall()
+            "SELECT id, username, email, role, status, created_ts, last_login, "
+            "can_autoapprove FROM users ORDER BY id").fetchall()
     return [dict(r) for r in rows]
 
 
