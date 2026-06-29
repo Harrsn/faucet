@@ -383,6 +383,87 @@ def api_history_stats():
 
 
 
+# --- quality profiles ---
+class ProfileBody(BaseModel):
+    name: str
+    min_seeders: int = 1
+    resolutions: list[str] = []
+    sources: list[str] = []
+    max_size_gb: float = 0
+    min_size_gb: float = 0
+
+
+@app.get("/api/profiles")
+def api_profiles_list():
+    import json as _json
+    with db.connect() as c:
+        rows = c.execute("SELECT * FROM profiles ORDER BY id").fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["resolutions"] = _json.loads(d.get("resolutions") or "[]")
+        d["sources"] = _json.loads(d.get("sources") or "[]")
+        out.append(d)
+    return {"profiles": out}
+
+
+@app.post("/api/profiles")
+def api_profiles_create(p: ProfileBody):
+    import json as _json
+    with db.connect() as c:
+        cur = c.execute(
+            "INSERT INTO profiles (name, min_seeders, resolutions, sources, max_size_gb, min_size_gb) "
+            "VALUES (?,?,?,?,?,?)",
+            (p.name, p.min_seeders, _json.dumps(p.resolutions), _json.dumps(p.sources),
+             p.max_size_gb, p.min_size_gb))
+        pid = cur.lastrowid
+    return {"status": "ok", "id": pid}
+
+
+@app.put("/api/profiles/{pid}")
+def api_profiles_update(pid: int, p: ProfileBody):
+    import json as _json
+    with db.connect() as c:
+        c.execute(
+            "UPDATE profiles SET name=?, min_seeders=?, resolutions=?, sources=?, "
+            "max_size_gb=?, min_size_gb=? WHERE id=?",
+            (p.name, p.min_seeders, _json.dumps(p.resolutions), _json.dumps(p.sources),
+             p.max_size_gb, p.min_size_gb, pid))
+    return {"status": "ok"}
+
+
+@app.delete("/api/profiles/{pid}")
+def api_profiles_delete(pid: int):
+    with db.connect() as c:
+        c.execute("DELETE FROM profiles WHERE id=?", (pid,))
+    return {"status": "ok"}
+
+
+@app.get("/api/search/best")
+def api_search_best(q: str = Query(..., min_length=1), cat: str = Query("all"),
+                    profile_id: int = Query(...)):
+    """Search and return the single best release per the given profile, plus the
+    full ranked list. Powers the 'auto-pick' button."""
+    import json as _json
+    from . import profiles as prof
+    with db.connect() as c:
+        row = c.execute("SELECT * FROM profiles WHERE id=?", (profile_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Profile not found")
+    profile = dict(row)
+    profile["resolutions"] = _json.loads(profile.get("resolutions") or "[]")
+    profile["sources"] = _json.loads(profile.get("sources") or "[]")
+    try:
+        results = searchmod.search(cfg().jackett_url, cfg().jackett_api_key,
+                                   cfg().jackett_indexer, q, cat, cfg().search_limit,
+                                   cfg().request_timeout)
+    except searchmod.SearchError as e:
+        raise HTTPException(502, str(e))
+    ranked = prof.rank(results, profile)
+    return {"query": q, "profile": profile["name"], "best": ranked[0] if ranked else None,
+            "ranked": ranked, "considered": len(results), "qualified": len(ranked)}
+
+
 @app.get("/health")
 def health():
     status = {"indexer": "unknown", "client": "unknown"}
