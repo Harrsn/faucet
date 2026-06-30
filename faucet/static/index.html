@@ -700,9 +700,10 @@ $("fixQuery")&&$("fixQuery").addEventListener("keydown",e=>{if(e.key==="Enter")r
 $("fixModal")&&$("fixModal").addEventListener("click",e=>{if(e.target===$("fixModal"))closeFixMatch();});
 
 // ── Terminal file browser ──
-let fbCwd="",fbArmed=null;  // fbArmed = {rel,name} of a file queued to move
-function openFileBrowser(seedPath){fbArmed=null;fbCwd=seedPath||"";$("fbModal").classList.add("show");fbLoad(fbCwd);}
-function closeFileBrowser(){$("fbModal").classList.remove("show");fbArmed=null;}
+let fbCwd="",fbArmed=null,fbSelectMovie=null;  // fbSelectMovie set => "select this file" mode
+function openFileBrowser(seedPath){fbArmed=null;fbSelectMovie=null;fbCwd=seedPath||"";$("fbModal").classList.add("show");fbLoad(fbCwd);}
+function openFilePicker(movieId,seedPath){fbArmed=null;fbSelectMovie=movieId;fbCwd=seedPath||"";$("fbModal").classList.add("show");fbLoad(fbCwd);}
+function closeFileBrowser(){$("fbModal").classList.remove("show");fbArmed=null;fbSelectMovie=null;}
 async function fbLoad(path){
   $("fbList").innerHTML="<div style='padding:14px;color:#5a6b80'>loading…</div>";
   try{
@@ -715,26 +716,44 @@ async function fbLoad(path){
     $("fbList").innerHTML=(d.entries||[]).map(e=>{
       const ic=e.kind==='dir'?'📁':e.kind==='video'?'🎬':'📄';
       const sz=e.kind==='dir'?'':human(e.size||0);
-      const pickBtn=e.kind!=='dir'?`<button class="pick" data-pick="${esc(e.rel)}" data-nm="${esc(e.name)}">move</button>`:'';
+      let actBtn='';
+      if(e.kind!=='dir'){
+        if(fbSelectMovie&&e.kind==='video')actBtn=`<button class="pick" data-sel="${esc(e.rel)}" data-nm="${esc(e.name)}">use this</button>`;
+        else if(!fbSelectMovie)actBtn=`<button class="pick" data-pick="${esc(e.rel)}" data-nm="${esc(e.name)}">move</button>`;
+      }
       return `<div class="fb-row ${e.kind}" data-rel="${esc(e.rel)}" data-kind="${e.kind}">
         <span class="ic">${ic}</span><span class="nm">${esc(e.name)}</span>
-        <span class="sz">${sz}</span>${pickBtn}</div>`;
+        <span class="sz">${sz}</span>${actBtn}</div>`;
     }).join("")||"<div style='padding:14px;color:#5a6b80'>empty</div>";
     // navigate into dirs
     $("fbList").querySelectorAll(".fb-row.dir").forEach(row=>row.addEventListener("click",e=>{
-      if(e.target.closest("[data-pick]"))return;fbLoad(row.dataset.rel);}));
+      if(e.target.closest("[data-pick],[data-sel]"))return;fbLoad(row.dataset.rel);}));
     // arm a file for moving
     $("fbList").querySelectorAll("[data-pick]").forEach(b=>b.addEventListener("click",e=>{
       e.stopPropagation();fbArmed={rel:b.dataset.pick,name:b.dataset.nm};fbUpdateFoot();}));
+    // select a file as a movie's library file (picker mode)
+    $("fbList").querySelectorAll("[data-sel]").forEach(b=>b.addEventListener("click",async e=>{
+      e.stopPropagation();await fbSelectFile(b.dataset.sel,b.dataset.nm);}));
     fbUpdateFoot();
   }catch(_){$("fbList").innerHTML="<div style='padding:14px;color:#e06b6b'>Couldn't list directory.</div>";}
 }
 function fbUpdateFoot(){
   const f=$("fbFoot");
+  if(fbSelectMovie){f.classList.add("armed");
+    f.innerHTML=`▶ pick the file for this movie — click <b>use this</b> on the right video file.`;return;}
   if(fbArmed){f.classList.add("armed");
     f.innerHTML=`▶ moving <b>${esc(fbArmed.name)}</b> — navigate to a folder, then <button class="fb-mk" id="fbDrop">drop here</button> <button class="fb-mk" id="fbCancel">cancel</button>`;
     $("fbDrop").onclick=fbDoMove;$("fbCancel").onclick=()=>{fbArmed=null;fbUpdateFoot();};}
   else{f.classList.remove("armed");f.textContent="click \"move\" on a file, then navigate to its destination folder.";}
+}
+async function fbSelectFile(rel,name){
+  if(!fbSelectMovie)return;
+  try{
+    const r=await jsend(`/api/admin/movie/${fbSelectMovie}/link-file`,"POST",{rel});
+    if(r.error){toast(r.error,"err");return;}
+    toast(`Linked: ${name}`);
+    const mid=fbSelectMovie;closeFileBrowser();openMovieDetail(mid);
+  }catch(_){toast("Couldn't link file","err");}
 }
 async function fbDoMove(){
   if(!fbArmed)return;
@@ -843,7 +862,7 @@ $("mdProfile")&&$("mdProfile").addEventListener("change",async()=>{
     toast("Profile updated.");}
   catch(_){toast("Couldn't update profile","err");}
 });
-$("mdFixLoc")&&$("mdFixLoc").addEventListener("click",()=>openFileBrowser(""));
+$("mdFixLoc")&&$("mdFixLoc").addEventListener("click",()=>openFilePicker(mdCurrentId,""));
 $("mdSearch").addEventListener("click",async()=>{
   if(!mdCurrentId)return;$("mdSearch").disabled=true;$("mdSearch").textContent="searching…";
   try{

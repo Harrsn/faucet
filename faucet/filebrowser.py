@@ -107,6 +107,16 @@ def list_dir(rel_path: str = "") -> dict:
     }
 
 
+def resolve_abs(rel_path: str) -> str | None:
+    """Return the validated ABSOLUTE path for a rel path inside the root, or
+    None if it escapes / doesn't exist. Used when another module needs the real
+    on-disk path the user selected in the browser (e.g. linking a movie file)."""
+    p = _safe(rel_path)
+    if p is None or not p.exists():
+        return None
+    return str(p)
+
+
 def move(src_rel: str, dest_dir_rel: str, new_name: str | None = None) -> dict:
     """Move a file/dir to a destination directory, both validated inside root.
     Never overwrites. Creates the destination dir if needed (inside root)."""
