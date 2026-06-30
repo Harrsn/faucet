@@ -380,6 +380,31 @@ def release_is_game(root: Path) -> bool:
     return has_archive and not has_video
 
 
+def _cleanup_release_dir(root: Path) -> None:
+    """Remove a leftover torrent folder after its video(s) have been moved out.
+    Safe by design: only deletes when nothing of value remains — i.e. the dir
+    holds only known junk (tracker .txt/.nfo/.url notices, sample files, images,
+    empty subdirs). If any sizeable or unrecognized file is present, leaves the
+    folder alone rather than risk deleting wanted data."""
+    JUNK_EXTS = {".txt", ".nfo", ".url", ".sfv", ".jpg", ".jpeg", ".png",
+                 ".gif", ".md5", ".srr", ".diz"}
+    SMALL = 5 * 1024 * 1024  # 5 MB — anything bigger we won't auto-delete
+    try:
+        leftovers = [p for p in root.rglob("*") if p.is_file()]
+        for p in leftovers:
+            name = p.name.lower()
+            is_junk = (p.suffix.lower() in JUNK_EXTS
+                       or "sample" in name
+                       or p.stat().st_size < SMALL)
+            if not is_junk:
+                logging.info("leaving release dir (has non-junk file): %s", p.name)
+                return
+        shutil.rmtree(root)
+        logging.info("cleaned up leftover release dir: %s", root.name)
+    except OSError as e:
+        logging.warning("could not clean release dir %s: %s", root, e)
+
+
 def main():
     ap = argparse.ArgumentParser(description="Sort media into Plex/Jellyfin tree.")
     ap.add_argument("paths", nargs="*", help="File(s) or dir(s) to process.")
@@ -428,6 +453,14 @@ def main():
             for sub in find_sidecars(video):
                 place(sub, dest_dir / (dest.stem + sub.suffix), dry)
             processed += 1
+
+        # Clean up the leftover torrent folder once its video(s) are filed.
+        # Only when MODE actually relocated the video (move/auto) — for
+        # copy/hardlink we leave the source so seeding keeps working. And only
+        # if no video files remain (don't nuke a dir with unsorted content).
+        if (not dry and root.is_dir() and MODE in ("move", "auto")
+                and not any(True for _ in iter_video_files(root))):
+            _cleanup_release_dir(root)
 
     logging.info("Done. %d video file(s) handled (mode=%s, dry=%s).",
                  processed, MODE, dry)

@@ -793,3 +793,23 @@ def test_sorter_recovers_mangled_path(tmp_path):
     rec = S._recover_inputs(str(tmp_path), mangled)
     assert rec and any(p.exists() for p in rec)
     logging.disable(logging.NOTSET)
+
+
+def test_cleanup_release_dir(tmp_path):
+    import logging
+    from faucet import sort as S
+    logging.disable(logging.CRITICAL)
+    # junk-only dir -> removed
+    d = tmp_path / "release"
+    d.mkdir()
+    (d / "Torrent Downloaded From UIndex.org.txt").write_text("junk")
+    (d / "poster.jpg").write_bytes(b"x" * 1000)
+    S._cleanup_release_dir(d)
+    assert not d.exists()
+    # dir with a sizeable unknown file -> kept (safety)
+    d2 = tmp_path / "release2"
+    d2.mkdir()
+    (d2 / "important.bin").write_bytes(b"x" * (10 * 1024 * 1024))
+    S._cleanup_release_dir(d2)
+    assert d2.exists()
+    logging.disable(logging.NOTSET)
