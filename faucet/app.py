@@ -822,7 +822,13 @@ def reset_page():
 def index():
     f = STATIC / "index.html"
     if f.exists():
-        return FileResponse(f)
+        # never cache the app shell: a cached copy would render after logout and
+        # look like an auth bypass (the API calls behind it 401, but the frame
+        # still appears). No-store forces every load to hit the auth gate.
+        return FileResponse(f, headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+        })
     raise HTTPException(404, "UI not installed.")
 
 
