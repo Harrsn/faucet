@@ -487,6 +487,7 @@ class ProfileBody(BaseModel):
     sources: list[str] = []
     max_size_gb: float = 0
     min_size_gb: float = 0
+    language: str = "en"
 
 
 @app.get("/api/profiles")
@@ -508,10 +509,10 @@ def api_profiles_create(p: ProfileBody):
     import json as _json
     with db.connect() as c:
         cur = c.execute(
-            "INSERT INTO profiles (name, min_seeders, resolutions, sources, max_size_gb, min_size_gb) "
-            "VALUES (?,?,?,?,?,?)",
+            "INSERT INTO profiles (name, min_seeders, resolutions, sources, max_size_gb, min_size_gb, language) "
+            "VALUES (?,?,?,?,?,?,?)",
             (p.name, p.min_seeders, _json.dumps(p.resolutions), _json.dumps(p.sources),
-             p.max_size_gb, p.min_size_gb))
+             p.max_size_gb, p.min_size_gb, p.language))
         pid = cur.lastrowid
     return {"status": "ok", "id": pid}
 
@@ -522,9 +523,9 @@ def api_profiles_update(pid: int, p: ProfileBody):
     with db.connect() as c:
         c.execute(
             "UPDATE profiles SET name=?, min_seeders=?, resolutions=?, sources=?, "
-            "max_size_gb=?, min_size_gb=? WHERE id=?",
+            "max_size_gb=?, min_size_gb=?, language=? WHERE id=?",
             (p.name, p.min_seeders, _json.dumps(p.resolutions), _json.dumps(p.sources),
-             p.max_size_gb, p.min_size_gb, pid))
+             p.max_size_gb, p.min_size_gb, p.language, pid))
     return {"status": "ok"}
 
 

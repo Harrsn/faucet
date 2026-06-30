@@ -941,3 +941,31 @@ def test_in_library_status_sets_have_pill(monkeypatch, tmp_path):
     with db.connect() as c:
         r = c.execute("SELECT status,lib_status,monitored FROM movies WHERE id=?", (mid,)).fetchone()
     assert r["status"] == "have" and r["lib_status"] == "in_library" and r["monitored"] == 0
+
+
+def test_language_detection():
+    from faucet import langdetect as L
+    assert L.detect({"title": "American Dad S09E16 720p WEB-DL"}) == "en"
+    assert L.detect({"title": "Американский Папаша Сезон 5 WEB-DL 720p"}) == "ru"
+    assert L.detect({"title": "American.Dad.S01E01.FRENCH.1080p"}) == "fr"
+    assert L.detect({"title": "Breaking Bad S01E01 GERMAN 720p"}) == "de"
+    assert L.detect({"title": "Show.S01E01.MULTI.1080p"}) == "en"
+    # 'und' and exact preferred both pass matches(); wrong language fails
+    assert L.matches({"title": "American Dad 720p"}, "en")
+    assert not L.matches({"title": "Американский Папаша"}, "en")
+    assert L.matches({"title": "Американский Папаша"}, "ru")
+    assert L.matches({"title": "anything"}, "any")        # 'any' disables filter
+
+
+def test_profile_language_filter():
+    from faucet import profiles as P
+    rels = [
+        {"title": "American Dad S01E01 720p", "seeders": 50, "badges": {"res": "720p"}},
+        {"title": "Американский Папаша 720p", "seeders": 200, "badges": {"res": "720p"}},
+    ]
+    prof = {"min_seeders": 0, "resolutions": [], "sources": [], "language": "en"}
+    ranked = P.rank(rels, prof)
+    assert len(ranked) == 1 and "American Dad" in ranked[0]["title"]
+    # 'any' keeps both
+    prof["language"] = "any"
+    assert len(P.rank(rels, prof)) == 2

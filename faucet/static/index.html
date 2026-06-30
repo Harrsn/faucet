@@ -857,11 +857,13 @@ function renderProfiles(){
 }
 $("profNew").addEventListener("click",()=>profForm(null));
 function profForm(p){
-  p=p||{name:"",min_seeders:1,resolutions:[],sources:[],max_size_gb:0};
+  p=p||{name:"",min_seeders:1,resolutions:[],sources:[],max_size_gb:0,language:"en"};
+  const LANGS=[["en","English"],["any","Any language"],["es","Spanish"],["fr","French"],["de","German"],["it","Italian"],["ru","Russian"],["ja","Japanese"],["ko","Korean"],["zh","Chinese"],["pt","Portuguese"],["hi","Hindi"],["nl","Dutch"]];
   openModal(p.id?"Edit profile":"New profile",`
     <label class="fld">Name</label><input type="text" id="pf_name" value="${esc(p.name)}" placeholder="e.g. 1080p WEB" style="width:100%">
     <label class="fld">Resolutions (preference order)</label><div class="chips" id="pf_res">${ALL_RES.map(r=>`<span class="chip ${p.resolutions.includes(r)?'on':''}" data-v="${r}">${r}</span>`).join("")}</div>
     <label class="fld">Sources (preference order)</label><div class="chips" id="pf_src">${ALL_SRC.map(s=>`<span class="chip ${p.sources.includes(s)?'on':''}" data-v="${s}">${s}</span>`).join("")}</div>
+    <label class="fld">Preferred language</label><select id="pf_lang" style="width:100%">${LANGS.map(([v,n])=>`<option value="${v}" ${(p.language||'en')===v?'selected':''}>${n}</option>`).join("")}</select>
     <div class="row2"><div><label class="fld">Min seeders</label><input type="number" id="pf_seed" min="0" value="${p.min_seeders}" style="width:100%"></div>
     <div><label class="fld">Max size GB (0=none)</label><input type="number" id="pf_max" min="0" step="0.5" value="${p.max_size_gb}" style="width:100%"></div></div>
     <div style="margin-top:14px"><button class="btn" id="pf_save">${p.id?'save':'create'}</button></div>`);
@@ -869,6 +871,7 @@ function profForm(p){
   $("pf_save").addEventListener("click",async()=>{const body={name:$("pf_name").value.trim(),
     resolutions:[...$("pf_res").querySelectorAll(".chip.on")].map(c=>c.dataset.v),
     sources:[...$("pf_src").querySelectorAll(".chip.on")].map(c=>c.dataset.v),
+    language:$("pf_lang").value,
     min_seeders:+$("pf_seed").value||0,max_size_gb:+$("pf_max").value||0,min_size_gb:0};
     if(!body.name){toast("Name required","err");return;}
     await jsend(p.id?`/api/profiles/${p.id}`:"/api/profiles",p.id?"PUT":"POST",body);toast("Saved.");closeModal();loadProfiles();});
@@ -920,12 +923,14 @@ $("settingsBtn").addEventListener("click",async()=>{
     <label class="fld">Jackett URL</label><input type="text" id="st_jurl" value="${esc(env.JACKETT_URL||'')}" style="width:100%">
     <label class="fld">Auto-remove finished torrents</label><select id="st_rem" style="width:100%"><option value="0" ${env.REMOVE_ON_COMPLETE!=='1'?'selected':''}>off</option><option value="1" ${env.REMOVE_ON_COMPLETE==='1'?'selected':''}>on</option></select>
     <label class="fld">Notifications (comma-separated URLs)</label><input type="text" id="st_notify" value="${esc(env.NOTIFY_URLS||'')}" style="width:100%">
+    <label class="fld">Default preferred language <span class="muted">(applies when a show/movie has no profile)</span></label>
+    <select id="st_lang" style="width:100%">${[["en","English"],["any","Any language"],["es","Spanish"],["fr","French"],["de","German"],["it","Italian"],["ru","Russian"],["ja","Japanese"],["ko","Korean"],["zh","Chinese"],["pt","Portuguese"],["hi","Hindi"],["nl","Dutch"]].map(([v,n])=>`<option value="${v}" ${(s.db&&s.db.default_language||'en')===v?'selected':''}>${n}</option>`).join('')}</select>
     <div class="row2"><div><label class="fld">Theme</label><select id="st_theme" style="width:100%">${['dark','light','auto'].map(t=>`<option ${env.UI_THEME===t?'selected':''}>${t}</option>`).join('')}</select></div>
     <div><label class="fld">Accent</label><select id="st_accent" style="width:100%">${['blue','green','purple','amber','rose'].map(a=>`<option ${env.UI_ACCENT===a?'selected':''}>${a}</option>`).join('')}</select></div></div>
     <div style="margin-top:16px"><button class="btn" id="st_save">save changes</button></div>`);
   $("st_save").addEventListener("click",async()=>{
     await jsend("/api/settings","PATCH",{values:{tmdb_key:$("st_tmdb").value.trim(),JACKETT_URL:$("st_jurl").value.trim(),
-      REMOVE_ON_COMPLETE:$("st_rem").value,NOTIFY_URLS:$("st_notify").value.trim(),UI_THEME:$("st_theme").value,UI_ACCENT:$("st_accent").value}});
+      REMOVE_ON_COMPLETE:$("st_rem").value,NOTIFY_URLS:$("st_notify").value.trim(),UI_THEME:$("st_theme").value,UI_ACCENT:$("st_accent").value,default_language:$("st_lang").value}});
     toast("Settings saved.");closeModal();refreshMeta();});
 });
 

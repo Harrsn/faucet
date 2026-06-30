@@ -49,6 +49,14 @@ def passes(result: dict, profile: dict) -> tuple[bool, str]:
     badges = result.get("badges") or {}
     if res_pref and badges.get("res") and badges["res"] not in res_pref:
         return False, f"resolution {badges['res']} not in profile"
+
+    # Preferred language hard filter. Releases we can't classify ('und') pass,
+    # so we never drop something just because detection was unsure.
+    lang_pref = _effective_language(profile)
+    if lang_pref and lang_pref != "any":
+        from . import langdetect
+        if not langdetect.matches(result, lang_pref):
+            return False, f"language {langdetect.detect(result)} != {lang_pref}"
     return True, ""
 
 
@@ -70,7 +78,28 @@ def score(result: dict, profile: dict) -> float:
     # health: a gentle log-ish bonus so seeders break ties but don't dominate
     seeders = result.get("seeders", 0)
     s += min(seeders, 100) * 0.5
+    # preferred-language bonus: an exact match outranks an undetermined one,
+    # which outranks (but here we've already filtered out) the wrong language.
+    lang_pref = _effective_language(profile)
+    if lang_pref and lang_pref != "any":
+        from . import langdetect
+        if langdetect.detect(result) == lang_pref:
+            s += 50
     return s
+
+
+def _effective_language(profile: dict) -> str:
+    """The language to enforce for this profile: the profile's own setting, else
+    the global default setting, else 'en'."""
+    lang = (profile.get("language") or "").strip().lower()
+    if lang:
+        return lang
+    try:
+        from . import db
+        g = db.get_setting("default_language", "en")
+        return (g or "en").strip().lower()
+    except Exception:                            # noqa: BLE001
+        return "en"
 
 
 def rank(results: list[dict], profile: dict) -> list[dict]:

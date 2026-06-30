@@ -33,6 +33,28 @@ _task: asyncio.Task | None = None
 _last_run: dict = {"ts": None, "checked": 0, "grabbed": 0}
 
 
+def _lang_filter(results: list) -> list:
+    """Apply the global default-language filter to a candidate list. Used on the
+    no-profile path so foreign-language releases (e.g. Russian dubs) are dropped
+    even when a show has no quality profile assigned. Releases whose language
+    can't be determined are kept."""
+    try:
+        lang = (db.get_setting("default_language", "en") or "en").strip().lower()
+    except Exception:                            # noqa: BLE001
+        lang = "en"
+    if not lang or lang == "any":
+        return results
+    from . import langdetect
+    return [r for r in results if langdetect.matches(r, lang)]
+
+
+def _rank_no_profile(candidates: list) -> list:
+    """Rank when no profile is set: drop wrong-language releases, then sort by
+    seeders."""
+    filtered = _lang_filter(candidates)
+    return sorted(filtered, key=lambda x: x.get("seeders", 0), reverse=True)
+
+
 def _load_profile(profile_id: int | None) -> dict | None:
     if not profile_id:
         return None
@@ -77,7 +99,7 @@ def check_subscription(sub: dict) -> dict:
     if profile:
         ranked = prof.rank(fresh, profile)
     else:
-        ranked = sorted(fresh, key=lambda x: x.get("seeders", 0), reverse=True)
+        ranked = _rank_no_profile(fresh)
     if not ranked:
         db.update_subscription(sub["id"], last_check=datetime.now().isoformat(timespec="seconds"))
         return result
@@ -133,7 +155,7 @@ def _try_season_pack(title, season, profile):
     if profile:
         ranked = prof.rank(candidates, profile)
     else:
-        ranked = sorted(candidates, key=lambda x: x.get("seeders", 0), reverse=True)
+        ranked = _rank_no_profile(candidates)
     return ranked[0] if ranked else None
 
 
@@ -265,7 +287,7 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
         if profile:
             ranked = prof.rank(fresh, profile)
         else:
-            ranked = sorted(fresh, key=lambda x: x.get("seeders", 0), reverse=True)
+            ranked = _rank_no_profile(fresh)
         if not ranked:
             details.append(res)
             continue
