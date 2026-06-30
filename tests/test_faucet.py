@@ -67,9 +67,21 @@ def test_transmission_done_flag():
 
 # ---------------- app endpoints with mocked client ----------------
 @pytest.fixture
-def client_app(monkeypatch):
+def client_app(monkeypatch, tmp_path):
     os.environ["JACKETT_API_KEY"] = "test"
+    os.environ["SESSION_SECRET"] = "test-secret"
+    # isolated DB/events per test so auth state is deterministic
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "events.jsonl"))
+    import importlib
+    from faucet import config as cfgmod
+    importlib.reload(cfgmod)
+    from faucet import db as dbmod
+    importlib.reload(dbmod)
+    dbmod.init()
+    from faucet import auth as authmod
+    importlib.reload(authmod)
     from faucet import app as appmod
+    importlib.reload(appmod)
 
     class Mock:
         name = "transmission"
@@ -90,7 +102,12 @@ def client_app(monkeypatch):
                                           "size": 4_000_000_000, "size_h": "3.7 GB",
                                           "tracker": "t", "badges": {"res": "1080p", "source": None, "ext": None}}])
     from fastapi.testclient import TestClient
-    return TestClient(appmod.app)
+    client = TestClient(appmod.app)
+    # register the first user (auto-admin) and log in, so requests pass the
+    # auth gate exactly as a real admin would.
+    client.post("/api/auth/register", json={"username": "admin", "password": "supersecret123"})
+    client.post("/api/auth/login", json={"username": "admin", "password": "supersecret123"})
+    return client
 
 
 def test_api_search(client_app):
