@@ -68,7 +68,7 @@ It runs as one container over Jackett (or Prowlarr) and your torrent client. No 
 ### Library and UI
 
 - **Admin dashboard** — the landing page for admins: storage gauge, live transfers with per-torrent progress and ETA, indexer/client health chips, library counts, recent activity feed, and request/user quick-links — in a single consolidated call, not a waterfall of fetches.
-- **Auto-sort** — finished downloads are renamed and filed into `movies/` and `tvshows/` (`Show/Season 01/Show - S01E03.mkv`) with `guessit`. Games and disc/archive releases route to their own folders.
+- **Auto-sort** — finished downloads are renamed and filed into `movies/` and `tvshows/` (`Show/Season 01/Show - S01E03.mkv`) with `guessit`. Games and disc/archive releases route to their own folders. An optional catch-up sweep (`faucet.sweep`, run on a timer) re-files anything the completion hook missed — see [docs/HOOKS.md](docs/HOOKS.md).
 - **Live activity** — disk free, total speed, active and seeding counts, per-torrent progress with pause / resume / remove, an events feed, and download history with stats.
 - **Built-in file browser** — an admin file browser scoped to a configured root, used for Fix Location and for moving/creating folders without shelling into the box.
 - **Scan report** — a diagnostic view of library files that couldn't be matched to a show or movie, with the reason, so naming issues and stray files are visible instead of silently skipped.

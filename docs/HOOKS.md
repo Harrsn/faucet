@@ -85,3 +85,78 @@ Two things make this setup work cleanly:
 
 If the sort fails, the torrent is **not** removed — you never lose a file that
 didn't make it to the library.
+
+## Catch-up sweep (safety net)
+
+The hook handles the normal case, but it can miss: a client fires it before
+files finish moving, a torrent finishes while the hook/wrapper is misconfigured,
+or a manually-added download never triggers it. Those items sit downloaded but
+unfiled. `faucet.sweep` is the safety net — run it on a timer and it sorts
+anything the hook missed.
+
+It is safe to run repeatedly on a live system:
+
+- Only sorts a top-level item under `complete/` whose newest file has been
+  unmodified for `SWEEP_SETTLE_MIN` minutes (default 15), so active downloads are
+  skipped.
+- Skips staging/in-progress content: any item named `temp`/`incomplete`/etc., or
+  containing a nested `incomplete/` subtree or a partial file (`.part`, `.!qb`, …).
+- Delegates to the same sorter, whose placement is idempotent (a same-size
+  destination is skipped), so re-sweeping never duplicates.
+
+Test it first (moves nothing):
+
+```bash
+docker exec faucet python -m faucet.sweep --dry-run
+```
+
+Then wire it on a timer. **systemd** (recommended — gives you run history):
+
+```ini
+# /etc/systemd/system/faucet-sweep.service
+[Unit]
+Description=Faucet completed-downloads catch-up sweep
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# adjust the docker path (which docker) and container name for your host
+ExecStart=/usr/bin/docker exec faucet python -m faucet.sweep
+```
+
+```ini
+# /etc/systemd/system/faucet-sweep.timer
+[Unit]
+Description=Run the Faucet sweep every 30 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now faucet-sweep.timer
+systemctl list-timers faucet-sweep.timer
+```
+
+Or **cron**:
+
+```cron
+*/30 * * * * /usr/bin/docker exec faucet python -m faucet.sweep >> /var/log/faucet-sweep.log 2>&1
+```
+
+Bare-metal (Faucet not in Docker)? Drop the `docker exec faucet` prefix and run
+`python -m faucet.sweep` directly.
+
+**Tuning.** 30-minute frequency pairs well with the 15-minute settle window —
+don't go below ~20 min or you'll fight the settle delay. Override the window with
+`--settle-min N` or the `SWEEP_SETTLE_MIN` env var; the scan dir defaults to
+`$DOWNLOAD_DIR/complete` and can be overridden with `COMPLETE_DIR`. When the
+sweep files something the hook missed, it writes a `sweep` event visible in the
+UI's Events tab.
