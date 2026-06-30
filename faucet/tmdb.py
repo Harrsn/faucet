@@ -1,12 +1,12 @@
 """TMDb metadata — search movies/TV by title, fetch posters and details.
 
-Turns Cascade from a release-string search box into a media app: users search
-"Dune", pick the right title from poster results, and Cascade builds the indexer
+Turns Faucet from a release-string search box into a media app: users search
+"Dune", pick the right title from poster results, and Faucet builds the indexer
 query from the canonical title + year. Results are cached in the DB to stay well
 under TMDb rate limits and keep the UI snappy.
 
 A TMDb API key (free) is required; set it via the settings editor or TMDB_API_KEY.
-Without a key, title search is simply disabled and Cascade falls back to raw
+Without a key, title search is simply disabled and Faucet falls back to raw
 indexer search — so this is purely additive.
 """
 from __future__ import annotations
@@ -86,7 +86,7 @@ def search(query: str, kind: str = "multi") -> list[dict]:
             "overview": (r.get("overview") or "")[:280],
             "poster": _poster(r.get("poster_path")),
             "rating": round(r.get("vote_average", 0), 1),
-            # the query Cascade will run against indexers for this title
+            # the query Faucet will run against indexers for this title
             "search_query": f"{title} {year}".strip() if year else title,
         })
     # popularity-ish: TMDb already returns by relevance; keep order

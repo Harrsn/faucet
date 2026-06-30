@@ -17,6 +17,12 @@ services:
     ports:
       - "8090:8088"                 # host 8090 -> container 8088 (old app stays on 8088)
     environment:
+      # --- auth (IMPORTANT) ---
+      # Set a long, fixed random secret so logins survive container restarts.
+      # Without it Faucet generates a new one each start and everyone is logged
+      # out on every redeploy. Generate one with:
+      #   python -c "import secrets; print(secrets.token_urlsafe(48))"
+      SESSION_SECRET: "CHANGE_ME_TO_A_LONG_RANDOM_STRING"
       # --- indexer (your existing Jackett) ---
       JACKETT_URL: "http://JACKETT_HOST:9117"
       JACKETT_API_KEY: "YOUR_JACKETT_API_KEY"
@@ -30,6 +36,7 @@ services:
       LIBRARY_ROOT: "/library"
       DOWNLOAD_DIR: "/downloads"
       DISK_PATH: "/downloads"
+      # BROWSE_ROOT: "/library"     # admin file browser root; defaults to LIBRARY_ROOT
       EVENTS_FILE: "/config/events.jsonl"
       # --- behavior ---
       REMOVE_ON_COMPLETE: "1"
@@ -38,7 +45,6 @@ services:
       NOTIFY_ON: "completed,sorted,failed"
       # --- UI ---
       UI_THEME: "dark"
-      UI_ACCENT: "blue"
       APP_TITLE: "Faucet"
     volumes:
       - /opt/faucet-config:/config

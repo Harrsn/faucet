@@ -5,7 +5,7 @@ than reading os.environ ad hoc. A .env file (see .env.example) is the intended
 way to set these in both bare-metal and Docker deployments.
 
 A second, runtime layer is the persisted file at CASCADE_CONFIG_FILE (default
-/config/cascade.env). The setup wizard writes there, and it's loaded *over*
+/config/cascade.env). Faucet's Settings panel writes there, and it is loaded *over*
 process env so first-run config survives restarts without editing .env by hand.
 """
 from __future__ import annotations
@@ -92,8 +92,7 @@ class Config:
 
     # --- UI ---
     ui_theme: str = field(default_factory=lambda: os.environ.get("UI_THEME", "dark"))
-    ui_accent: str = field(default_factory=lambda: os.environ.get("UI_ACCENT", "blue"))
-    app_title: str = field(default_factory=lambda: os.environ.get("APP_TITLE", "Cascade"))
+    app_title: str = field(default_factory=lambda: os.environ.get("APP_TITLE", "Faucet"))
 
     def configured(self) -> bool:
         """True when the minimum required settings are present."""
@@ -121,7 +120,7 @@ WIZARD_KEYS = {
     "REMOVE_ON_COMPLETE", "REQUEST_TIMEOUT", "SEARCH_LIMIT", "BIG_DOWNLOAD_GB",
     "NOTIFY_URLS", "NOTIFY_ON",
     # metadata / ui
-    "UI_THEME", "UI_ACCENT", "APP_TITLE",
+    "UI_THEME", "APP_TITLE",
 }
 
 # Subset that point at filesystem locations — the editor validates these before
@@ -138,7 +137,7 @@ def save(values: dict) -> None:
             existing[k] = str(v)
     p = Path(CONFIG_FILE)
     p.parent.mkdir(parents=True, exist_ok=True)
-    lines = ["# Written by the Cascade setup wizard. Safe to edit by hand.",
+    lines = ["# Written by Faucet (Settings). Safe to edit by hand.",
              "# Values here override process environment.", ""]
     for k in sorted(existing):
         lines.append(f"{k}={existing[k]}")

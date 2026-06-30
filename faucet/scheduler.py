@@ -1,6 +1,6 @@
 """Background scheduler — periodic auto-grab for subscriptions.
 
-Cascade has no separate worker; this runs as an asyncio task inside the FastAPI
+Faucet has no separate worker; this runs as an asyncio task inside the FastAPI
 app (started from the lifespan handler). Honoring the "one lightweight service"
 design: no extra container, no cron, no user setup. The loop wakes on an
 interval, checks each enabled subscription, and grabs the best new release per

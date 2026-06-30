@@ -1,4 +1,4 @@
-"""Cascade — self-hosted search → download → sort → manage for media.
+"""Faucet — self-hosted search → download → sort → manage for media.
 
 One lightweight app over your indexer (Jackett/Prowlarr) and torrent client
 (Transmission/qBittorrent/Deluge). This module exposes the HTTP API and serves
@@ -403,7 +403,7 @@ def api_events(limit: int = Query(60, ge=1, le=300)):
 def api_config():
     """Non-secret config the UI needs (theme, title, thresholds, client kind)."""
     return {"title": cfg().app_title, "theme": cfg().ui_theme,
-            "accent": cfg().ui_accent, "client": cfg().client_kind,
+            "client": cfg().client_kind,
             "big_download_gb": cfg().big_download_gb,
             "configured": cfg().configured()}
 
@@ -506,7 +506,7 @@ def api_settings_get():
         "BIG_DOWNLOAD_GB": str(c.big_download_gb),
         "NOTIFY_URLS": ",".join(c.notify_urls), "NOTIFY_ON": ",".join(c.notify_on),
         # metadata / ui
-        "UI_THEME": c.ui_theme, "UI_ACCENT": c.ui_accent, "APP_TITLE": c.app_title,
+        "UI_THEME": c.ui_theme, "APP_TITLE": c.app_title,
     }
     # CLIENT_PASS is editable but never returned; show only whether one is set.
     env_view["CLIENT_PASS_SET"] = bool(c.client_pass)

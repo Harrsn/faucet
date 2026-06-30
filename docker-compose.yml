@@ -27,6 +27,8 @@ services:
       LIBRARY_ROOT: /library
       DISK_PATH: /downloads
       EVENTS_FILE: /config/events.jsonl
+      # SESSION_SECRET comes from .env — set a long random value there so logins
+      # survive restarts (see .env.example for a generator one-liner).
     volumes:
       - ./config:/config
       - ${LIBRARY_PATH:-./library}:/library

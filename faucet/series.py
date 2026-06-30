@@ -1,6 +1,6 @@
 """Monitored series + reconciliation (Layers 2-3).
 
-A "monitored series" is a show Cascade tracks end to end: it pulls the canonical
+A "monitored series" is a show Faucet tracks end to end: it pulls the canonical
 episode list from TMDb (what *should* exist), the library scanner records what's
 on disk (what *does* exist), and reconcile() diffs them to populate the `wanted`
 table with missing episodes — and, when a quality profile is set, episodes held

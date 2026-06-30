@@ -1,26 +1,52 @@
 # First-run setup
 
-On first launch — before any indexer key or client is configured — Faucet opens
-a **setup wizard** automatically. No file editing required.
+Faucet configures through its own UI — no file editing required for the basics,
+though everything can also be set via environment / `.env` if you prefer.
 
-The wizard walks three steps:
+## 1. Create the admin account
 
-1. **Indexer** — enter your Jackett URL and API key, then **test connection** to
-   confirm the key works against a live search.
-2. **Download client** — pick Transmission / qBittorrent / Deluge, enter the URL
-   and credentials, and **test** that it authenticates.
-3. **Library & finish** — set the library root, app name, accent color, and
-   optional notifications. Finish writes the config and Faucet is live.
+On first launch you'll land on the sign-in page. Click **Register** and create
+the first account — **the first account ever created becomes the admin**, active
+immediately. Anyone who registers afterward lands in a *pending* state and needs
+admin approval before they can sign in.
+
+> Set a long, fixed **`SESSION_SECRET`** in your environment first. Without it,
+> Faucet generates one and stores it, but a fixed value keeps everyone's sessions
+> valid across restarts and redeploys. Generate one with:
+> `python -c "import secrets; print(secrets.token_urlsafe(48))"`
+
+## 2. Configure connections
+
+Open **Settings** (admin only) and fill in the **Connections** tab:
+
+1. **Jackett URL + API key** — the key is on your Jackett dashboard (top-right).
+   Add a few indexers there first.
+2. **Download client** — pick Transmission / qBittorrent / Deluge and enter the
+   RPC URL and credentials.
+3. Hit **Test connections** to confirm both the indexer and client are reachable
+   and authenticate, live, before relying on them.
+
+In the **Metadata** tab, paste a free **TMDb API key**
+(https://www.themoviedb.org/settings/api) to enable title search, posters, and
+episode tracking, and set a **default quality profile** and language.
+
+In the **Advanced** tab, confirm the library/download **paths** show green
+(mounted & writable) — the status chip tells you immediately if a path isn't
+mounted the way the container expects.
+
+## 3. Import your library
+
+Go to **Shows** or **Movies** and hit **import library** to auto-monitor
+everything already on disk, or **add** individual titles. Faucet scans,
+reconciles against TMDb, and starts hunting what's missing.
 
 ## Where settings are stored
 
-The wizard writes to `FAUCET_CONFIG_FILE` (default `/config/faucet.env`). These
-values override process environment and survive restarts, so you can configure
-entirely through the UI. You can still set everything via `.env` / environment if
-you prefer — the wizard only appears when the minimum config is missing.
+UI-edited connection/path/behavior settings persist to `FAUCET_CONFIG_FILE`
+(default `/config/faucet.env`). These values override process environment and
+survive restarts, so you can configure entirely through the UI. The TMDb key,
+default language, and default profile are stored in the database. Secrets that
+should stay out of the app (the session key, DB path, listen port) live only in
+your environment / stack.
 
-## Re-running
-
-Delete `/config/faucet.env` (or clear `JACKETT_API_KEY`) and reload to get the
-wizard back. The `/api/config` endpoint reports `configured: true/false`, and
-`/health` checks live reachability of the indexer and client.
+The `/health` endpoint reports live reachability of the indexer and client.

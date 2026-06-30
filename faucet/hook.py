@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cascade post-process hook.
+"""Faucet post-process hook.
 
 Invoked by the download client when a torrent completes. It:
   1. runs the sorter to file the media onto your library,

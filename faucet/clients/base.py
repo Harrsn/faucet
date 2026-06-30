@@ -1,6 +1,6 @@
 """Download client abstraction.
 
-Cascade talks to torrent clients through a small uniform interface so the rest
+Faucet talks to torrent clients through a small uniform interface so the rest
 of the app never needs to know whether it's driving Transmission, qBittorrent,
 or Deluge. Each backend implements DownloadClient; the factory in __init__
 picks one from config.

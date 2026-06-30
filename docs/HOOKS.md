@@ -38,7 +38,7 @@ Options → Downloads → **Run external program on torrent completion**:
 ```bash
 #!/usr/bin/env bash
 set -a; . /path/to/faucet/.env; set +a
-export CASCADE_PATH="$1" CASCADE_ID="$2"
+export FAUCET_PATH="$1" FAUCET_ID="$2"
 exec python3 -m faucet.hook
 ```
 

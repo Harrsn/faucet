@@ -1,6 +1,6 @@
 """Persistence — a single SQLite file under /config.
 
-Cascade was stateless (live reads from the client). Features like TMDb caching,
+Faucet was stateless (live reads from the client). Features like TMDb caching,
 saved settings, requests, RSS subscriptions, quality profiles, and history all
 need durable state, so this module owns a lightweight SQLite database. SQLite
 keeps the self-hosted story simple: one file, no extra container, easy backup.
@@ -154,7 +154,7 @@ CREATE TABLE IF NOT EXISTS scan_unparsed (
     reason      TEXT
 );
 
--- Monitored movies (Radarr-side): movies Cascade tracks and hunts if missing.
+-- Monitored movies (Radarr-side): movies Faucet tracks and hunts if missing.
 CREATE TABLE IF NOT EXISTS movies (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     tmdb_id      INTEGER UNIQUE,
@@ -167,7 +167,7 @@ CREATE TABLE IF NOT EXISTS movies (
     status       TEXT DEFAULT 'wanted'  -- wanted | have
 );
 
--- Monitored series: shows Cascade tracks and hunts missing episodes for.
+-- Monitored series: shows Faucet tracks and hunts missing episodes for.
 CREATE TABLE IF NOT EXISTS series (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     tmdb_id      INTEGER UNIQUE,
