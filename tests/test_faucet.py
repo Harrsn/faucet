@@ -969,3 +969,35 @@ def test_profile_language_filter():
     # 'any' keeps both
     prof["language"] = "any"
     assert len(P.rank(rels, prof)) == 2
+
+
+def test_filebrowser_path_safety(tmp_path, monkeypatch):
+    """Every traversal/symlink/absolute escape must be blocked; legit ops work."""
+    import os
+    root = tmp_path / "nas"
+    outside = tmp_path / "outside"
+    (root / "tvshows").mkdir(parents=True)
+    outside.mkdir()
+    (outside / "secret.txt").write_text("SECRET")
+    (root / "dl").mkdir()
+    (root / "dl" / "ep.mkv").write_bytes(b"x" * 1000)
+    os.symlink(str(outside), str(root / "escape"))
+    monkeypatch.setenv("BROWSE_ROOT", str(root))
+    import importlib
+    from faucet import config as cfgmod
+    importlib.reload(cfgmod)
+    from faucet import filebrowser as FB
+    importlib.reload(FB)
+
+    assert "error" not in FB.list_dir("")               # root lists
+    for bad in ["..", "../", "../../etc", "/etc", "tvshows/../../", "escape"]:
+        assert "error" in FB.list_dir(bad), f"{bad} should be blocked"
+    # legit move within root
+    assert FB.move("dl/ep.mkv", "tvshows", "show.mkv").get("ok")
+    assert (root / "tvshows" / "show.mkv").exists()
+    assert not (root / "dl" / "ep.mkv").exists()
+    # move escape blocked
+    assert "error" in FB.move("tvshows/show.mkv", "../../outside")
+    # no overwrite
+    (root / "tvshows" / "dup.mkv").write_bytes(b"y")
+    assert "error" in FB.move("tvshows/show.mkv", "tvshows", "dup.mkv")

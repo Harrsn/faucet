@@ -74,6 +74,8 @@ class Config:
     download_dir: str = field(default_factory=lambda: os.environ.get("DOWNLOAD_DIR", ""))
 
     # --- paths ---
+    browse_root: str = field(default_factory=lambda: os.environ.get("BROWSE_ROOT", "")
+                             or os.environ.get("LIBRARY_ROOT", "") or "/library")
     disk_path: str = field(default_factory=lambda: os.environ.get("DISK_PATH", "") or
                            os.environ.get("DOWNLOAD_DIR", "") or "/downloads")
     events_file: str = field(default_factory=lambda: os.environ.get("EVENTS_FILE", "/config/events.jsonl"))

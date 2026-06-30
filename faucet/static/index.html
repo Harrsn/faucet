@@ -137,6 +137,28 @@
   .fix-row img{width:46px;height:69px;object-fit:cover;border-radius:4px;flex-shrink:0;background:#222;}
   .fix-row .fr-t{font-weight:600;}
   .fix-row .fr-o{font-size:12px;color:var(--muted);margin-top:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+  /* terminal file browser */
+  .fb-term{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:13px;background:#0a0e14;color:#c5d1de;}
+  .fb-bar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid #1b2430;background:#0d1219;}
+  .fb-bar .fb-up{background:#1b2430;border:none;color:#8fa6c0;padding:3px 10px;border-radius:5px;cursor:pointer;font-family:inherit;}
+  .fb-bar .fb-up:hover{background:#26344a;}
+  .fb-bar .fb-up:disabled{opacity:.4;cursor:default;}
+  .fb-path{flex:1;color:#5fb3ff;overflow-x:auto;white-space:nowrap;}
+  .fb-mk{background:none;border:1px solid #2a3a52;color:#8fa6c0;padding:3px 10px;border-radius:5px;cursor:pointer;font-family:inherit;}
+  .fb-mk:hover{border-color:#5fb3ff;color:#5fb3ff;}
+  .fb-list{max-height:50vh;overflow-y:auto;padding:6px 0;}
+  .fb-row{display:flex;align-items:center;gap:10px;padding:5px 14px;cursor:pointer;}
+  .fb-row:hover{background:#141b26;}
+  .fb-row .ic{width:16px;text-align:center;}
+  .fb-row .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .fb-row.dir .nm{color:#7fd0ff;}
+  .fb-row.video .nm{color:#a3e3a3;}
+  .fb-row .sz{color:#5a6b80;font-size:11px;}
+  .fb-row .pick{background:#1b3a5f;border:none;color:#9fd0ff;padding:2px 9px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px;opacity:0;}
+  .fb-row:hover .pick{opacity:1;}
+  .fb-row .pick:hover{background:#2a5285;}
+  .fb-foot{padding:8px 14px;border-top:1px solid #1b2430;background:#0d1219;color:#7a8aa0;font-size:11px;min-height:18px;}
+  .fb-foot.armed{color:#ffcf6b;}
   .reqcard{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:12px;}
   .reqacts{display:flex;gap:6px;flex-shrink:0;}
   .btn.sm{padding:5px 10px;font-size:12px;}
@@ -234,6 +256,7 @@
   <span class="navlink" data-page="profiles">Profiles</span>
   <span class="navspacer"></span>
   <button class="navbtn" id="activityBtn">Activity <span class="badge zero" id="activeCount">0</span></button>
+  <button class="navbtn admin-only" id="filesBtn">Files</button>
   <button class="navbtn" id="settingsBtn">Settings</button>
   <button class="navbtn" id="usersBtn" style="display:none">Users</button>
   <button class="navbtn" id="accountBtn">Account</button>
@@ -382,6 +405,24 @@
     <button class="drawer-close" id="drawerClose">×</button>
   </div>
   <div class="drawer-body" id="drawerBody"></div>
+</div>
+
+<!-- file browser modal (terminal style) -->
+<div class="modal-overlay" id="fbModal">
+  <div class="modal" style="width:760px">
+    <div class="modal-head"><h2>📁 file browser</h2><button class="modal-close" id="fbClose">×</button></div>
+    <div class="modal-body" style="padding:0">
+      <div class="fb-term">
+        <div class="fb-bar">
+          <button class="fb-up" id="fbUp" title="up">..</button>
+          <span class="fb-path" id="fbPath">/</span>
+          <button class="fb-mk" id="fbMkdir" title="new folder">+ dir</button>
+        </div>
+        <div class="fb-list" id="fbList"></div>
+        <div class="fb-foot" id="fbFoot"></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- fix-match modal -->
@@ -638,6 +679,62 @@ $("fixClose")&&$("fixClose").addEventListener("click",closeFixMatch);
 $("fixSearchBtn")&&$("fixSearchBtn").addEventListener("click",runFixSearch);
 $("fixQuery")&&$("fixQuery").addEventListener("keydown",e=>{if(e.key==="Enter")runFixSearch();});
 $("fixModal")&&$("fixModal").addEventListener("click",e=>{if(e.target===$("fixModal"))closeFixMatch();});
+
+// ── Terminal file browser ──
+let fbCwd="",fbArmed=null;  // fbArmed = {rel,name} of a file queued to move
+function openFileBrowser(seedPath){fbArmed=null;fbCwd=seedPath||"";$("fbModal").classList.add("show");fbLoad(fbCwd);}
+function closeFileBrowser(){$("fbModal").classList.remove("show");fbArmed=null;}
+async function fbLoad(path){
+  $("fbList").innerHTML="<div style='padding:14px;color:#5a6b80'>loading…</div>";
+  try{
+    const d=await jget(`/api/admin/files/list?path=${encodeURIComponent(path)}`);
+    if(d.error){$("fbList").innerHTML=`<div style='padding:14px;color:#e06b6b'>${esc(d.error)}</div>`;return;}
+    fbCwd=d.cwd||"";
+    $("fbPath").textContent="/"+(d.cwd||"");
+    $("fbUp").disabled=!!d.at_root;
+    $("fbUp").onclick=()=>{if(d.parent!==null&&d.parent!==undefined)fbLoad(d.parent);};
+    $("fbList").innerHTML=(d.entries||[]).map(e=>{
+      const ic=e.kind==='dir'?'📁':e.kind==='video'?'🎬':'📄';
+      const sz=e.kind==='dir'?'':human(e.size||0);
+      const pickBtn=e.kind!=='dir'?`<button class="pick" data-pick="${esc(e.rel)}" data-nm="${esc(e.name)}">move</button>`:'';
+      return `<div class="fb-row ${e.kind}" data-rel="${esc(e.rel)}" data-kind="${e.kind}">
+        <span class="ic">${ic}</span><span class="nm">${esc(e.name)}</span>
+        <span class="sz">${sz}</span>${pickBtn}</div>`;
+    }).join("")||"<div style='padding:14px;color:#5a6b80'>empty</div>";
+    // navigate into dirs
+    $("fbList").querySelectorAll(".fb-row.dir").forEach(row=>row.addEventListener("click",e=>{
+      if(e.target.closest("[data-pick]"))return;fbLoad(row.dataset.rel);}));
+    // arm a file for moving
+    $("fbList").querySelectorAll("[data-pick]").forEach(b=>b.addEventListener("click",e=>{
+      e.stopPropagation();fbArmed={rel:b.dataset.pick,name:b.dataset.nm};fbUpdateFoot();}));
+    fbUpdateFoot();
+  }catch(_){$("fbList").innerHTML="<div style='padding:14px;color:#e06b6b'>Couldn't list directory.</div>";}
+}
+function fbUpdateFoot(){
+  const f=$("fbFoot");
+  if(fbArmed){f.classList.add("armed");
+    f.innerHTML=`▶ moving <b>${esc(fbArmed.name)}</b> — navigate to a folder, then <button class="fb-mk" id="fbDrop">drop here</button> <button class="fb-mk" id="fbCancel">cancel</button>`;
+    $("fbDrop").onclick=fbDoMove;$("fbCancel").onclick=()=>{fbArmed=null;fbUpdateFoot();};}
+  else{f.classList.remove("armed");f.textContent="click \"move\" on a file, then navigate to its destination folder.";}
+}
+async function fbDoMove(){
+  if(!fbArmed)return;
+  try{
+    const r=await jsend("/api/admin/files/move","POST",{src:fbArmed.rel,dest_dir:fbCwd,name:fbArmed.name});
+    if(r.error){toast(r.error,"err");return;}
+    toast(`Moved to /${r.dest}`);fbArmed=null;fbLoad(fbCwd);
+  }catch(_){toast("Move failed","err");}
+}
+async function fbMkdir(){
+  const name=prompt("New folder name:");if(!name)return;
+  try{const r=await jsend("/api/admin/files/mkdir","POST",{parent:fbCwd,name});
+    if(r.error){toast(r.error,"err");return;}fbLoad(fbCwd);}
+  catch(_){toast("Couldn't create folder","err");}
+}
+$("fbClose")&&$("fbClose").addEventListener("click",closeFileBrowser);
+$("fbMkdir")&&$("fbMkdir").addEventListener("click",fbMkdir);
+$("fbModal")&&$("fbModal").addEventListener("click",e=>{if(e.target===$("fbModal"))closeFileBrowser();});
+$("filesBtn")&&$("filesBtn").addEventListener("click",()=>openFileBrowser(""));
 $("showsAdd").addEventListener("click",()=>addMediaForm("show"));
 $("showsScan").addEventListener("click",()=>scanHunt("show"));
 $("showsReport").addEventListener("click",openScanReport);

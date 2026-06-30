@@ -207,6 +207,30 @@ async def admin_fix_match(kind: str, item_id: int, request: Request,
     return fixmatch.fix_match(kind, item_id, int(tmdb_id))
 
 
+# ── File browser (admin) — scoped to a single configured root ────────────────
+@router.get("/api/admin/files/list")
+def admin_files_list(path: str = "", admin: dict = Depends(require_admin)):
+    from . import filebrowser
+    return filebrowser.list_dir(path)
+
+
+@router.post("/api/admin/files/move")
+async def admin_files_move(request: Request, admin: dict = Depends(require_admin)):
+    verify_csrf(request)
+    from . import filebrowser
+    body = await request.json()
+    return filebrowser.move(body.get("src", ""), body.get("dest_dir", ""),
+                            body.get("name") or None)
+
+
+@router.post("/api/admin/files/mkdir")
+async def admin_files_mkdir(request: Request, admin: dict = Depends(require_admin)):
+    verify_csrf(request)
+    from . import filebrowser
+    body = await request.json()
+    return filebrowser.mkdir(body.get("parent", ""), body.get("name", ""))
+
+
 # ── public auth endpoints ───────────────────────────────────────────────────
 
 @router.get("/api/auth/me")
