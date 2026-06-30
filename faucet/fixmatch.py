@@ -43,6 +43,12 @@ def set_status(kind: str, item_id: int, status: str) -> dict:
             return {"error": "not found"}
         c.execute(f"UPDATE {table} SET lib_status=?, monitored=? WHERE id=?",
                   (status, monitored, item_id))
+        # Movies carry a separate have/wanted `status` that drives the UI pill.
+        # Marking 'in_library' asserts the file exists -> have. Other statuses
+        # leave the on-disk determination to reconcile(), which sets it from the
+        # actual library scan.
+        if kind == "movie" and status == "in_library":
+            c.execute("UPDATE movies SET status='have' WHERE id=?", (item_id,))
     log.info("set %s %s status -> %s", kind, item_id, status)
     return {"ok": True, "kind": kind, "id": item_id, "status": status}
 

@@ -920,3 +920,24 @@ def test_fixmatch_status_and_relink(monkeypatch, tmp_path):
     with db.connect() as c:
         r = c.execute("SELECT tmdb_id,lib_status FROM movies WHERE id=?", (mid,)).fetchone()
     assert r["tmdb_id"] == 24 and r["lib_status"] == "monitored"
+
+
+def test_in_library_status_sets_have_pill(monkeypatch, tmp_path):
+    """Marking a movie 'in_library' must also flip its have/wanted status so the
+    UI pill updates."""
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "ev.jsonl"))
+    import importlib
+    from faucet import config as cfgmod
+    importlib.reload(cfgmod)
+    from faucet import db
+    importlib.reload(db)
+    db.init()
+    from faucet import fixmatch as F
+    importlib.reload(F)
+    with db.connect() as c:
+        mid = c.execute("INSERT INTO movies (tmdb_id,title,year,monitored,lib_status,status) "
+                        "VALUES (4242,'M',2020,1,'monitored','wanted')").lastrowid
+    F.set_status("movie", mid, "in_library")
+    with db.connect() as c:
+        r = c.execute("SELECT status,lib_status,monitored FROM movies WHERE id=?", (mid,)).fetchone()
+    assert r["status"] == "have" and r["lib_status"] == "in_library" and r["monitored"] == 0

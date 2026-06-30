@@ -694,8 +694,11 @@ async function openMovieDetail(mid){
       ${f.quality?`<span class="tag res">${esc(f.quality)}</span>`:'<span class="muted">unknown quality</span>'}
       <span class="muted">· ${human(f.size||0)}</span></div>
       <div class="hint" style="margin-top:6px;word-break:break-all">${esc(f.path||'')}</div></div>`
-      :`<div class="prof-card"><b>Not in library</b> <span class="pill want">wanted</span>
-      <div class="hint">Use "search releases" to find and grab this movie.</div></div>`;
+      :(m.lib_status==='in_library'
+        ?`<div class="prof-card"><b>In library</b> <span class="pill have">have</span>
+          <div class="hint">Marked as in library by an admin (no file auto-matched — Fix Match if the title is wrong).</div></div>`
+        :`<div class="prof-card"><b>Not in library</b> <span class="pill want">wanted</span>
+          <div class="hint">Use "search releases" to find and grab this movie.</div></div>`);
     $("mdBody").innerHTML=`
       <div style="display:flex;gap:18px;flex-wrap:wrap">
         <div class="pimg" style="width:140px;height:210px;flex-shrink:0;${m.poster?`background-image:url('${esc(m.poster)}')`:''}">${m.poster?'':'no art'}</div>
@@ -712,7 +715,7 @@ $("mdBack").addEventListener("click",()=>{showPage("movies");document.querySelec
 $("mdStatus")&&$("mdStatus").addEventListener("change",async()=>{
   if(!mdCurrentId)return;
   try{await jsend(`/api/admin/movie/${mdCurrentId}/status`,"POST",{status:$("mdStatus").value});
-    toast("Status updated.");}
+    toast("Status updated.");openMovieDetail(mdCurrentId);}
   catch(_){toast("Couldn't update status","err");}
 });
 $("mdFixMatch")&&$("mdFixMatch").addEventListener("click",()=>openFixMatch("movie",mdCurrentId,$("mdTitle").textContent));
