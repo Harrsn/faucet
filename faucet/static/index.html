@@ -179,6 +179,23 @@
   .drecent-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .dlink{color:var(--accent);cursor:pointer;}
   .dlink:hover{color:var(--accent-soft);}
+  /* settings panel */
+  .set-tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:16px;flex-wrap:wrap;}
+  .set-tab{background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);
+    font-family:var(--sans);font-size:13px;font-weight:500;padding:8px 12px;cursor:pointer;margin-bottom:-1px;}
+  .set-tab:hover{color:var(--txt);}
+  .set-tab.on{color:var(--txt);border-bottom-color:var(--accent);}
+  .set-sec{display:none;}
+  .set-sec.on{display:block;animation:fadein .2s ease;}
+  .pchip{font-family:var(--mono);font-size:10px;padding:1px 7px;border-radius:10px;border:1px solid var(--line-hi);
+    margin-left:6px;vertical-align:middle;}
+  .pchip.ok{color:var(--good);border-color:color-mix(in srgb,var(--good) 40%,transparent);}
+  .pchip.warn{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent);}
+  .pchip.bad{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,transparent);}
+  .pchip.muted{color:var(--muted);}
+  .set-warn{background:color-mix(in srgb,var(--accent) 10%,transparent);
+    border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);border-radius:9px;
+    padding:11px 13px;font-size:12px;color:var(--txt);margin-bottom:14px;line-height:1.5;}
   .cardgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:14px;}
   .lcard{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;
     display:flex;gap:18px;align-items:center;position:relative;overflow:hidden;
@@ -1345,22 +1362,106 @@ async function refreshDock(){
 // ============ settings (modal) ============
 $("settingsBtn").addEventListener("click",async()=>{
   if(ME&&ME.role==="admin"&&!profilesCache.length){try{profilesCache=await jget("/api/profiles").then(d=>d.profiles||[]);}catch(_){}}
-  const s=await jget("/api/settings");const env=s.env||{};
+  const s=await jget("/api/settings");const env=s.env||{};const ps=s.path_status||{};
+  const langOpts=[["en","English"],["any","Any language"],["es","Spanish"],["fr","French"],["de","German"],["it","Italian"],["ru","Russian"],["ja","Japanese"],["ko","Korean"],["zh","Chinese"],["pt","Portuguese"],["hi","Hindi"],["nl","Dutch"]];
+  // a path field with a live status chip
+  const pathField=(id,key,label,hint)=>{
+    const st=ps[key]||{};
+    let chip='<span class="pchip muted">not set</span>';
+    if(st.set&&st.exists&&st.writable)chip='<span class="pchip ok">✓ mounted &amp; writable</span>';
+    else if(st.set&&st.exists)chip='<span class="pchip warn">exists, read-only</span>';
+    else if(st.set)chip='<span class="pchip bad">✕ not found in container</span>';
+    return `<label class="fld">${label} ${chip}</label>
+      <input type="text" id="${id}" value="${esc(env[key]||'')}" style="width:100%" placeholder="${hint||''}">`;
+  };
   openModal("Settings",`
-    <label class="fld">TMDb API key ${s.tmdb_enabled?'<span style="color:var(--good)">● enabled</span>':'<span class="muted">○ disabled</span>'}</label>
-    <input type="text" id="st_tmdb" value="${esc(s.db&&s.db.tmdb_key||'')}" placeholder="paste TMDb key for title search + posters" style="width:100%">
-    <label class="fld">Jackett URL</label><input type="text" id="st_jurl" value="${esc(env.JACKETT_URL||'')}" style="width:100%">
-    <label class="fld">Auto-remove finished torrents</label><select id="st_rem" style="width:100%"><option value="0" ${env.REMOVE_ON_COMPLETE!=='1'?'selected':''}>off</option><option value="1" ${env.REMOVE_ON_COMPLETE==='1'?'selected':''}>on</option></select>
-    <label class="fld">Notifications (comma-separated URLs)</label><input type="text" id="st_notify" value="${esc(env.NOTIFY_URLS||'')}" style="width:100%">
-    <label class="fld">Default preferred language <span class="muted">(applies when a show/movie has no profile)</span></label>
-    <select id="st_lang" style="width:100%">${[["en","English"],["any","Any language"],["es","Spanish"],["fr","French"],["de","German"],["it","Italian"],["ru","Russian"],["ja","Japanese"],["ko","Korean"],["zh","Chinese"],["pt","Portuguese"],["hi","Hindi"],["nl","Dutch"]].map(([v,n])=>`<option value="${v}" ${(s.db&&s.db.default_language||'en')===v?'selected':''}>${n}</option>`).join('')}</select>
-    <label class="fld">Default quality profile <span class="muted">(applied to shows/movies with no profile of their own)</span></label>
-    <select id="st_defprof" style="width:100%"><option value="">none (best-seeded)</option>${(profilesCache||[]).map(p=>`<option value="${p.id}" ${String(s.db&&s.db.default_profile_id||'')===String(p.id)?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
-    <div style="margin-top:16px"><button class="btn" id="st_save">save changes</button></div>`);
+    <div class="set-tabs">
+      <button class="set-tab on" data-sec="conn">Connections</button>
+      <button class="set-tab" data-sec="meta">Metadata</button>
+      <button class="set-tab" data-sec="behave">Behavior</button>
+      <button class="set-tab" data-sec="adv">Advanced</button>
+    </div>
+
+    <div class="set-sec on" data-sec="conn">
+      <label class="fld">Jackett URL</label><input type="text" id="st_jurl" value="${esc(env.JACKETT_URL||'')}" style="width:100%" placeholder="http://10.0.0.17:9117">
+      <label class="fld">Jackett indexer</label><input type="text" id="st_jidx" value="${esc(env.JACKETT_INDEXER||'all')}" style="width:100%" placeholder="all">
+      <div class="row2"><div><label class="fld">Download client</label>
+        <select id="st_client" style="width:100%">${['transmission','qbittorrent','deluge'].map(k=>`<option ${env.DOWNLOAD_CLIENT===k?'selected':''}>${k}</option>`).join('')}</select></div>
+        <div><label class="fld">Client RPC URL</label><input type="text" id="st_curl" value="${esc(env.CLIENT_URL||'')}" style="width:100%"></div></div>
+      <div class="row2"><div><label class="fld">Client user</label><input type="text" id="st_cuser" value="${esc(env.CLIENT_USER||'')}" style="width:100%"></div>
+        <div><label class="fld">Client password ${env.CLIENT_PASS_SET?'<span class="pchip ok">✓ set</span>':'<span class="pchip muted">none</span>'}</label>
+        <input type="password" id="st_cpass" value="" placeholder="${env.CLIENT_PASS_SET?'•••••• (unchanged)':'set password'}" style="width:100%"></div></div>
+    </div>
+
+    <div class="set-sec" data-sec="meta">
+      <label class="fld">TMDb API key ${s.tmdb_enabled?'<span class="pchip ok">● enabled</span>':'<span class="pchip muted">○ disabled</span>'}</label>
+      <input type="text" id="st_tmdb" value="${esc(s.db&&s.db.tmdb_key||'')}" placeholder="paste TMDb key for title search + posters" style="width:100%">
+      <label class="fld">App title</label><input type="text" id="st_title" value="${esc(env.APP_TITLE||'Faucet')}" style="width:100%">
+      <label class="fld">Default preferred language <span class="muted">(when a title has no profile)</span></label>
+      <select id="st_lang" style="width:100%">${langOpts.map(([v,n])=>`<option value="${v}" ${(s.db&&s.db.default_language||'en')===v?'selected':''}>${n}</option>`).join('')}</select>
+      <label class="fld">Default quality profile <span class="muted">(for titles with no profile of their own)</span></label>
+      <select id="st_defprof" style="width:100%"><option value="">none (best-seeded)</option>${(profilesCache||[]).map(p=>`<option value="${p.id}" ${String(s.db&&s.db.default_profile_id||'')===String(p.id)?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
+    </div>
+
+    <div class="set-sec" data-sec="behave">
+      <label class="fld">Auto-remove finished torrents</label>
+      <select id="st_rem" style="width:100%"><option value="0" ${env.REMOVE_ON_COMPLETE!=='1'?'selected':''}>off</option><option value="1" ${env.REMOVE_ON_COMPLETE==='1'?'selected':''}>on</option></select>
+      <div class="row2"><div><label class="fld">Search result limit</label><input type="number" id="st_slimit" value="${esc(env.SEARCH_LIMIT||'150')}" style="width:100%"></div>
+        <div><label class="fld">Request timeout (s)</label><input type="number" id="st_timeout" value="${esc(env.REQUEST_TIMEOUT||'30')}" style="width:100%"></div></div>
+      <label class="fld">"Big download" warning threshold (GB)</label><input type="number" id="st_bigdl" value="${esc(env.BIG_DOWNLOAD_GB||'20')}" style="width:100%">
+      <label class="fld">Notification URLs <span class="muted">(comma-separated, Apprise-style)</span></label>
+      <input type="text" id="st_notify" value="${esc(env.NOTIFY_URLS||'')}" style="width:100%">
+      <label class="fld">Notify on <span class="muted">(comma-separated: completed, sorted, failed)</span></label>
+      <input type="text" id="st_notifyon" value="${esc(env.NOTIFY_ON||'completed,sorted,failed')}" style="width:100%">
+    </div>
+
+    <div class="set-sec" data-sec="adv">
+      <div class="set-warn">⚠ These paths are <b>container paths</b> — they must match what you've mounted into Faucet. Changing them can break library scanning and downloads, and takes effect on the next restart. The status chip shows whether each path is actually reachable right now.</div>
+      ${pathField("st_lib","LIBRARY_ROOT","Library root","/library")}
+      ${pathField("st_dldir","DOWNLOAD_DIR","Download directory","/downloads")}
+      ${pathField("st_disk","DISK_PATH","Disk-usage path (for the dashboard gauge)","/downloads")}
+      ${pathField("st_browse","BROWSE_ROOT","File-browser root","/nas")}
+      <div class="set-warn" style="margin-top:14px">The session secret, database path, and listen port stay in your Docker stack — they can't be changed here by design.</div>
+    </div>
+
+    <div style="margin-top:18px;display:flex;align-items:center;gap:12px">
+      <button class="btn" id="st_save">save changes</button>
+      <span class="muted" id="st_savehint" style="font-size:12px"></span>
+    </div>`);
+  // tab switching
+  $("modalBody").querySelectorAll(".set-tab").forEach(t=>t.addEventListener("click",()=>{
+    const sec=t.dataset.sec;
+    $("modalBody").querySelectorAll(".set-tab").forEach(x=>x.classList.toggle("on",x===t));
+    $("modalBody").querySelectorAll(".set-sec").forEach(x=>x.classList.toggle("on",x.dataset.sec===sec));
+  }));
   $("st_save").addEventListener("click",async()=>{
-    await jsend("/api/settings","PATCH",{values:{tmdb_key:$("st_tmdb").value.trim(),JACKETT_URL:$("st_jurl").value.trim(),
-      REMOVE_ON_COMPLETE:$("st_rem").value,NOTIFY_URLS:$("st_notify").value.trim(),default_language:$("st_lang").value,default_profile_id:$("st_defprof").value||""}});
-    toast("Settings saved.");closeModal();refreshMeta();});
+    const vals={
+      tmdb_key:$("st_tmdb").value.trim(),
+      default_language:$("st_lang").value, default_profile_id:$("st_defprof").value||"",
+      JACKETT_URL:$("st_jurl").value.trim(), JACKETT_INDEXER:$("st_jidx").value.trim(),
+      DOWNLOAD_CLIENT:$("st_client").value, CLIENT_URL:$("st_curl").value.trim(),
+      CLIENT_USER:$("st_cuser").value.trim(),
+      APP_TITLE:$("st_title").value.trim(),
+      REMOVE_ON_COMPLETE:$("st_rem").value, SEARCH_LIMIT:$("st_slimit").value,
+      REQUEST_TIMEOUT:$("st_timeout").value, BIG_DOWNLOAD_GB:$("st_bigdl").value,
+      NOTIFY_URLS:$("st_notify").value.trim(), NOTIFY_ON:$("st_notifyon").value.trim(),
+      LIBRARY_ROOT:$("st_lib").value.trim(), DOWNLOAD_DIR:$("st_dldir").value.trim(),
+      DISK_PATH:$("st_disk").value.trim(), BROWSE_ROOT:$("st_browse").value.trim(),
+    };
+    // only send password if the admin actually typed a new one
+    const pw=$("st_cpass").value; if(pw)vals.CLIENT_PASS=pw;
+    try{
+      const r=await jsend("/api/settings","PATCH",{values:vals});
+      if(r.warnings&&r.warnings.length){
+        toast("Saved with warnings — check paths.","warn");
+        $("st_savehint").innerHTML=r.warnings.map(w=>`⚠ ${esc(w)}`).join("<br>");
+      }else{
+        toast(r.needs_restart?"Saved. Some changes apply after restart.":"Settings saved.");
+        closeModal();
+      }
+      refreshMeta();
+    }catch(e){ toast(e.message||"Couldn't save","err"); }
+  });
 });
 
 // ============ scan report (diagnostic) ============

@@ -514,30 +514,68 @@ class SettingsPatch(BaseModel):
 
 @app.get("/api/settings")
 def api_settings_get():
-    """Current effective settings the editor can change (non-secret + DB-stored)."""
-    from .config import WIZARD_KEYS
+    """Current effective settings the editor can change (non-secret + DB-stored).
+    Exposes the full editable environment except structural/secret keys."""
+    from .config import WIZARD_KEYS, PATH_KEYS
     c = cfg()
     env_view = {
+        # connections
         "JACKETT_URL": c.jackett_url, "JACKETT_INDEXER": c.jackett_indexer,
         "DOWNLOAD_CLIENT": c.client_kind, "CLIENT_URL": c.client_url,
-        "CLIENT_USER": c.client_user, "LIBRARY_ROOT": os.environ.get("LIBRARY_ROOT", ""),
-        "DOWNLOAD_DIR": c.download_dir, "NOTIFY_URLS": ",".join(c.notify_urls),
-        "UI_THEME": c.ui_theme, "UI_ACCENT": c.ui_accent, "APP_TITLE": c.app_title,
+        "CLIENT_USER": c.client_user,
+        # paths
+        "LIBRARY_ROOT": os.environ.get("LIBRARY_ROOT", "") or c.browse_root,
+        "DOWNLOAD_DIR": c.download_dir, "DISK_PATH": c.disk_path,
+        "BROWSE_ROOT": c.browse_root,
+        # behavior
         "REMOVE_ON_COMPLETE": os.environ.get("REMOVE_ON_COMPLETE", "0"),
+        "REQUEST_TIMEOUT": str(c.request_timeout), "SEARCH_LIMIT": str(c.search_limit),
+        "BIG_DOWNLOAD_GB": str(c.big_download_gb),
+        "NOTIFY_URLS": ",".join(c.notify_urls), "NOTIFY_ON": ",".join(c.notify_on),
+        # metadata / ui
+        "UI_THEME": c.ui_theme, "UI_ACCENT": c.ui_accent, "APP_TITLE": c.app_title,
     }
+    # CLIENT_PASS is editable but never returned; show only whether one is set.
+    env_view["CLIENT_PASS_SET"] = bool(c.client_pass)
+    # live status of each path (exists / writable inside the container)
+    path_status = {k: _path_status(env_view.get(k, "")) for k in PATH_KEYS}
     return {"env": env_view, "db": db.all_settings(),
             "tmdb_enabled": tmdbmod.enabled(),
+            "path_status": path_status,
             "wizard_keys": sorted(WIZARD_KEYS)}
+
+
+def _path_status(path: str) -> dict:
+    """Report whether a configured path exists and is writable in the container."""
+    if not path:
+        return {"set": False, "exists": False, "writable": False}
+    p = Path(path)
+    exists = p.exists()
+    writable = False
+    if exists:
+        writable = os.access(path, os.W_OK)
+    return {"set": True, "exists": exists, "writable": writable,
+            "is_dir": p.is_dir() if exists else False}
 
 
 @app.patch("/api/settings")
 def api_settings_patch(p: SettingsPatch):
-    """Update settings. Env-style keys persist to the wizard config file;
-    everything else (e.g. tmdb_key) goes to the DB settings table."""
-    from .config import save, WIZARD_KEYS
-    env_updates, db_updates = {}, {}
+    """Update settings. Env-style keys persist to the wizard config file
+    (overrides env, survives restarts); everything else goes to the DB settings
+    table. Path keys are validated and any problems returned as warnings."""
+    from .config import save, WIZARD_KEYS, PATH_KEYS
+    env_updates, db_updates, warnings = {}, {}, []
     for k, v in p.values.items():
         if k in WIZARD_KEYS:
+            # validate path keys but don't block the save — warn instead, since
+            # a path may legitimately be created later or mounted differently.
+            if k in PATH_KEYS and v:
+                st = _path_status(str(v))
+                if not st["exists"]:
+                    warnings.append(f"{k}: '{v}' does not exist in the container "
+                                    f"(is it mounted?). Saved anyway.")
+                elif not st["writable"]:
+                    warnings.append(f"{k}: '{v}' exists but isn't writable. Saved anyway.")
             env_updates[k] = v
         else:
             db_updates[k] = v
@@ -548,8 +586,12 @@ def api_settings_patch(p: SettingsPatch):
             raise HTTPException(500, f"Couldn't persist config: {e}")
     for k, v in db_updates.items():
         db.set_setting(k, v)
+    # some changes (paths, download client) only fully apply on restart
+    needs_restart = any(k in env_updates for k in
+                        ("DOWNLOAD_CLIENT", "CLIENT_URL", "LIBRARY_ROOT",
+                         "DOWNLOAD_DIR", "DISK_PATH", "BROWSE_ROOT"))
     log.info("Settings updated (%d env, %d db).", len(env_updates), len(db_updates))
-    return {"status": "ok"}
+    return {"status": "ok", "warnings": warnings, "needs_restart": needs_restart}
 
 
 # --- history + stats dashboard ---

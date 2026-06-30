@@ -108,14 +108,25 @@ def reload() -> "Config":
     return config
 
 
-# Keys the wizard is allowed to persist (whitelist — no arbitrary writes).
+# Keys the settings editor / wizard may persist (whitelist — no arbitrary
+# writes, and SESSION_SECRET / DB path / bind port are deliberately excluded as
+# structural/secret and must stay in the stack).
 WIZARD_KEYS = {
+    # connections
     "JACKETT_URL", "JACKETT_API_KEY", "JACKETT_INDEXER",
     "DOWNLOAD_CLIENT", "CLIENT_URL", "CLIENT_USER", "CLIENT_PASS",
-    "LIBRARY_ROOT", "DOWNLOAD_DIR", "DISK_PATH",
-    "REMOVE_ON_COMPLETE", "NOTIFY_URLS", "NOTIFY_ON",
+    # paths
+    "LIBRARY_ROOT", "DOWNLOAD_DIR", "DISK_PATH", "BROWSE_ROOT",
+    # behavior
+    "REMOVE_ON_COMPLETE", "REQUEST_TIMEOUT", "SEARCH_LIMIT", "BIG_DOWNLOAD_GB",
+    "NOTIFY_URLS", "NOTIFY_ON",
+    # metadata / ui
     "UI_THEME", "UI_ACCENT", "APP_TITLE",
 }
+
+# Subset that point at filesystem locations — the editor validates these before
+# saving (existence / writability inside the container) to avoid silent breakage.
+PATH_KEYS = {"LIBRARY_ROOT", "DOWNLOAD_DIR", "DISK_PATH", "BROWSE_ROOT"}
 
 
 def save(values: dict) -> None:
