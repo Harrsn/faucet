@@ -27,6 +27,39 @@ VALID_STATUS = {"monitored", "in_library", "ignored"}
 
 
 # ── status ───────────────────────────────────────────────────────────────────
+def link_movie_file(movie_id: int, abs_path: str) -> dict:
+    """Manually point a monitored movie at an existing file on disk (used by the
+    file browser's 'select this file'). Records it in library_movies under the
+    movie's own title/year so reconcile matches it, then flips the movie to
+    have/in_library. No file is moved."""
+    import os
+    from . import library
+    m = movies_mod.get_movie(movie_id)
+    if not m:
+        return {"error": "movie not found"}
+    if not os.path.isfile(abs_path):
+        return {"error": "file not found on disk"}
+    try:
+        st = os.stat(abs_path)
+    except OSError as e:
+        return {"error": f"can't stat file: {e}"}
+    quality = (library._detect_quality(os.path.basename(abs_path))
+               or library._detect_quality(abs_path))
+    with db.connect() as c:
+        c.execute(
+            "INSERT INTO library_movies (title, year, quality, path, size, mtime) "
+            "VALUES (?,?,?,?,?,?) ON CONFLICT(title, year) DO UPDATE SET "
+            "quality=excluded.quality, path=excluded.path, size=excluded.size, "
+            "mtime=excluded.mtime",
+            (m["title"], m.get("year"), quality, abs_path, st.st_size, st.st_mtime))
+        c.execute("UPDATE movies SET status='have', lib_status='in_library', "
+                  "monitored=0 WHERE id=?", (movie_id,))
+        c.execute("DELETE FROM wanted WHERE kind='movie' AND series_id=? AND status='wanted'",
+                  (movie_id,))
+    log.info("linked movie %s to file %s", movie_id, abs_path)
+    return {"ok": True, "movie_id": movie_id, "path": abs_path, "quality": quality}
+
+
 def set_status(kind: str, item_id: int, status: str) -> dict:
     """Change a title's library status. 'monitored' actively hunts missing;
     'in_library' means we have it and shouldn't hunt; 'ignored' means imported

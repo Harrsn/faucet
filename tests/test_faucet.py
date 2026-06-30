@@ -1028,3 +1028,36 @@ def test_default_profile_fallback(monkeypatch, tmp_path):
             {"title": "X 1080p", "seeders": 1, "badges": {"res": "1080p"}}]
     ranked = P.rank(rels, prof)
     assert len(ranked) == 1 and "1080p" in ranked[0]["title"]
+
+
+def test_link_movie_file(tmp_path, monkeypatch):
+    """Selecting a file in the browser links it to a movie (no move): records
+    the path and flips the movie to have/in_library."""
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "ev.jsonl"))
+    root = tmp_path / "nas"
+    (root / "movies" / "Pack").mkdir(parents=True)
+    f = root / "movies" / "Pack" / "Hey Watch This.avi"
+    f.write_bytes(b"x" * 1000)
+    monkeypatch.setenv("BROWSE_ROOT", str(root))
+    import importlib
+    from faucet import config as cfgmod
+    importlib.reload(cfgmod)
+    from faucet import db
+    importlib.reload(db)
+    db.init()
+    from faucet import filebrowser as FB
+    importlib.reload(FB)
+    from faucet import fixmatch as F
+    importlib.reload(F)
+    with db.connect() as c:
+        mid = c.execute("INSERT INTO movies (tmdb_id,title,year,status,monitored) "
+                        "VALUES (1,'Hey Watch This',2008,'wanted',1)").lastrowid
+    abs_ = FB.resolve_abs("movies/Pack/Hey Watch This.avi")
+    assert abs_ and F.link_movie_file(mid, abs_).get("ok")
+    with db.connect() as c:
+        m = c.execute("SELECT status,lib_status FROM movies WHERE id=?", (mid,)).fetchone()
+        lm = c.execute("SELECT path FROM library_movies WHERE title='Hey Watch This'").fetchone()
+    assert m["status"] == "have" and m["lib_status"] == "in_library"
+    assert lm and lm["path"].endswith("Hey Watch This.avi")
+    # escape still blocked
+    assert FB.resolve_abs("../../etc/passwd") is None

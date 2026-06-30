@@ -231,6 +231,19 @@ async def admin_files_mkdir(request: Request, admin: dict = Depends(require_admi
     return filebrowser.mkdir(body.get("parent", ""), body.get("name", ""))
 
 
+@router.post("/api/admin/movie/{movie_id}/link-file")
+async def admin_link_movie_file(movie_id: int, request: Request,
+                                admin: dict = Depends(require_admin)):
+    """Point a movie at a file the admin selected in the browser (no move)."""
+    verify_csrf(request)
+    from . import filebrowser, fixmatch
+    body = await request.json()
+    abs_path = filebrowser.resolve_abs(body.get("rel", ""))
+    if not abs_path:
+        return {"error": "file not found or outside the allowed root"}
+    return fixmatch.link_movie_file(movie_id, abs_path)
+
+
 # ── public auth endpoints ───────────────────────────────────────────────────
 
 @router.get("/api/auth/me")
