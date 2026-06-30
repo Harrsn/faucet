@@ -5,41 +5,81 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Faucet — Sign in</title>
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#0d1117; --panel:#161b22; --line:#21262d; --line-hi:#30363d;
-    --txt:#e6edf3; --muted:#8b949e; --accent:#2f81f7; --good:#3fb950; --bad:#f85149;
-    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+    --bg:#0B0C0E; --panel:#141619; --panel2:#1B1E23; --line:#23262C; --line-hi:#32363E;
+    --txt:#E8E6E1; --muted:#8A8F98; --accent:#C8A24B; --accent-soft:#E0BE6A;
+    --link:#6E9BF0; --good:#5BB97E; --warn:#D8A23E; --bad:#E06B5E;
+    --grain:0.035;
+    --disp:'Bricolage Grotesque',system-ui,sans-serif;
+    --sans:'Geist',system-ui,-apple-system,sans-serif;
+    --mono:'Geist Mono',ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  body.theme-light{
+    --bg:#F5F3EF; --panel:#FFFFFF; --panel2:#F0EDE6; --line:#E2DED5; --line-hi:#D2CCC0;
+    --txt:#16181C; --muted:#6B6F77; --accent:#A67C2E; --accent-soft:#8A6624;
+    --link:#3D6AD6; --good:#3E9A63; --warn:#B07F1E; --bad:#C5483B;
+    --grain:0.018;
   }
   *{box-sizing:border-box;}
-  body{margin:0;background:var(--bg);color:var(--txt);font-family:var(--mono);
-    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;}
-  .card{width:380px;max-width:100%;background:var(--panel);border:1px solid var(--line);
-    border-radius:14px;padding:30px 28px;box-shadow:0 20px 60px rgba(0,0,0,.5);}
-  .brand{display:flex;align-items:center;gap:10px;justify-content:center;margin-bottom:6px;}
-  .brand img{width:42px;height:42px;}
-  .brand h1{font-size:24px;margin:0;letter-spacing:.5px;}
-  .sub{text-align:center;color:var(--muted);font-size:12px;margin-bottom:22px;}
-  .tabs{display:flex;gap:6px;margin-bottom:18px;}
-  .tab{flex:1;text-align:center;padding:8px;border-radius:7px;cursor:pointer;font-size:13px;
-    color:var(--muted);border:1px solid transparent;}
-  .tab.on{background:var(--accent);color:#fff;}
-  label{display:block;font-size:12px;color:var(--muted);margin:12px 0 5px;}
-  input{width:100%;background:var(--bg);color:var(--txt);border:1px solid var(--line-hi);
-    border-radius:7px;padding:11px 12px;font-family:var(--mono);font-size:14px;}
-  input:focus{outline:2px solid var(--accent);outline-offset:-1px;}
-  button.go{width:100%;margin-top:18px;background:var(--accent);border:none;color:#fff;
-    border-radius:8px;padding:12px;font-family:var(--mono);font-size:14px;font-weight:600;cursor:pointer;}
-  button.go:hover{filter:brightness(1.08);} button.go:disabled{opacity:.5;cursor:default;}
-  .msg{margin-top:14px;padding:10px 12px;border-radius:7px;font-size:13px;display:none;}
-  .msg.err{display:block;background:rgba(248,81,73,.12);color:var(--bad);border:1px solid rgba(248,81,73,.3);}
-  .msg.ok{display:block;background:rgba(63,185,80,.12);color:var(--good);border:1px solid rgba(63,185,80,.3);}
-  .hint{font-size:11px;color:var(--muted);margin-top:14px;text-align:center;line-height:1.5;}
+  /* film-grain overlay — the signature texture */
+  body::before{content:"";position:fixed;inset:0;z-index:9999;pointer-events:none;opacity:var(--grain);
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:var(--sans);font-size:14px;line-height:1.55;
+    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;
+    /* warm projector glow from above */
+    background-image:radial-gradient(120% 80% at 50% -10%, color-mix(in srgb,var(--accent) 9%,transparent), transparent 60%);}
+  .theme-toggle{position:fixed;top:18px;right:20px;background:transparent;border:1px solid var(--line-hi);
+    color:var(--muted);border-radius:8px;width:34px;height:34px;cursor:pointer;font-size:15px;line-height:1;
+    display:flex;align-items:center;justify-content:center;transition:all .15s;}
+  .theme-toggle:hover{border-color:var(--accent);color:var(--txt);}
+  .card{width:400px;max-width:100%;background:color-mix(in srgb,var(--panel) 94%,transparent);
+    border:1px solid var(--line);border-radius:16px;padding:34px 30px;
+    box-shadow:0 30px 80px -20px rgba(0,0,0,.6), inset 0 1px 0 0 color-mix(in srgb,#fff 4%,transparent);
+    position:relative;overflow:hidden;}
+  /* gold top edge-gleam */
+  .card::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;
+    background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:.55;}
+  .brand{display:flex;align-items:center;gap:11px;justify-content:center;margin-bottom:7px;}
+  .brand img{width:40px;height:40px;}
+  .brand h1{font-family:var(--disp);font-size:27px;font-weight:800;letter-spacing:-0.02em;margin:0;}
+  .brand .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);
+    box-shadow:0 0 12px 1px var(--accent);display:inline-block;margin-left:1px;}
+  .sub{text-align:center;color:var(--muted);font-size:12.5px;font-family:var(--mono);margin-bottom:24px;}
+  .tabs{display:flex;gap:6px;margin-bottom:20px;background:var(--panel2);padding:4px;border-radius:10px;
+    border:1px solid var(--line);}
+  .tab{flex:1;text-align:center;padding:9px;border-radius:7px;cursor:pointer;font-size:13px;font-weight:500;
+    color:var(--muted);border:1px solid transparent;transition:all .15s;}
+  .tab:hover{color:var(--txt);}
+  .tab.on{background:var(--accent);color:#13110B;font-weight:600;
+    box-shadow:0 0 16px -5px var(--accent);}
+  label{display:block;font-size:11.5px;color:var(--muted);margin:14px 0 6px;font-weight:500;
+    text-transform:uppercase;letter-spacing:.04em;}
+  input{width:100%;background:var(--panel2);color:var(--txt);border:1px solid var(--line-hi);
+    border-radius:9px;padding:12px 13px;font-family:var(--sans);font-size:14px;transition:all .15s;}
+  input::placeholder{color:var(--muted);opacity:.7;}
+  input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent);}
+  button.go{width:100%;margin-top:22px;background:var(--accent);border:1px solid var(--accent);color:#13110B;
+    border-radius:10px;padding:13px;font-family:var(--sans);font-size:14px;font-weight:600;cursor:pointer;
+    transition:all .15s;letter-spacing:.01em;}
+  button.go:hover{background:var(--accent-soft);border-color:var(--accent-soft);box-shadow:0 0 20px -5px var(--accent);}
+  button.go:disabled{opacity:.5;cursor:default;box-shadow:none;}
+  .msg{margin-top:16px;padding:11px 13px;border-radius:9px;font-size:13px;display:none;line-height:1.5;}
+  .msg.err{display:block;background:color-mix(in srgb,var(--bad) 12%,transparent);color:var(--bad);
+    border:1px solid color-mix(in srgb,var(--bad) 32%,transparent);}
+  .msg.ok{display:block;background:color-mix(in srgb,var(--good) 12%,transparent);color:var(--good);
+    border:1px solid color-mix(in srgb,var(--good) 32%,transparent);}
+  .hint{font-size:11.5px;color:var(--muted);margin-top:16px;text-align:center;line-height:1.55;font-family:var(--mono);}
+  .hint b{color:var(--accent);font-weight:600;}
 </style>
 </head>
 <body>
+<button class="theme-toggle" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">◐</button>
 <div class="card">
-  <div class="brand"><img src="/static/favicon.svg" alt=""><h1>Faucet</h1></div>
+  <div class="brand"><img src="/static/favicon.svg" alt=""><h1>Faucet</h1><span class="dot"></span></div>
   <div class="sub" id="sub">Sign in to continue</div>
 
   <div class="tabs" id="tabs">
@@ -51,7 +91,7 @@
     <label id="lblUser">Username</label>
     <input type="text" id="username" autocomplete="username" autofocus>
     <div id="emailRow" style="display:none">
-      <label>Email <span style="opacity:.6">(optional)</span></label>
+      <label>Email <span style="opacity:.6;text-transform:none;letter-spacing:0">(optional)</span></label>
       <input type="email" id="email" autocomplete="email">
     </div>
     <label id="lblPass">Password</label>
@@ -64,6 +104,15 @@
 </div>
 
 <script>
+// theme: shared with the app via the same localStorage key
+(function(){
+  try{ if(localStorage.getItem("faucet-theme")==="light") document.body.classList.add("theme-light"); }catch(_){}
+})();
+document.getElementById("themeBtn").addEventListener("click",()=>{
+  document.body.classList.toggle("theme-light");
+  try{ localStorage.setItem("faucet-theme", document.body.classList.contains("theme-light")?"light":"dark"); }catch(_){}
+});
+
 const $=id=>document.getElementById(id);
 let mode="login", setupNeeded=false, resetToken=null;
 
