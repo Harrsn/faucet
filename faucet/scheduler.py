@@ -203,10 +203,15 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
     budget = min(max_per_run, max_active - active)
 
     # ── Season-pack pre-pass ──
-    # Group episode-wants by (series, season); for any season with 2+ wanted
-    # episodes, try to grab a single season pack instead of N episodes. A pack
-    # uses one client slot but satisfies many wants. Episodes covered by a
-    # grabbed pack are removed from the per-episode pass below.
+    # Group MISSING episode-wants by (series, season); when a season is
+    # (almost) entirely missing, grab one season pack instead of N episodes.
+    # Two guards keep packs from re-downloading content already on disk:
+    #   * only reason='missing' counts — quality-UPGRADE wants never justify a
+    #     pack (a 720p library with a 1080p profile used to re-download every
+    #     season it already owned)
+    #   * ownership check — a pack is only grabbed when at most ~10% of the
+    #     season's aired episodes are on disk; owning 8/10 and grabbing a
+    #     14 GB pack for the other 2 re-downloads the 8.
     covered_episode_wants = set()        # ids of wanted rows a pack will cover
     if budget > 0:
         from collections import defaultdict
@@ -216,7 +221,10 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
                 continue
             if w.get("series_id") is None or w.get("season") is None:
                 continue
+            if (w.get("reason") or "missing") != "missing":
+                continue                     # upgrades hunt per-episode only
             by_season[(w["series_id"], w["season"])].append(w)
+        today = datetime.now().date().isoformat()
         for (sid, season), eps in by_season.items():
             if grabbed >= budget:
                 break
@@ -225,6 +233,16 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
             title = eps[0].get("series_title") or ""
             if not title:
                 continue
+            # ownership guard: how many episodes of this season have aired?
+            with db.connect() as c:
+                row = c.execute(
+                    "SELECT COUNT(*) AS n FROM series_episodes WHERE series_id=? "
+                    "AND season=? AND air_date != '' AND air_date <= ?",
+                    (sid, season, today)).fetchone()
+            aired = row["n"] if row else 0
+            owned = max(0, aired - len(eps))
+            if aired <= 0 or owned > max(1, aired // 10):
+                continue                     # own too much of it — episode grabs instead
             pack = _try_season_pack(title, season, _load_profile_for_series(sid))
             if not pack:
                 continue

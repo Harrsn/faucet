@@ -129,6 +129,11 @@ def reconcile(series_id: int) -> dict:
 
     target_res = _profile_min_res(s.get("profile_id"))
     target_rank = _RES_RANK.get(target_res, 0)
+    # HUNT_UPGRADES=0 disables quality-upgrade hunting entirely (missing
+    # episodes still hunt) — for libraries where re-downloading owned content
+    # at higher quality is unwanted.
+    if os.environ.get("HUNT_UPGRADES", "1").strip().lower() in ("0", "false", "no", "off"):
+        target_rank = 0
 
     with db.connect() as c:
         canonical = c.execute(

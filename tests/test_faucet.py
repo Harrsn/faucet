@@ -1605,3 +1605,128 @@ def test_stall_seeding_and_queued_untouched(tmp_path, monkeypatch):
     monkeypatch.setattr(ST, "make_client", lambda *a, **k: FC())
     r = ST.check()
     assert r["checked"] == 0 and r["stalled"] == []
+
+
+# ---------------- season-pack ownership guard ----------------
+def _pack_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "ev.jsonl"))
+    monkeypatch.setenv("JACKETT_API_KEY", "k")
+    monkeypatch.setenv("HUNT_MAX_PER_RUN", "5")
+    monkeypatch.setenv("HUNT_MAX_ACTIVE", "10")
+    import importlib
+    from faucet import config as cfgmod
+    importlib.reload(cfgmod)
+    from faucet import db
+    importlib.reload(db)
+    db.init()
+    from faucet import scheduler as SCH
+    importlib.reload(SCH)
+    return db, SCH
+
+
+def _mk_series(db, title, season, aired, missing_eps, reason="missing"):
+    with db.connect() as c:
+        c.execute("INSERT INTO series (tmdb_id,title,total_seasons,monitored) "
+                  "VALUES ((SELECT COALESCE(MAX(tmdb_id),0)+1 FROM series),?,?,1)",
+                  (title, season))
+        sid = c.execute("SELECT id FROM series WHERE title=?", (title,)).fetchone()["id"]
+        for e in range(1, aired + 1):
+            c.execute("INSERT INTO series_episodes (series_id,season,episode,title,air_date) "
+                      "VALUES (?,?,?,?,'2020-01-01')", (sid, season, e, f"E{e}"))
+        for e in missing_eps:
+            c.execute("INSERT INTO wanted (kind,series_id,season,episode,title,reason,status) "
+                      "VALUES ('episode',?,?,?,?,?,'wanted')", (sid, season, e, f"E{e}", reason))
+    return sid
+
+
+class _FA:
+    id = "a"; name = "x"; duplicate = False
+
+
+class _FC:
+    def list_transfers(self): return []
+    def add(self, *a, **k): return _FA()
+
+
+def test_pack_skipped_when_mostly_owned(tmp_path, monkeypatch):
+    """Own 8 of 10 aired episodes -> the 2 missing hunt individually; the
+    season pack (which would re-download the 8) must NOT be grabbed."""
+    db, SCH = _pack_env(tmp_path, monkeypatch)
+    _mk_series(db, "Resident Alien", 4, aired=10, missing_eps=[9, 10])
+    GB = 1024 ** 3
+    def fake_search(url, key, idx, query, cat, limit, timeout):
+        if "S04E" in query:      # per-episode searches
+            return [{"title": f"Resident Alien {query.split()[-1]} 1080p WEB-DL",
+                     "href": "magnet:ep", "seeders": 50, "size": GB,
+                     "badges": {"res": "1080p", "source": "WEB-DL"}}]
+        return [{"title": "Resident Alien S04 1080p AMZN WEB-DL", "href": "magnet:pack",
+                 "seeders": 500, "size": 14 * GB, "badges": {"res": "1080p", "source": "WEB-DL"}}]
+    SCH.searchmod.search = fake_search
+    SCH.make_client = lambda *a, **k: _FC()
+    r = SCH.hunt_wanted()
+    grabbed = [d["grabbed"] for d in r["details"] if d.get("grabbed")]
+    assert all("S04E" in g for g in grabbed), grabbed     # episodes, not the pack
+    assert not any(d.get("reason") == "pack" for d in r["details"])
+
+
+def test_pack_used_when_season_fully_missing(tmp_path, monkeypatch):
+    db, SCH = _pack_env(tmp_path, monkeypatch)
+    _mk_series(db, "Family Guy", 13, aired=10, missing_eps=list(range(1, 11)))
+    GB = 1024 ** 3
+    SCH.searchmod.search = lambda *a, **k: [
+        {"title": "Family Guy S13 1080p WEB-DL", "href": "magnet:pack",
+         "seeders": 300, "size": 8 * GB, "badges": {"res": "1080p", "source": "WEB-DL"}}]
+    SCH.make_client = lambda *a, **k: _FC()
+    r = SCH.hunt_wanted()
+    packs = [d for d in r["details"] if d.get("reason") == "pack" and d.get("grabbed")]
+    assert len(packs) == 1 and packs[0]["covers"] == 10
+
+
+def test_upgrade_wants_never_trigger_packs(tmp_path, monkeypatch):
+    """A 720p library with a 1080p profile flags whole seasons as upgrades —
+    that must hunt per-episode, never as a full-season re-download."""
+    db, SCH = _pack_env(tmp_path, monkeypatch)
+    _mk_series(db, "Ted", 2, aired=7, missing_eps=list(range(1, 8)), reason="upgrade")
+    GB = 1024 ** 3
+    calls = []
+    def fake_search(url, key, idx, query, cat, limit, timeout):
+        calls.append(query)
+        return [{"title": "Ted S02 1080p WEBRip x265", "href": "magnet:pack",
+                 "seeders": 400, "size": 6 * GB, "badges": {"res": "1080p", "source": "WEBRip"}}]
+    SCH.searchmod.search = fake_search
+    SCH.make_client = lambda *a, **k: _FC()
+    r = SCH.hunt_wanted()
+    assert not any(d.get("reason") == "pack" for d in r["details"])
+    assert all("S02E" in q for q in calls)                # only episode searches
+
+
+def test_hunt_upgrades_env_disables_upgrades(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "ev.jsonl"))
+    monkeypatch.setenv("HUNT_UPGRADES", "0")
+    lib = tmp_path / "lib" / "tvshows" / "Show" / "Season 01"
+    lib.mkdir(parents=True)
+    (lib / "Show - S01E01 720p.mkv").write_bytes(b"x" * (60 * 1024 * 1024))
+    monkeypatch.setenv("LIBRARY_ROOT", str(tmp_path / "lib"))
+    import importlib, json
+    from faucet import config as cfgmod
+    importlib.reload(cfgmod)
+    from faucet import db
+    importlib.reload(db)
+    db.init()
+    from faucet import library as L
+    importlib.reload(L)
+    L.scan()
+    from faucet import tmdb as T
+    importlib.reload(T)
+    T.details = lambda tid, mt: {"seasons": 1, "title": "Show"}
+    T.episodes = lambda tid, n: [{"season": 1, "episode": 1, "title": "P",
+                                  "air_date": "2020-01-01"}]
+    from faucet import series as S
+    importlib.reload(S)
+    with db.connect() as c:
+        pid = c.execute("INSERT INTO profiles (name,min_seeders,resolutions,sources) "
+                        "VALUES ('HD',1,?,?)",
+                        (json.dumps(["1080p"]), json.dumps(["WEB-DL"]))).lastrowid
+    sid = S.add_series(321, "Show", 2020, None, pid)
+    r = S.reconcile(sid)
+    assert r["upgrades"] == 0 and r["have"] == 1          # 720p kept, no re-grab

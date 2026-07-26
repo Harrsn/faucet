@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.1
+
+### Fixed
+
+- **Season packs re-downloaded seasons already on disk.** The pack pre-pass
+  fired for ANY season with 2+ wanted episodes — including quality-*upgrade*
+  wants — without checking ownership. A 720p library under a 1080p profile
+  re-downloaded entire owned seasons (e.g. a 14 GB S04 pack for 2 missing
+  episodes). Packs now require the season to be ≥90% missing, and upgrade
+  wants only ever hunt per-episode.
+- New env `HUNT_UPGRADES=0` disables quality-upgrade hunting entirely
+  (missing episodes still hunt).
+
 ## 1.2.0
 
 ### Added
