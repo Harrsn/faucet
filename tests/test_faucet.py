@@ -107,6 +107,8 @@ def client_app(monkeypatch, tmp_path):
     # auth gate exactly as a real admin would.
     client.post("/api/auth/register", json={"username": "admin", "password": "supersecret123"})
     client.post("/api/auth/login", json={"username": "admin", "password": "supersecret123"})
+    # state-changing API calls now require the CSRF header app-wide
+    client.headers.update({"X-CSRF-Token": client.cookies.get("faucet_csrf") or ""})
     return client
 
 
@@ -208,7 +210,7 @@ def test_tmdb_parse_and_cache(tmp_path, monkeypatch):
          "poster_path": "/p.jpg", "vote_average": 8.0},
         {"id": 2, "media_type": "person", "name": "x"}]}
     res = tmdb.search("dune")
-    assert len(res) == 1 and res[0]["year"] == "2021"
+    assert len(res) == 1 and res[0]["year"] == 2021
     assert res[0]["search_query"] == "Dune 2021"
 
 
@@ -1122,3 +1124,356 @@ def test_admin_disable_user_changes_status(client_app):
     client_app.post(f"/api/admin/users/{uid}/status?status=active", headers=H)
     users = {u["username"]: u for u in client_app.get("/api/admin/users").json()["users"]}
     assert users["victim"]["status"] == "active"
+
+
+# ---------------- release-title verification (wrong-show bug) ----------------
+def test_releasematch_rejects_spinoffs():
+    from faucet.releasematch import matches_series
+    # THE bug: hunting "Trailer Park Boys" must not accept its spin-offs
+    assert matches_series("Trailer.Park.Boys.S01E01.1080p.WEB-DL", "Trailer Park Boys")
+    assert not matches_series("Trailer.Park.Boys.Out.Of.The.Park.Europe.S01E01.1080p",
+                              "Trailer Park Boys")
+    assert not matches_series("Trailer Park Boys The Animated Series S01E01",
+                              "Trailer Park Boys")
+    assert not matches_series("Trailer.Park.Boys.Jail.S01E01", "Trailer Park Boys")
+    # and the reverse: monitoring the spin-off must not match the parent show
+    assert matches_series("Trailer Park Boys Out of the Park Europe S01E01",
+                          "Trailer Park Boys: Out of the Park: Europe")
+    assert not matches_series("Trailer.Park.Boys.S01E01", 
+                              "Trailer Park Boys: Out of the Park: Europe")
+
+
+def test_releasematch_tolerates_decorations():
+    from faucet.releasematch import matches_series
+    # trailing year, country tag, tracker watermark are all benign
+    assert matches_series("Doctor Who 2005 S01E01 1080p", "Doctor Who (2005)")
+    assert matches_series("The Office US S03E07 720p HDTV", "The Office")
+    assert matches_series("[www.UIndex.org] - American Dad S01E01 1080p", "American Dad!")
+    assert matches_series("Bobs.Burgers.S05E05.WEBRip", "Bob's Burgers")
+    # season packs and alt episode syntax
+    assert matches_series("American Dad S03 1080p WEB-DL", "American Dad!")
+    assert matches_series("American Dad 3x07 HDTV", "American Dad!")
+    # no episode marker at all -> not an episode release
+    assert not matches_series("American Dad Original Soundtrack FLAC", "American Dad!")
+
+
+def test_releasematch_movies():
+    from faucet.releasematch import matches_movie
+    assert matches_movie("Dune.2021.2160p.HDR.WEB-DL", "Dune", 2021)
+    assert not matches_movie("Dune.Part.Two.2024.1080p", "Dune", 2021)
+    assert not matches_movie("Dune.2021.1080p", "Dune", 1984)   # wrong film, wrong year
+    # movie titles that ARE years
+    assert matches_movie("1917.2019.1080p.BluRay", "1917", 2019)
+    assert matches_movie("2012.2009.720p", "2012", 2009)
+    # no year in the release name: title equality decides
+    assert matches_movie("Dune 1080p WEBRip", "Dune", 2021)
+    assert not matches_movie("Dune Messiah 1080p", "Dune", 2021)
+
+
+def test_hunt_grabs_right_show_not_spinoff(tmp_path, monkeypatch):
+    """Integration: even when a spin-off release is far better seeded, the hunt
+    must grab the actual monitored show."""
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "events.jsonl"))
+    monkeypatch.setenv("JACKETT_API_KEY", "k")
+    import importlib
+    from faucet import config as cfgmod
+    importlib.reload(cfgmod)
+    from faucet import db
+    importlib.reload(db)
+    db.init()
+    from faucet import scheduler as SCH
+    importlib.reload(SCH)
+    GB = 1024 ** 3
+    with db.connect() as c:
+        c.execute("INSERT INTO series (tmdb_id,title,total_seasons,monitored) "
+                  "VALUES (77,'Trailer Park Boys',12,1)")
+        sid = c.execute("SELECT id FROM series WHERE tmdb_id=77").fetchone()["id"]
+        c.execute("INSERT INTO wanted (kind,series_id,season,episode,title,reason,status) "
+                  "VALUES ('episode',?,1,1,'Take Your Little Gun','missing','wanted')", (sid,))
+    SCH.searchmod.search = lambda *a, **k: [
+        {"title": "Trailer Park Boys Out Of The Park Europe S01E01 1080p", "href": "magnet:wrong",
+         "seeders": 900, "size": int(2 * GB), "badges": {"res": "1080p", "source": "WEB-DL"}},
+        {"title": "Trailer Park Boys S01E01 720p HDTV", "href": "magnet:right",
+         "seeders": 4, "size": int(GB), "badges": {"res": "720p", "source": "HDTV"}}]
+
+    class FA:
+        id = "a"; name = "x"; duplicate = False
+
+    class FC:
+        def list_transfers(self): return []
+        def add(self, *a, **k): return FA()
+    SCH.make_client = lambda *a, **k: FC()
+    r = SCH.hunt_wanted()
+    grabbed = [d["grabbed"] for d in r["details"] if d.get("grabbed")]
+    assert grabbed == ["Trailer Park Boys S01E01 720p HDTV"]
+
+
+# ---------------- stale library pruning ----------------
+def test_scan_prunes_deleted_files(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "events.jsonl"))
+    root = _fake_library(tmp_path)
+    monkeypatch.setenv("LIBRARY_ROOT", str(root))
+    import importlib
+    from faucet import config as cfgmod
+    importlib.reload(cfgmod)
+    from faucet import db
+    importlib.reload(db)
+    db.init()
+    from faucet import library as L
+    importlib.reload(L)
+    assert L.scan()["episodes"] == 2
+    assert L.have_episode("Test Show", 1, 2)
+    # delete one file from disk -> next scan must drop its row
+    (root / "tvshows" / "Test Show" / "Season 01" / "Test Show - S01E02 720p.mkv").unlink()
+    s = L.scan()
+    assert s["pruned"] == 1
+    assert L.have_episode("Test Show", 1, 1)
+    assert not L.have_episode("Test Show", 1, 2)
+
+
+# ---------------- stuck 'grabbed' recovery ----------------
+def test_stuck_grab_retries_after_window(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "events.jsonl"))
+    (tmp_path / "lib" / "tvshows").mkdir(parents=True)
+    monkeypatch.setenv("LIBRARY_ROOT", str(tmp_path / "lib"))
+    import importlib
+    from faucet import config as cfgmod
+    importlib.reload(cfgmod)
+    from faucet import db
+    importlib.reload(db)
+    db.init()
+    from faucet import library as L
+    importlib.reload(L)
+    L.scan()
+    from faucet import tmdb as T
+    importlib.reload(T)
+    T.details = lambda tid, mt: {"seasons": 1, "title": "Show"}
+    T.episodes = lambda tid, n: [{"season": 1, "episode": 1, "title": "P",
+                                  "air_date": "2020-01-01"}]
+    from faucet import series as S
+    importlib.reload(S)
+    sid = S.add_series(5, "Show", 2020, None, None)
+    S.reconcile(sid)
+    # simulate a grab that never landed: fresh 'grabbed' stays grabbed...
+    from datetime import datetime, timedelta
+    with db.connect() as c:
+        c.execute("UPDATE wanted SET status='grabbed', last_search=? WHERE series_id=?",
+                  (datetime.now().isoformat(timespec="seconds"), sid))
+    S.reconcile(sid)
+    with db.connect() as c:
+        st = c.execute("SELECT status FROM wanted WHERE series_id=?", (sid,)).fetchone()["status"]
+    assert st == "grabbed"
+    # ...but an old one flips back to wanted
+    old = (datetime.now() - timedelta(hours=S.GRAB_RETRY_HOURS + 1)).isoformat(timespec="seconds")
+    with db.connect() as c:
+        c.execute("UPDATE wanted SET last_search=? WHERE series_id=?", (old, sid))
+    S.reconcile(sid)
+    with db.connect() as c:
+        st = c.execute("SELECT status FROM wanted WHERE series_id=?", (sid,)).fetchone()["status"]
+    assert st == "wanted"
+
+
+def test_tba_episodes_not_hunted(tmp_path, monkeypatch):
+    """Episodes with NO air date (TBA) must not enter the wanted set."""
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "events.jsonl"))
+    (tmp_path / "lib" / "tvshows").mkdir(parents=True)
+    monkeypatch.setenv("LIBRARY_ROOT", str(tmp_path / "lib"))
+    import importlib
+    from faucet import config as cfgmod
+    importlib.reload(cfgmod)
+    from faucet import db
+    importlib.reload(db)
+    db.init()
+    from faucet import library as L
+    importlib.reload(L)
+    L.scan()
+    from faucet import tmdb as T
+    importlib.reload(T)
+    T.details = lambda tid, mt: {"seasons": 1, "title": "Show"}
+    T.episodes = lambda tid, n: [
+        {"season": 1, "episode": 1, "title": "aired", "air_date": "2020-01-01"},
+        {"season": 1, "episode": 2, "title": "tba", "air_date": ""}]
+    from faucet import series as S
+    importlib.reload(S)
+    sid = S.add_series(6, "Show", 2020, None, None)
+    r = S.reconcile(sid)
+    assert r["missing"] == 1   # only the aired episode
+
+
+# ---------------- importer year handling ----------------
+def test_importer_distinguishes_remakes(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "ev.jsonl"))
+    import importlib
+    from faucet import config as cfgmod
+    importlib.reload(cfgmod)
+    from faucet import db
+    importlib.reload(db)
+    db.init()
+    from faucet import movies as M
+    importlib.reload(M)
+    from faucet import importer as I
+    importlib.reload(I)
+    M.add_movie(10, "Dune", 2021, None, None)
+    assert I._already_have_movie("Dune", 2021)
+    assert not I._already_have_movie("Dune", 1984)   # the remake is NOT the same film
+
+
+def test_importer_no_blind_toplink(monkeypatch, tmp_path):
+    """With no title-token overlap, the importer must report unmatched instead
+    of monitoring whatever TMDb ranked first."""
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "ev.jsonl"))
+    import importlib
+    from faucet import importer as I
+    importlib.reload(I)
+    monkeypatch.setattr(I.tmdb, "search", lambda q, kind: [
+        {"tmdb_id": 1, "title": "Totally Different Show", "year": 2019, "poster": None}])
+    assert I._best_tmdb_match("My Home Videos", "tv") is None
+    # ...but a subset-title result still matches
+    monkeypatch.setattr(I.tmdb, "search", lambda q, kind: [
+        {"tmdb_id": 2, "title": "The Chronicles of Narnia: The Lion, the Witch and the Wardrobe",
+         "year": 2005, "poster": None}])
+    m = I._best_tmdb_match("The Chronicles of Narnia (2005)", "movie")
+    assert m and m["tmdb_id"] == 2
+
+
+# ---------------- langdetect false positives ----------------
+def test_langdetect_short_tag_false_positives():
+    from faucet import langdetect as L
+    # 'It' the movie is NOT Italian; 'Es' releases are not auto-Spanish
+    assert L.detect({"title": "It.2017.1080p.BluRay.x264"}) == "en"
+    assert L.detect({"title": "It Chapter Two 2019 2160p"}) == "en"
+    # real uppercase scene tags still detect
+    assert L.detect({"title": "Show.S01E01.FR.1080p"}) == "fr"
+    assert L.detect({"title": "Movie.2020.ITA.1080p"}) == "it"
+    # dual audio includes English -> passes an English profile
+    assert L.detect({"title": "Movie.2020.ITA.ENG.1080p.BluRay"}) == "en"
+    # ENG SUBS on a foreign release stays foreign
+    assert L.detect({"title": "Movie.2020.FRENCH.ENG.SUBS.1080p"}) == "fr"
+
+
+# ---------------- cam rejection ----------------
+def test_profiles_reject_cam_releases():
+    from faucet import profiles as P
+    from faucet.search import parse_badges
+    prof = {"min_seeders": 0, "resolutions": ["1080p"], "sources": ["WEB-DL"],
+            "language": "any"}
+    cam = {"title": "Movie 2026 1080p HDCAM", "seeders": 500,
+           "badges": parse_badges("Movie 2026 1080p HDCAM")}
+    ts = {"title": "Movie.2026.1080p.TS.x264", "seeders": 300,
+          "badges": parse_badges("Movie.2026.1080p.TS.x264")}
+    web = {"title": "Movie 2026 1080p WEB-DL", "seeders": 5,
+           "badges": parse_badges("Movie 2026 1080p WEB-DL")}
+    ranked = P.rank([cam, ts, web], prof)
+    assert [r["title"] for r in ranked] == ["Movie 2026 1080p WEB-DL"]
+    # a real .ts FILE extension is not a telesync tag
+    assert parse_badges("Show S01E01 1080p HDTV.ts")["ext"] == "TS"
+    assert parse_badges("Show S01E01 1080p HDTV.ts")["source"] == "HDTV"
+
+
+# ---------------- normalized have_movie ----------------
+def test_have_movie_normalized(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "ev.jsonl"))
+    import importlib
+    from faucet import config as cfgmod
+    importlib.reload(cfgmod)
+    from faucet import db
+    importlib.reload(db)
+    db.init()
+    from faucet import library as L
+    importlib.reload(L)
+    with db.connect() as c:
+        c.execute("INSERT INTO library_movies (title, year, quality, path) "
+                  "VALUES ('Bobs Burgers The Movie', 2022, '1080p', '/x.mkv')")
+    assert L.have_movie("Bob's Burgers: The Movie", 2022)
+    assert not L.have_movie("Bob's Burgers: The Movie", 1999)
+
+
+# ---------------- wanted dedupe migration ----------------
+def test_wanted_dupes_collapsed_on_init(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "ev.jsonl"))
+    import importlib
+    from faucet import config as cfgmod
+    importlib.reload(cfgmod)
+    from faucet import db
+    importlib.reload(db)
+    db.init()
+    with db.connect() as c:
+        # simulate the old title-keyed duplicates (insert bypassing the app)
+        c.execute("DELETE FROM wanted")
+        c.execute("INSERT INTO wanted (kind,series_id,season,episode,title,reason,status) "
+                  "VALUES ('episode',1,1,1,'Old Title','missing','wanted')")
+        c.execute("INSERT OR IGNORE INTO wanted (id,kind,series_id,season,episode,title,reason,status) "
+                  "VALUES (999,'episode',1,1,1,'New Title','missing','wanted')")
+        db._migrate(c)
+        n = c.execute("SELECT COUNT(*) AS n FROM wanted WHERE series_id=1").fetchone()["n"]
+    assert n == 1
+
+
+# ---------------- settings no longer leak internals ----------------
+def test_all_settings_excludes_internal_keys(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "ev.jsonl"))
+    import importlib
+    from faucet import config as cfgmod
+    importlib.reload(cfgmod)
+    from faucet import db
+    importlib.reload(db)
+    db.init()
+    db.set_setting("_tmdbcache:search:x", {"exp": 1, "data": []})
+    db.set_setting("session_secret", "SUPERSECRET")
+    db.set_setting("default_language", "en")
+    s = db.all_settings()
+    assert "default_language" in s
+    assert "session_secret" not in s
+    assert not any(k.startswith("_") for k in s)
+
+
+# ---------------- first-run lockdown + global CSRF ----------------
+def test_first_run_lockdown(tmp_path, monkeypatch):
+    """With zero users, only the auth/public surface is reachable — the admin
+    API must NOT be open just because the DB is empty."""
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "ev.jsonl"))
+    monkeypatch.setenv("SESSION_SECRET", "test")
+    monkeypatch.setenv("JACKETT_API_KEY", "k")
+    import importlib
+    for m in ["config", "db", "auth", "auth_routes", "app"]:
+        importlib.reload(importlib.import_module("faucet." + m))
+    from faucet import db, app as appmod
+    db.init()
+    from fastapi.testclient import TestClient
+    anon = TestClient(appmod.app, follow_redirects=False)
+    assert anon.get("/api/transfers").status_code == 401
+    assert anon.get("/api/settings").status_code == 401
+    assert anon.get("/api/auth/me").status_code == 200      # public: shows setup_needed
+    assert anon.get("/api/auth/me").json()["setup_needed"] is True
+    assert anon.get("/login").status_code == 200
+    # registration (the actual first-run path) works, then the app opens up
+    anon.post("/api/auth/register", json={"username": "root", "password": "longpassword1"})
+    anon.post("/api/auth/login", json={"username": "root", "password": "longpassword1"})
+    csrf = anon.cookies.get("faucet_csrf")
+    assert anon.get("/api/transfers").status_code in (200, 502)  # authed now
+
+
+def test_global_csrf_on_api_writes(client_app):
+    """State-changing calls outside the auth router now require the CSRF header."""
+    naked = {"X-CSRF-Token": ""}
+    r = client_app.post("/api/add", json={"magnet": "magnet:x"}, headers=naked)
+    assert r.status_code == 403
+    r = client_app.post("/api/torrent/1", json={"action": "pause"}, headers=naked)
+    assert r.status_code == 403
+    # with the header (fixture default) they work
+    assert client_app.post("/api/add", json={"magnet": "magnet:x"}).status_code == 200
+
+
+def test_health_public_is_minimal(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "ev.jsonl"))
+    monkeypatch.setenv("SESSION_SECRET", "test")
+    import importlib
+    for m in ["config", "db", "auth", "auth_routes", "app"]:
+        importlib.reload(importlib.import_module("faucet." + m))
+    from faucet import db, app as appmod
+    db.init()
+    from fastapi.testclient import TestClient
+    anon = TestClient(appmod.app, follow_redirects=False)
+    h = anon.get("/health")
+    assert h.status_code == 200
+    assert h.json() == {"status": "ok"}         # no internal reachability detail

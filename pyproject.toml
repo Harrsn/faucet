@@ -1,6 +1,6 @@
 [project]
 name = "faucet-media"
-version = "1.0.0"
+version = "1.1.0"
 description = "Self-hosted search, download, sort, and manage for your media library."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,6 +12,8 @@ dependencies = [
   "requests>=2.31",
   "guessit>=3.8",
   "pydantic>=2.0",
+  "bcrypt>=4.0",
+  "itsdangerous>=2.0",
 ]
 
 [project.urls]
