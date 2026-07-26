@@ -1477,3 +1477,131 @@ def test_health_public_is_minimal(tmp_path, monkeypatch):
     h = anon.get("/health")
     assert h.status_code == 200
     assert h.json() == {"status": "ok"}         # no internal reachability detail
+
+
+# ---------------- stalled-download handling ----------------
+def _stall_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "ev.jsonl"))
+    monkeypatch.setenv("JACKETT_API_KEY", "k")
+    import importlib
+    from faucet import config as cfgmod
+    importlib.reload(cfgmod)
+    from faucet import db
+    importlib.reload(db)
+    db.init()
+    from faucet import stalls as ST
+    importlib.reload(ST)
+    return db, ST
+
+
+def test_stall_detected_removed_and_requeued(tmp_path, monkeypatch):
+    db, ST = _stall_env(tmp_path, monkeypatch)
+    from datetime import datetime, timedelta
+
+    with db.connect() as c:
+        c.execute("INSERT INTO series (tmdb_id,title,monitored) VALUES (9,'American Dad!',1)")
+        sid = c.execute("SELECT id FROM series WHERE tmdb_id=9").fetchone()["id"]
+        c.execute("INSERT INTO wanted (kind,series_id,season,episode,title,reason,status) "
+                  "VALUES ('episode',?,1,2,'Threat Levels','missing','grabbed')", (sid,))
+
+    removed = []
+
+    class T:
+        id = "h1"; name = "American.Dad.S01E02.Threat.Levels.1080p.HEVC.x265-MeGusta"
+        percent = 42.0; status = "downloading"
+
+    class FC:
+        def list_transfers(self): return [T()]
+        def remove(self, tid, delete_data=False): removed.append((tid, delete_data))
+    monkeypatch.setattr(ST, "make_client", lambda *a, **k: FC())
+
+    # tick 1: baseline snapshot, nothing removed
+    r1 = ST.check()
+    assert r1["stalled"] == [] and removed == []
+    # backdate the snapshot beyond the stall window; percent unchanged
+    old = (datetime.now() - timedelta(hours=ST.STALL_HOURS + 1)).isoformat(timespec="seconds")
+    with db.connect() as c:
+        c.execute("UPDATE transfer_progress SET last_change=?", (old,))
+    # tick 2: stalled -> removed with data, want flipped back
+    r2 = ST.check()
+    assert removed == [("h1", True)]
+    assert len(r2["stalled"]) == 1 and r2["flipped"] == 1
+    with db.connect() as c:
+        st = c.execute("SELECT status FROM wanted WHERE series_id=?", (sid,)).fetchone()["status"]
+        hist = c.execute("SELECT event FROM history ORDER BY id DESC LIMIT 1").fetchone()["event"]
+    assert st == "wanted" and hist == "stalled"
+
+
+def test_stall_progress_resets_clock(tmp_path, monkeypatch):
+    db, ST = _stall_env(tmp_path, monkeypatch)
+    from datetime import datetime, timedelta
+
+    class T:
+        id = "h2"; name = "Show.S01E01.1080p"; percent = 10.0; status = "downloading"
+
+    removed = []
+
+    class FC:
+        def list_transfers(self): return [T()]
+        def remove(self, tid, delete_data=False): removed.append(tid)
+    monkeypatch.setattr(ST, "make_client", lambda *a, **k: FC())
+
+    ST.check()
+    old = (datetime.now() - timedelta(hours=ST.STALL_HOURS + 1)).isoformat(timespec="seconds")
+    with db.connect() as c:
+        c.execute("UPDATE transfer_progress SET last_change=?", (old,))
+    T.percent = 55.0                      # it moved — clock must restart
+    r = ST.check()
+    assert r["stalled"] == [] and removed == []
+    with db.connect() as c:
+        row = c.execute("SELECT percent FROM transfer_progress WHERE id='h2'").fetchone()
+    assert row["percent"] == 55.0
+
+
+def test_stall_season_pack_flips_whole_season(tmp_path, monkeypatch):
+    db, ST = _stall_env(tmp_path, monkeypatch)
+    from datetime import datetime, timedelta
+
+    with db.connect() as c:
+        c.execute("INSERT INTO series (tmdb_id,title,monitored) VALUES (11,'The Simpsons',1)")
+        sid = c.execute("SELECT id FROM series WHERE tmdb_id=11").fetchone()["id"]
+        for ep in (1, 2, 3):
+            c.execute("INSERT INTO wanted (kind,series_id,season,episode,title,reason,status) "
+                      "VALUES ('episode',?,19,?,?,'missing','grabbed')", (sid, ep, f"E{ep}"))
+
+    class T:
+        id = "h3"; name = "The.Simpsons.S19.720p.DSNP.WEB-DL.DDP5.1.H.264"
+        percent = 83.7; status = "downloading"
+
+    class FC:
+        def list_transfers(self): return [T()]
+        def remove(self, tid, delete_data=False): pass
+    monkeypatch.setattr(ST, "make_client", lambda *a, **k: FC())
+
+    ST.check()
+    old = (datetime.now() - timedelta(hours=ST.STALL_HOURS + 1)).isoformat(timespec="seconds")
+    with db.connect() as c:
+        c.execute("UPDATE transfer_progress SET last_change=?", (old,))
+    r = ST.check()
+    assert r["flipped"] == 3              # the whole grabbed season re-queued
+    with db.connect() as c:
+        n = c.execute("SELECT COUNT(*) AS n FROM wanted WHERE series_id=? "
+                      "AND status='wanted'", (sid,)).fetchone()["n"]
+    assert n == 3
+
+
+def test_stall_seeding_and_queued_untouched(tmp_path, monkeypatch):
+    db, ST = _stall_env(tmp_path, monkeypatch)
+
+    class Seed:
+        id = "s"; name = "Done.S01E01"; percent = 100.0; status = "seeding"
+
+    class Queued:
+        id = "q"; name = "Waiting.S01E01"; percent = 0.0; status = "queued"
+
+    class FC:
+        def list_transfers(self): return [Seed(), Queued()]
+        def remove(self, tid, delete_data=False): raise AssertionError("must not remove")
+    monkeypatch.setattr(ST, "make_client", lambda *a, **k: FC())
+    r = ST.check()
+    assert r["checked"] == 0 and r["stalled"] == []

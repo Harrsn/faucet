@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.0
+
+### Added
+
+- **Stalled-download handling** (`faucet/stalls.py`). Every scheduler tick
+  snapshots each downloading transfer's progress. A transfer with zero
+  progress for `STALL_HOURS` (default 4) is removed from the client with its
+  partial data, its release stays blocklisted in the grabbed table, and every
+  want it was grabbed for flips straight back to `wanted` — the same tick's
+  hunt then grabs a different release. Season packs re-queue the whole
+  grabbed season. `STALL_ACTION=flag` logs/notifies without acting. Stall
+  events appear in history as `stalled` and notify when `failed` is in
+  `NOTIFY_ON`. Seeding/queued/checking transfers are never touched.
+
 ## 1.1.0
 
 ### Fixed

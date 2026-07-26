@@ -381,7 +381,20 @@ def run_once() -> dict:
         if r["grabbed"]:
             grabbed += 1
 
-    # 2. library-aware pipeline
+    # 2. stalled-download handling: remove dead torrents FIRST so their client
+    # slots are free for this same tick's hunt, and their wants re-queue now
+    stall_summary = {}
+    try:
+        from . import stalls
+        stall_summary = stalls.check()
+        if stall_summary.get("stalled"):
+            log.info("Stall check: removed %d stalled download(s), re-queued %d want(s)",
+                     len(stall_summary["stalled"]), stall_summary.get("flipped", 0))
+    except Exception as e:                       # noqa: BLE001 - never kill the tick
+        log.warning("Stall check error: %s", e)
+        stall_summary = {"error": str(e)}
+
+    # 3. library-aware pipeline
     lib_summary = {}
     try:
         from . import library, series as series_mod, movies as movies_mod
@@ -396,7 +409,7 @@ def run_once() -> dict:
         log.warning("Library pipeline error: %s", e)
         lib_summary = {"error": str(e)}
 
-    # 3. housekeeping: purge expired sessions + used/expired reset tokens
+    # 4. housekeeping: purge expired sessions + used/expired reset tokens
     # (they previously accumulated forever)
     try:
         now = datetime.now().isoformat(timespec="seconds")
@@ -411,7 +424,7 @@ def run_once() -> dict:
     _last_run.update(ts=datetime.now().isoformat(timespec="seconds"),
                      checked=len(subs), grabbed=grabbed)
     return {"checked": len(subs), "grabbed": grabbed, "details": details,
-            "library": lib_summary}
+            "library": lib_summary, "stalls": stall_summary}
 
 
 def last_run() -> dict:
