@@ -248,6 +248,22 @@
   .stpill.miss{background:color-mix(in srgb,var(--bad) 14%,transparent);color:var(--bad);}
   .stpill.unair{background:color-mix(in srgb,var(--muted) 14%,transparent);color:var(--muted);}
   .eprow .q{font-family:var(--mono);font-size:10.5px;color:var(--muted);width:44px;text-align:right;flex:none;}
+  .stpill.grab{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent-soft);}
+  /* calendar */
+  .calday{font-family:var(--disp);font-size:15px;font-weight:800;letter-spacing:-0.01em;margin:20px 0 8px;
+    display:flex;align-items:baseline;gap:10px;}
+  .calday:first-child{margin-top:0;}
+  .calday .cd{font-family:var(--mono);font-size:11px;color:var(--muted);font-weight:400;}
+  .calday.today{color:var(--accent-soft);}
+  .calrow{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:8px 14px 8px 8px;margin-bottom:6px;cursor:pointer;transition:border-color .15s;}
+  .calrow:hover{border-color:var(--line-hi);}
+  .calrow .mini{width:30px;height:45px;border-radius:5px;flex:none;background:var(--panel2) center/cover no-repeat;
+    display:grid;place-items:center;font-family:var(--disp);font-weight:800;font-size:11px;color:#fffdf7aa;}
+  .calrow .ct{font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .calrow .ce{font-family:var(--mono);font-size:11px;color:var(--muted);}
+  .calrow .cn{flex:1;min-width:0;}
+  .calempty{color:var(--muted);font-size:12.5px;padding:4px 2px 0;}
   .ep-search{border:1px solid var(--line-hi);background:transparent;color:var(--muted);border-radius:6px;
     font-size:12px;padding:2px 9px;cursor:pointer;flex:none;opacity:0;transition:opacity .12s,color .12s,border-color .12s;}
   .eprow:hover .ep-search{opacity:1;}
@@ -484,6 +500,8 @@
   <span class="navlink" data-page="search">Search</span>
   <span class="navlink" data-page="shows">Shows</span>
   <span class="navlink" data-page="movies">Movies</span>
+  <span class="navlink" data-page="discover">Discover</span>
+  <span class="navlink" data-page="calendar">Calendar</span>
   <span class="navlink" data-page="subs">Auto-grab</span>
   <span class="navlink" data-page="profiles">Profiles</span>
   <span class="navspacer"></span>
@@ -499,6 +517,8 @@
 <div class="sheet" id="moreSheet">
   <div class="sheet-panel">
     <div class="sheet-grab"></div>
+    <div class="sheet-item" data-page="discover">✦ Discover</div>
+    <div class="sheet-item" data-page="calendar">▦ Calendar</div>
     <div class="sheet-item" data-page="profiles">◈ Profiles</div>
     <div class="sheet-item" data-page="subs">⟳ Auto-grab</div>
     <div class="sheet-item" id="msActivity">≡ Activity</div>
@@ -621,6 +641,32 @@
     <div id="mdBody"></div>
   </section>
 
+  <!-- ============ DISCOVER ============ -->
+  <section class="page" id="page-discover">
+    <div class="page-head">
+      <h1>Discover</h1><span class="count" id="discCount"></span>
+    </div>
+    <div class="toolbar">
+      <div class="seg" id="discSeg">
+        <button class="on" data-d="trending:tv">Trending TV</button>
+        <button data-d="trending:movie">Trending Movies</button>
+        <button data-d="popular:tv">Popular TV</button>
+        <button data-d="popular:movie">Popular Movies</button>
+        <button data-d="upcoming:movie">Upcoming</button>
+      </div>
+    </div>
+    <div class="pgrid" id="discGrid"></div>
+    <div class="empty" id="discEmpty" hidden>Discover needs a TMDb key — set one in Settings.</div>
+  </section>
+
+  <!-- ============ CALENDAR ============ -->
+  <section class="page" id="page-calendar">
+    <div class="page-head">
+      <h1>Calendar</h1><span class="count" id="calCount"></span>
+    </div>
+    <div id="calBody"><div class="muted">loading…</div></div>
+  </section>
+
   <!-- ============ AUTO-GRAB ============ -->
   <section class="page" id="page-subs">
     <div class="page-head">
@@ -720,7 +766,7 @@ function artStyle(poster,title){
 }
 
 // ============ navigation ============
-const PAGES=["dashboard","search","shows","movies","subs","profiles"];
+const PAGES=["dashboard","search","shows","movies","discover","calendar","subs","profiles"];
 function nav(page){
   ["showdetail","moviedetail","requests"].forEach(p=>{const el=$("page-"+p);if(el)el.classList.remove("on");});
   PAGES.forEach(p=>{ $("page-"+p).classList.toggle("on",p===page);
@@ -730,6 +776,8 @@ function nav(page){
   if(page==="dashboard")loadDashboard(true);
   if(page==="shows")loadShows();
   if(page==="movies")loadMovies();
+  if(page==="discover")loadDiscover();
+  if(page==="calendar")loadCalendar();
   if(page==="subs")loadSubs();
   if(page==="profiles")loadProfiles();
   window.scrollTo(0,0);
@@ -1064,6 +1112,7 @@ async function openShowDetail(sid){
         <span class="name">Season ${se.season}</span>
         <span class="mini"><i class="${spct<100?'part':''}" style="width:${spct}%"></i></span>
         <span class="stat">${se.have} / ${se.total}${se.total&&se.have>=se.total?' · complete':se.total?` · ${se.total-se.have} missing`:''}</span>
+        <button class="ep-search admin-only" title="Search season packs" data-sps="${se.season}">⌛ pack</button>
         <span class="chev">›</span>
       </div>
       <div class="season-b">${se.episodes.map(e=>`
@@ -1078,9 +1127,13 @@ async function openShowDetail(sid){
         </div>`).join("")}</div>
     </div>`;}).join("")||"<div class='empty'>No episode data. Make sure a TMDb key is set, then scan.</div>";
   $("sdBody").querySelectorAll("[data-acc]").forEach(h=>h.addEventListener("click",()=>h.parentElement.classList.toggle("open")));
-  $("sdBody").querySelectorAll(".ep-search").forEach(b=>b.addEventListener("click",e=>{
+  $("sdBody").querySelectorAll(".ep-search[data-eps]").forEach(b=>b.addEventListener("click",e=>{
     e.stopPropagation();
     openEpisodeSearch(sid,s.title,+b.dataset.eps,+b.dataset.epe,b.dataset.ept);
+  }));
+  $("sdBody").querySelectorAll("[data-sps]").forEach(b=>b.addEventListener("click",e=>{
+    e.stopPropagation();
+    openSeasonSearch(sid,s.title,+b.dataset.sps);
   }));
   // wire hero controls
   $("sdHunt").addEventListener("click",async()=>{
@@ -1140,6 +1193,36 @@ async function openEpisodeSearch(sid,showTitle,season,episode,epTitle){
     try{
       await jsend(`/api/series/${sid}/episodes/${season}/${episode}/grab`,"POST",{magnet:r.href,title:r.title});
       toast(`Grabbed ${tag}: ${r.title.slice(0,44)}`);b.textContent="grabbed";refreshDock();
+    }catch(e){b.disabled=false;b.textContent="grab";toast("Grab failed: "+e.message,"err");}
+  }));
+}
+
+// ── season-pack interactive search ──
+async function openSeasonSearch(sid,showTitle,season){
+  const tag=`Season ${season}`;
+  openModal(`${showTitle} · ${tag} packs`,`<div id="spsr"><div class="muted">searching the indexer…</div></div>`);
+  let d;
+  try{ d=await jget(`/api/series/${sid}/seasons/${season}/releases`); }
+  catch(e){ $("spsr").innerHTML=`<div class='empty'>Search failed: ${esc(e.message)}</div>`; return; }
+  const rel=d.releases||[];
+  if(!rel.length){
+    $("spsr").innerHTML=`<div class='empty'>No verified season packs found (${d.considered||0} results checked).</div>`;return;
+  }
+  $("spsr").innerHTML=`
+    <div class="hint" style="margin-bottom:8px">${rel.length} verified pack${rel.length===1?'':'s'} for S${String(season).padStart(2,'0')}
+      ${d.profile?` · ranked by profile <b>${esc(d.profile)}</b>`:''}</div>
+    <table><thead><tr><th>release</th><th>size</th><th>health</th><th></th></tr></thead>
+    <tbody>${rel.map((r,i)=>`<tr>
+      <td class="title">${esc(r.title)}${badgeHtml(r.badges)}
+        ${r._passes?'':`<div class="rel-why">✕ profile: ${esc(r._why||'rejected')}</div>`}</td>
+      <td>${esc(r.size_h||human(r.size))}</td><td>${healthHtml(r)}</td>
+      <td><button class="addbtn" data-sg="${i}">grab</button></td></tr>`).join("")}</tbody></table>`;
+  $("spsr").querySelectorAll("[data-sg]").forEach(b=>b.addEventListener("click",async()=>{
+    const r=rel[+b.dataset.sg];
+    b.disabled=true;b.textContent="grabbing…";
+    try{
+      await jsend(`/api/series/${sid}/seasons/${season}/grab`,"POST",{magnet:r.href,title:r.title});
+      toast(`Grabbed ${tag} pack`);b.textContent="grabbed";refreshDock();
     }catch(e){b.disabled=false;b.textContent="grab";toast("Grab failed: "+e.message,"err");}
   }));
 }
@@ -1294,7 +1377,7 @@ function renderMovies(){
   $("moviesGrid").innerHTML=list.map(m=>`<div class="pcard" data-mid="${m.id}">
       <div class="art" style="${artStyle(m.poster,m.title)}">${m.poster?'':esc(m.title)}</div>
       <div class="shade"></div>
-      <span class="pchip2 ${m.status==='have'?'full':'want'}">${m.status==='have'?'in library':'wanted'}</span>
+      <span class="pchip2 ${m.status==='have'?(m.want_reason==='upgrade'?'mon':'full'):'want'}">${m.status==='have'?(m.want_reason==='upgrade'?'upgrading':'in library'):'wanted'}</span>
       <div class="pmeta"><div class="pt">${esc(m.title)}</div><div class="py">${m.year||''}</div></div>
       <div class="havebar"><i class="${m.status==='have'?'full':''}" style="width:${m.status==='have'?100:0}%"></i></div>
     </div>`).join("")||"<div class='empty'>Nothing matches this filter.</div>";
@@ -1355,6 +1438,7 @@ async function openMovieDetail(mid){
   const fileBlock=f?`<div class="prof-card"><b>File on disk</b>
     <div class="prof-meta" style="margin-top:6px"><span class="pill have">have</span>
     ${f.quality?`<span class="tag res">${esc(f.quality)}</span>`:'<span class="muted">unknown quality</span>'}
+    ${f.source==='CAM'?'<span class="tag" style="color:var(--bad);border-color:var(--bad)">CAM — will be upgraded</span>':''}
     <span class="muted">· ${human(f.size||0)}</span></div>
     <div class="hint" style="margin-top:6px;word-break:break-all">${esc(f.path||'')}</div></div>`
     :(m.lib_status==='in_library'
@@ -1452,6 +1536,79 @@ async function amAdd(kind,d){
   const body={tmdb_id:+d.tmdb,title:d.title,year:d.year?+d.year:null,poster:d.poster||null,profile_id:$("am_prof")&&$("am_prof").value?+$("am_prof").value:null};
   try{await jsend(kind==="show"?"/api/series":"/api/movies","POST",body);toast(`Now monitoring ${d.title}.`);closeModal();kind==="show"?loadShows():loadMovies();}
   catch(_){toast("Couldn't add","err");}
+}
+
+// ============ discover ============
+let discState={kind:"tv",list:"trending"};
+async function loadDiscover(){
+  $("discGrid").innerHTML="<div class='muted'>loading…</div>";
+  try{
+    const d=await jget(`/api/meta/discover?kind=${discState.kind}&list=${discState.list}`);
+    if(!d.enabled){$("discGrid").innerHTML="";$("discEmpty").hidden=false;return;}
+    $("discEmpty").hidden=true;
+    const items=d.results||[];
+    $("discCount").textContent=items.length?`${items.length} titles`:"";
+    $("discGrid").innerHTML=items.map((r,i)=>`<div class="pcard" data-di="${i}">
+      <div class="art" style="${artStyle(r.poster,r.title)}">${r.poster?'':esc(r.title)}</div>
+      <div class="shade"></div>
+      ${r.in_library?'<span class="pchip2 full">in library</span>':''}
+      <div class="pmeta"><div class="pt">${esc(r.title)}</div>
+        <div class="py">${r.year||''}${r.rating?` · ★ ${r.rating}`:''}</div></div>
+    </div>`).join("")||"<div class='empty'>Nothing returned for this list.</div>";
+    $("discGrid").querySelectorAll(".pcard").forEach(p=>p.addEventListener("click",()=>{
+      const r=items[+p.dataset.di];
+      if(r.in_library){
+        if(r.media_type==="tv")openShowDetail(r.library_id);else openMovieDetail(r.library_id);
+        return;
+      }
+      const admin=ME&&ME.role==="admin";
+      const kind=r.media_type==="tv"?"show":"movie";
+      if(admin&&!confirm(`Monitor "${r.title}"${r.year?` (${r.year})`:''}? It'll use the global default profile.`))return;
+      amAdd(kind,{tmdb:String(r.tmdb_id),title:r.title,year:r.year?String(r.year):"",poster:r.poster||""})
+        .then(()=>loadDiscover());
+    }));
+  }catch(_){$("discGrid").innerHTML="<div class='empty'>Couldn't load Discover.</div>";}
+}
+$("discSeg").querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{
+  $("discSeg").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));
+  const [list,kind]=b.dataset.d.split(":");
+  discState={kind,list};loadDiscover();
+}));
+
+// ============ calendar ============
+async function loadCalendar(){
+  $("calBody").innerHTML="<div class='muted'>loading…</div>";
+  let d;
+  try{ d=await jget("/api/calendar?past=7&days=14"); }
+  catch(_){$("calBody").innerHTML="<div class='empty'>Couldn't load the calendar.</div>";return;}
+  const eps=d.episodes||[];
+  $("calCount").textContent=eps.length?`${eps.length} episodes · ${d.from} → ${d.to}`:"";
+  if(!eps.length){$("calBody").innerHTML="<div class='empty'>Nothing airing in this window across your monitored shows.</div>";return;}
+  const byDate={};
+  eps.forEach(e=>{(byDate[e.date]=byDate[e.date]||[]).push(e);});
+  const today=d.today;
+  const dayLabel=ds=>{
+    const dt=new Date(ds+"T12:00:00");
+    const names=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+    const base=`${names[dt.getDay()]} · ${ds.slice(5)}`;
+    if(ds===today)return "Today";
+    const t=new Date(today+"T12:00:00"),diff=Math.round((dt-t)/86400000);
+    if(diff===1)return "Tomorrow"; if(diff===-1)return "Yesterday";
+    return base;
+  };
+  const pill=st=>st==="have"?'<span class="stpill have">on disk</span>'
+    :st==="grabbed"?'<span class="stpill grab">grabbed</span>'
+    :st==="missing"?'<span class="stpill miss">missing</span>'
+    :'<span class="stpill unair">upcoming</span>';
+  $("calBody").innerHTML=Object.keys(byDate).sort().map(ds=>`
+    <div class="calday ${ds===today?'today':''}">${dayLabel(ds)} <span class="cd">${ds}</span></div>
+    ${byDate[ds].map(e=>`<div class="calrow" data-sid="${e.series_id}">
+      <div class="mini" style="${artStyle(e.poster,e.title)}">${e.poster?'':esc(e.title.slice(0,2).toUpperCase())}</div>
+      <div class="cn"><div class="ct">${esc(e.title)}</div>
+        <div class="ce">S${String(e.season).padStart(2,'0')}E${String(e.episode).padStart(2,'0')}${e.ep_title?` · ${esc(e.ep_title)}`:''}</div></div>
+      ${pill(e.status)}
+    </div>`).join("")}`).join("");
+  $("calBody").querySelectorAll(".calrow").forEach(r=>r.addEventListener("click",()=>openShowDetail(+r.dataset.sid)));
 }
 
 // ============ subscriptions ============

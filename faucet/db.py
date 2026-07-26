@@ -279,6 +279,9 @@ def _migrate(c) -> None:
         ("requests", "series_id", "INTEGER"),   # link once it becomes monitored
         ("requests", "movie_id", "INTEGER"),
         ("users", "can_autoapprove", "INTEGER DEFAULT 0"),
+        # movie quality upgrades: remember whether the on-disk file is a
+        # cam-family rip (always upgrade-eligible)
+        ("library_movies", "source", "TEXT"),
     ]
     for table, col, decl in add:
         try:

@@ -45,10 +45,18 @@ It runs as one container over Jackett (or Prowlarr) and your torrent client. No 
 - **User requests** — non-admin users browse and request shows or movies; requests queue for admin approval, then flow straight into the monitored/hunting pipeline. Trusted users skip the queue.
 - **Themed login** — the sign-in / register / password-reset page shares the app's look, with the same dark/light toggle.
 
+### Discover, calendar & interactive search
+
+- **Discover** — browse TMDb trending / popular / upcoming as a poster wall; one click adds it (admin) or requests it (users). Titles already in your library are badged.
+- **Calendar** — everything airing across your monitored shows, past week and next two, with on-disk / grabbed / missing / upcoming status per episode.
+- **Interactive search** — the hourglass: per-episode and per-season release search with strict verification (right show, right episode, no spin-offs, no wrong-season packs), ranked by your quality profile, one-click grab that coordinates with the background hunter.
+
 ### Hunting
 
 - **Automatic background hunting** — a built-in scheduler scans the library, reconciles every monitored show and movie, and grabs what's missing on a timer (default every 30 minutes). No extra container or cron job.
 - **Season-pack preference** — when two or more episodes of a season are wanted, Faucet grabs a single season pack instead of many individual episodes: one client slot, many episodes, better seeded.
+- **Stalled-download handling** — a download with zero progress for `STALL_HOURS` is removed, blocklisted, and re-hunted with a different release automatically.
+- **Movie quality upgrades** — cams/telesyncs and below-profile files are hunted for better copies; the best file per movie wins.
 - **Concurrency caps** — never floods your client. Won't start hunting if too many torrents are already downloading, and grabs only a few per cycle; the rest stay queued for the next tick. Tunable via `HUNT_MAX_ACTIVE` / `HUNT_MAX_PER_RUN`.
 - **Per-show monitor modes** — `all` (hunt every missing episode), `future` (only new episodes from the add date forward — ignore a huge back catalog), or `paused`. Keeps big shows from trying to backfill hundreds of episodes.
 
@@ -78,9 +86,15 @@ It runs as one container over Jackett (or Prowlarr) and your torrent client. No 
 
 ## Screenshots
 
-| Shows library | Show detail | Search |
+| Shows library | Show detail | Episode search |
 |---|---|---|
 | ![shows](docs/screenshot-shows.png) | ![detail](docs/screenshot-detail.png) | ![search](docs/screenshot-search.png) |
+
+| Dashboard | Discover | Calendar |
+|---|---|---|
+| ![dashboard](docs/screenshot-activity.png) | ![discover](docs/screenshot-discover.png) | ![calendar](docs/screenshot-calendar.png) |
+
+*(demo data — with a TMDb key every card shows real poster art and backdrops)*
 
 ## Quickstart (Docker)
 

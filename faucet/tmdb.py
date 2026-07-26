@@ -100,6 +100,50 @@ def search(query: str, kind: str = "multi") -> list[dict]:
     return out
 
 
+_DISCOVER_TTL = 60 * 60 * 6   # 6h — trending lists move slowly
+
+
+def discover(kind: str = "tv", list_name: str = "trending") -> list[dict]:
+    """Browsable poster walls: trending | popular | top_rated (tv+movie),
+    upcoming | now_playing (movie only). Normalized like search(); cached."""
+    if not enabled():
+        return []
+    kind = "movie" if kind == "movie" else "tv"
+    paths = {
+        "trending": f"/trending/{kind}/week",
+        "popular": f"/{kind}/popular",
+        "top_rated": f"/{kind}/top_rated",
+        "upcoming": "/movie/upcoming",
+        "now_playing": "/movie/now_playing",
+    }
+    path = paths.get(list_name)
+    if path is None or (list_name in ("upcoming", "now_playing") and kind != "movie"):
+        return []
+    ck = f"discover:{kind}:{list_name}"
+    cached = _cache_get(ck)
+    if cached is not None:
+        return cached
+    try:
+        data = _get(path, {})
+    except requests.RequestException:
+        return []
+    out = []
+    for r in data.get("results", []):
+        title = r.get("title") or r.get("name") or ""
+        date = r.get("release_date") or r.get("first_air_date") or ""
+        year = int(date[:4]) if date[:4].isdigit() else None
+        out.append({
+            "tmdb_id": r.get("id"), "media_type": kind, "title": title,
+            "year": year, "overview": (r.get("overview") or "")[:280],
+            "poster": _poster(r.get("poster_path")),
+            "rating": round(r.get("vote_average", 0), 1),
+            "date": date,
+        })
+    db.set_setting(f"_tmdbcache:{ck}",
+                   {"exp": time.time() + _DISCOVER_TTL, "data": out})
+    return out
+
+
 def episodes(tmdb_id: int, total_seasons: int) -> list[dict]:
     """Fetch the full canonical episode list across all seasons.
     Returns [{season, episode, title, air_date}] — the 'what should exist'

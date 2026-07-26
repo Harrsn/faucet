@@ -24,14 +24,19 @@ log = logging.getLogger("faucet.notify")
 _TIMEOUT = 10
 
 
-def _discord(url: str, title: str, body: str):
+def _discord(url: str, title: str, body: str, image: str | None = None):
     # accept both discord:// shorthand and full webhook URLs
     if url.startswith("discord://"):
         rest = url[len("discord://"):]
         webhook = f"https://discord.com/api/webhooks/{rest}"
     else:
         webhook = url
-    requests.post(webhook, json={"content": f"**{title}**\n{body}"}, timeout=_TIMEOUT)
+    # rich embed (with the poster as a thumbnail when we have one) instead of
+    # a bare text message
+    embed = {"title": title, "description": body, "color": 0xC8A24B}
+    if image:
+        embed["thumbnail"] = {"url": image}
+    requests.post(webhook, json={"embeds": [embed]}, timeout=_TIMEOUT)
 
 
 def _telegram(url: str, title: str, body: str):
@@ -63,9 +68,9 @@ def _generic(url: str, title: str, body: str):
     requests.post(url, json={"title": title, "message": body}, timeout=_TIMEOUT)
 
 
-def _dispatch(url: str, title: str, body: str):
+def _dispatch(url: str, title: str, body: str, image: str | None = None):
     if url.startswith("discord://") or "discord.com/api/webhooks" in url:
-        _discord(url, title, body)
+        _discord(url, title, body, image)
     elif url.startswith("telegram://"):
         _telegram(url, title, body)
     elif url.startswith(("ntfy://", "ntfys://")):
@@ -76,10 +81,11 @@ def _dispatch(url: str, title: str, body: str):
         _generic(url, title, body)
 
 
-def notify(urls: list[str], title: str, body: str) -> None:
-    """Send to every configured target. Best-effort; logs and swallows errors."""
+def notify(urls: list[str], title: str, body: str, image: str | None = None) -> None:
+    """Send to every configured target. Best-effort; logs and swallows errors.
+    `image` (a poster URL) renders as a thumbnail where supported (Discord)."""
     for url in urls:
         try:
-            _dispatch(url, title, body)
+            _dispatch(url, title, body, image)
         except Exception as e:                       # noqa: BLE001 - never break caller
             log.warning("notify failed for %s: %s", urlparse(url).scheme or "?", e)

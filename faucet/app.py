@@ -132,9 +132,10 @@ async def _auth_gate(request: _Request, call_next):
     return await call_next(request)
 
 
-# Endpoints regular users may READ: browse the monitored library and search
-# TMDb (to request). Safe, non-indexer, non-torrent reads.
-_USER_READABLE = ("/api/series", "/api/movies", "/api/meta/")
+# Endpoints regular users may READ: browse the monitored library, search
+# TMDb (to request), browse Discover, and see the calendar. Safe, non-indexer,
+# non-torrent reads.
+_USER_READABLE = ("/api/series", "/api/movies", "/api/meta/", "/api/calendar")
 
 # Always admin-only regardless of method — raw indexer search, torrent client,
 # download management, settings, profiles, subscriptions, hunts, library ops.
@@ -520,6 +521,74 @@ def api_meta_details(media_type: str, tmdb_id: int):
     return tmdbmod.details(tmdb_id, media_type)
 
 
+@app.get("/api/meta/discover")
+def api_meta_discover(kind: str = Query("tv"), list_name: str = Query("trending", alias="list")):
+    """Browsable TMDb lists for the Discover page. Items already monitored are
+    annotated with their library ids so the UI can badge + deep-link them."""
+    results = tmdbmod.discover(kind, list_name)
+    with db.connect() as c:
+        series_ids = {r["tmdb_id"]: r["id"] for r in c.execute(
+            "SELECT tmdb_id, id FROM series")}
+        movie_ids = {r["tmdb_id"]: r["id"] for r in c.execute(
+            "SELECT tmdb_id, id FROM movies")}
+    out = []
+    for r in results:
+        rr = dict(r)
+        if r["media_type"] == "tv" and r["tmdb_id"] in series_ids:
+            rr["in_library"], rr["library_id"] = True, series_ids[r["tmdb_id"]]
+        elif r["media_type"] == "movie" and r["tmdb_id"] in movie_ids:
+            rr["in_library"], rr["library_id"] = True, movie_ids[r["tmdb_id"]]
+        else:
+            rr["in_library"] = False
+        out.append(rr)
+    return {"enabled": tmdbmod.enabled(), "kind": kind, "list": list_name,
+            "results": out}
+
+
+@app.get("/api/calendar")
+def api_calendar(past: int = Query(7, ge=0, le=30), days: int = Query(14, ge=1, le=60)):
+    """Air-date calendar across monitored shows: every canonical episode airing
+    from `past` days ago through `days` days ahead, with ownership + hunt
+    status. Grouped client-side; this returns a flat, date-sorted list."""
+    from datetime import date, timedelta as _td
+    from .library import normalize_title
+    lo = (date.today() - _td(days=past)).isoformat()
+    hi = (date.today() + _td(days=days)).isoformat()
+    with db.connect() as c:
+        eps = c.execute(
+            "SELECT e.season, e.episode, e.title AS ep_title, e.air_date, "
+            "s.id AS series_id, s.title, s.poster, s.monitor_mode "
+            "FROM series_episodes e JOIN series s ON s.id=e.series_id "
+            "WHERE s.monitored=1 AND e.air_date >= ? AND e.air_date <= ? "
+            "ORDER BY e.air_date, s.title, e.season, e.episode",
+            (lo, hi)).fetchall()
+        lib: dict = {}
+        for r in c.execute("SELECT show_name, season, episode FROM library_episodes"):
+            lib.setdefault(normalize_title(r["show_name"] or ""), set()).add(
+                (r["season"], r["episode"]))
+        grabbed = {(r["series_id"], r["season"], r["episode"]): r["status"]
+                   for r in c.execute("SELECT series_id, season, episode, status "
+                                      "FROM wanted WHERE kind='episode'")}
+    today = date.today().isoformat()
+    out = []
+    for e in eps:
+        owned = (e["season"], e["episode"]) in lib.get(normalize_title(e["title"]), set())
+        wstatus = grabbed.get((e["series_id"], e["season"], e["episode"]))
+        if e["air_date"] > today:
+            status = "upcoming"
+        elif owned:
+            status = "have"
+        elif wstatus == "grabbed":
+            status = "grabbed"
+        else:
+            status = "missing"
+        out.append({"date": e["air_date"], "series_id": e["series_id"],
+                    "title": e["title"], "poster": e["poster"],
+                    "season": e["season"], "episode": e["episode"],
+                    "ep_title": e["ep_title"], "status": status})
+    return {"from": lo, "to": hi, "today": today, "episodes": out}
+
+
 # --- in-app settings editor (post-setup config changes) ---
 class SettingsPatch(BaseModel):
     values: dict
@@ -887,6 +956,74 @@ def api_episode_releases(sid: int, season: int, episode: int):
             "considered": len(results), "releases": out}
 
 
+@app.get("/api/series/{sid}/seasons/{season}/releases")
+def api_season_releases(sid: int, season: int):
+    """Interactive season-pack search: verified packs for this exact season."""
+    from . import series as series_mod, releasematch, packs
+    from . import profiles as prof
+    from . import scheduler as sched
+    s = series_mod.get_series(sid)
+    if not s:
+        raise HTTPException(404, "Series not found")
+    query = f"{s['title']} S{season:02d}"
+    try:
+        results = searchmod.search(cfg().jackett_url, cfg().jackett_api_key,
+                                   cfg().jackett_indexer, query, "all",
+                                   cfg().search_limit, cfg().request_timeout)
+    except searchmod.SearchError as e:
+        raise HTTPException(502, str(e))
+    matched = []
+    for r in results:
+        if not releasematch.matches_series(r["title"], s["title"]):
+            continue
+        cls = packs.classify_pack(r["title"])
+        if cls["kind"] == "season" and cls["season"] == season:
+            matched.append(r)
+    profile = sched._load_profile_for_series(sid)
+    out = []
+    for r in matched:
+        rr = dict(r)
+        if profile:
+            ok, why = prof.passes(r, profile)
+            rr["_passes"], rr["_why"] = ok, why
+            rr["_score"] = prof.score(r, profile) if ok else 0
+        else:
+            rr["_passes"], rr["_why"], rr["_score"] = True, "", r.get("seeders", 0)
+        out.append(rr)
+    out.sort(key=lambda x: (not x["_passes"], -x["_score"], -x.get("seeders", 0)))
+    return {"query": query, "profile": profile["name"] if profile else None,
+            "considered": len(results), "releases": out}
+
+
+@app.post("/api/series/{sid}/seasons/{season}/grab")
+def api_season_grab(sid: int, season: int, req: AddRequest):
+    """Grab a season pack from the interactive search: adds to the client,
+    blocklists the release, and flips every outstanding want in that season to
+    'grabbed' so the hunter stands down."""
+    from . import series as series_mod
+    from datetime import datetime as _dt
+    s = series_mod.get_series(sid)
+    if not s:
+        raise HTTPException(404, "Series not found")
+    if not req.magnet:
+        raise HTTPException(400, "No magnet/href provided.")
+    try:
+        res = client().add(req.magnet, cfg().download_dir or None)
+    except DownloadClientError as e:
+        raise HTTPException(502, str(e))
+    title = req.title or res.name or ""
+    if title:
+        db.mark_grabbed(title, None)
+    db.add_history("added", title,
+                   f"manual season pack: {s['title']} S{season:02d}")
+    with db.connect() as c:
+        c.execute("UPDATE wanted SET status='grabbed', last_search=? "
+                  "WHERE kind='episode' AND series_id=? AND season=? "
+                  "AND status='wanted'",
+                  (_dt.now().isoformat(timespec="seconds"), sid, season))
+    return {"status": "ok", "id": res.id, "name": res.name, "duplicate": res.duplicate}
+
+
 @app.post("/api/series/{sid}/episodes/{season}/{episode}/grab")
 def api_episode_grab(sid: int, season: int, episode: int, req: AddRequest):
     """Grab a specific release for a specific episode (from the interactive
@@ -960,7 +1097,15 @@ class MovieAdd(BaseModel):
 @app.get("/api/movies")
 def api_movies_list():
     from . import movies as movies_mod
-    return {"movies": movies_mod.list_movies()}
+    out = movies_mod.list_movies()
+    # annotate outstanding wants (missing vs upgrade) for the UI chips
+    with db.connect() as c:
+        wants = {r["series_id"]: r["reason"] for r in c.execute(
+            "SELECT series_id, reason FROM wanted WHERE kind='movie' "
+            "AND status IN ('wanted','grabbed')")}
+    for m in out:
+        m["want_reason"] = wants.get(m["id"])
+    return {"movies": out}
 
 
 @app.post("/api/movies")

@@ -113,30 +113,25 @@ def _sort_one(item: Path, dry: bool) -> int:
     return subprocess.run(cmd, env=env).returncode
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description="Catch-up sweep for completed downloads.")
-    ap.add_argument("--dry-run", action="store_true",
-                    help="Show what would be sorted without moving anything.")
-    ap.add_argument("--settle-min", type=int,
-                    default=int(os.environ.get("SWEEP_SETTLE_MIN", "15")),
-                    help="Minutes an item must be unmodified before sorting (default 15).")
-    args = ap.parse_args()
-
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+def run(dry: bool = False, settle_min: int | None = None) -> dict:
+    """One sweep pass. Importable (the scheduler calls this every tick) as well
+    as runnable from the CLI. Returns counters; {'error': ...} when the
+    complete dir is unreachable."""
     log = logging.getLogger("faucet.sweep")
+    if settle_min is None:
+        settle_min = int(os.environ.get("SWEEP_SETTLE_MIN", "15"))
 
     cdir = _complete_dir()
     if not cdir.exists():
-        log.error("Complete dir not found: %s (is the NAS mounted in the container?)", cdir)
-        return 1
+        log.warning("Complete dir not found: %s (is the NAS mounted in the container?)", cdir)
+        return {"error": "complete dir not found", "swept": 0, "failed": 0}
 
-    settle_secs = max(0, args.settle_min) * 60
+    settle_secs = max(0, settle_min) * 60
     now = time.time()
 
     items = sorted(p for p in cdir.iterdir() if not p.name.startswith("."))
     if not items:
-        log.info("Nothing in %s — clean.", cdir)
-        return 0
+        return {"swept": 0, "failed": 0, "skipped": 0}
 
     swept = skipped_active = skipped_novideo = skipped_excluded = failed = 0
     for item in items:
@@ -153,29 +148,45 @@ def main() -> int:
         if age < settle_secs:
             skipped_active += 1
             log.info("SKIP (still settling, %dm old < %dm): %s",
-                     int(age // 60), args.settle_min, item.name)
+                     int(age // 60), settle_min, item.name)
             continue
         log.info("SORTING: %s", item.name)
-        rc = _sort_one(item, args.dry_run)
+        rc = _sort_one(item, dry)
         if rc == 0:
             swept += 1
         else:
             failed += 1
             log.warning("sort returned rc=%d for %s", rc, item.name)
 
-    # one summary line; only record a real event if we actually did work
-    log.info("Sweep done: %d sorted, %d still-active, %d excluded, %d no-video, "
-             "%d failed (dry=%s).",
-             swept, skipped_active, skipped_excluded, skipped_novideo,
-             failed, args.dry_run)
-    if swept and not args.dry_run:
+    if swept or failed:
+        log.info("Sweep done: %d sorted, %d still-active, %d excluded, %d no-video, "
+                 "%d failed (dry=%s).",
+                 swept, skipped_active, skipped_excluded, skipped_novideo,
+                 failed, dry)
+    if swept and not dry:
         try:
             from .hook import write_event
             write_event("sweep", "catch-up sweep",
                         f"filed {swept} item(s) the hook had missed")
         except Exception:                              # noqa: BLE001
             pass
-    return 1 if failed else 0
+    return {"swept": swept, "failed": failed,
+            "skipped": skipped_active + skipped_excluded + skipped_novideo}
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Catch-up sweep for completed downloads.")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="Show what would be sorted without moving anything.")
+    ap.add_argument("--settle-min", type=int,
+                    default=int(os.environ.get("SWEEP_SETTLE_MIN", "15")),
+                    help="Minutes an item must be unmodified before sorting (default 15).")
+    args = ap.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    r = run(dry=args.dry_run, settle_min=args.settle_min)
+    if r.get("error"):
+        return 1
+    return 1 if r.get("failed") else 0
 
 
 if __name__ == "__main__":

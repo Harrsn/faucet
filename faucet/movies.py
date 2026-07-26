@@ -96,20 +96,63 @@ def reconcile(movie_id: int) -> dict:
     if not m:
         return {"have": False}
     with db.connect() as c:
-        lib = c.execute("SELECT title, year, quality FROM library_movies").fetchall()
+        lib = c.execute("SELECT title, year, quality, source FROM library_movies").fetchall()
     owned = None
     for r in lib:
         if _movie_matches(r["title"], r["year"], m["title"], m.get("year")):
             owned = r
             break
     have = owned is not None
-    from .series import GRAB_RETRY_HOURS
+    from .series import GRAB_RETRY_HOURS, _profile_min_res
+    from .library import RES_RANK
     from datetime import timedelta
+    import os as _os
+
+    # ── quality-upgrade check (the Radarr side of upgrades) ──
+    # A movie ON disk can still be wanted at better quality: below the
+    # profile's target resolution, or a cam-family rip (always upgrade-
+    # eligible). Honors HUNT_UPGRADES=0 like the series side.
+    upgrade_needed = False
+    if have and _os.environ.get("HUNT_UPGRADES", "1").strip().lower() not in (
+            "0", "false", "no", "off"):
+        profile_id = m.get("profile_id")
+        if not profile_id:
+            try:
+                pid = db.get_setting("default_profile_id", None)
+                profile_id = int(pid) if pid else None
+            except Exception:                    # noqa: BLE001
+                profile_id = None
+        target_rank = RES_RANK.get(_profile_min_res(profile_id), 0)
+        owned_q = owned["quality"] if "quality" in owned.keys() else None
+        owned_cam = (owned["source"] if "source" in owned.keys() else None) == "CAM"
+        if target_rank and owned_cam:
+            upgrade_needed = True                # a cam is never good enough
+        elif target_rank and owned_q and RES_RANK.get(owned_q, 0) < target_rank:
+            upgrade_needed = True
+
     with db.connect() as c:
         c.execute("UPDATE movies SET status=? WHERE id=?",
                   ("have" if have else "wanted", movie_id))
-        if have:
-            # on disk — retire any want, including a stale 'grabbed' row
+        if have and upgrade_needed:
+            title = f"{m['title']} {m['year']}" if m.get("year") else m["title"]
+            row = c.execute(
+                "SELECT id, status, last_search FROM wanted WHERE kind='movie' AND series_id=?",
+                (movie_id,)).fetchone()
+            if not row:
+                c.execute(
+                    "INSERT INTO wanted (kind, series_id, title, reason, status) "
+                    "VALUES ('movie',?,?, 'upgrade','wanted')",
+                    (movie_id, title))
+            elif row["status"] == "grabbed":
+                retry_before = (datetime.now() - timedelta(hours=GRAB_RETRY_HOURS)
+                                ).isoformat(timespec="seconds")
+                if not row["last_search"] or row["last_search"] < retry_before:
+                    c.execute("UPDATE wanted SET status='wanted', reason='upgrade' "
+                              "WHERE id=?", (row["id"],))
+            else:
+                c.execute("UPDATE wanted SET reason='upgrade' WHERE id=?", (row["id"],))
+        elif have:
+            # on disk at (or above) target — retire any want, incl. stale 'grabbed'
             c.execute("DELETE FROM wanted WHERE kind='movie' AND series_id=?",
                       (movie_id,))
         else:
@@ -129,7 +172,7 @@ def reconcile(movie_id: int) -> dict:
                 if not row["last_search"] or row["last_search"] < retry_before:
                     c.execute("UPDATE wanted SET status='wanted' WHERE id=?",
                               (row["id"],))
-    return {"have": have}
+    return {"have": have, "upgrade": upgrade_needed}
 
 
 def reconcile_all() -> dict:
@@ -150,7 +193,7 @@ def movie_detail(movie_id: int) -> dict:
         return {"movie": None}
     # find the owned library file via the same matcher reconcile uses
     with db.connect() as c:
-        lib = c.execute("SELECT title, year, quality, path, size FROM library_movies").fetchall()
+        lib = c.execute("SELECT title, year, quality, source, path, size FROM library_movies").fetchall()
     owned = None
     for r in lib:
         if _movie_matches(r["title"], r["year"], m["title"], m.get("year")):

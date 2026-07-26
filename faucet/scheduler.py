@@ -275,6 +275,7 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
                                 "reason": "pack", "grabbed": pack["title"], "error": None,
                                 "covers": len(eps)})
                 log.info("Grabbed season pack '%s' covering %d episodes", pack["title"], len(eps))
+                _notify_grab(pack["title"], f"{title} S{int(season):02d} pack", series_id=sid)
             except DownloadClientError as e:
                 with db.connect() as c:
                     c.execute("DELETE FROM grabbed WHERE title=?", (pack["title"],))
@@ -298,8 +299,10 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
             if mrow:
                 movie_title, movie_year = mrow["title"], mrow["year"]
                 # last-second ownership check: a stale want (mount blip, stall
-                # flip, old DB row) must never re-download something on disk
-                if mrow["status"] == "have":
+                # flip, old DB row) must never re-download something on disk —
+                # EXCEPT quality upgrades, which by definition target an owned
+                # movie
+                if mrow["status"] == "have" and w.get("reason") != "upgrade":
                     with db.connect() as c:
                         c.execute("DELETE FROM wanted WHERE id=?", (w["id"],))
                     continue
@@ -376,12 +379,41 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
                 c.execute("UPDATE wanted SET status='grabbed', last_search=? WHERE id=?",
                           (datetime.now().isoformat(timespec="seconds"), w["id"]))
             log.info("Hunt grabbed '%s' for %s", pick["title"], query)
+            _notify_grab(pick["title"], query,
+                         series_id=None if kind == "movie" else w.get("series_id"),
+                         movie_id=w.get("series_id") if kind == "movie" else None)
         except DownloadClientError as e:
             res["error"] = f"add failed: {e}"
             with db.connect() as c:
                 c.execute("DELETE FROM grabbed WHERE title=?", (pick["title"],))
         details.append(res)
     return {"wanted": len(wanted), "grabbed": grabbed, "details": details}
+
+
+def _notify_grab(release_title: str, context: str,
+                 series_id=None, movie_id=None) -> None:
+    """Poster-embedded grab notification (when 'added' is in NOTIFY_ON)."""
+    if "added" not in config.notify_on or not config.notify_urls:
+        return
+    poster = None
+    try:
+        with db.connect() as c:
+            if series_id:
+                r = c.execute("SELECT poster FROM series WHERE id=?",
+                              (series_id,)).fetchone()
+            elif movie_id:
+                r = c.execute("SELECT poster FROM movies WHERE id=?",
+                              (movie_id,)).fetchone()
+            else:
+                r = None
+        poster = r["poster"] if r else None
+    except Exception:                            # noqa: BLE001
+        poster = None
+    try:
+        from .notify import notify
+        notify(config.notify_urls, f"Grabbed · {context}", release_title, poster)
+    except Exception:                            # noqa: BLE001
+        pass
 
 
 def _load_profile_for_movie(movie_id):
@@ -439,7 +471,18 @@ def run_once() -> dict:
         log.warning("Stall check error: %s", e)
         stall_summary = {"error": str(e)}
 
-    # 3. library-aware pipeline
+    # 3. catch-up sweep: file anything sitting in complete/ that the hook
+    # missed, BEFORE the scan so freshly-filed episodes count this tick
+    if os.environ.get("SWEEP_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off"):
+        try:
+            from . import sweep as sweep_mod
+            sw = sweep_mod.run()
+            if sw.get("swept"):
+                log.info("Sweep filed %d item(s) the hook missed.", sw["swept"])
+        except Exception as e:                   # noqa: BLE001 - never kill the tick
+            log.warning("Sweep error: %s", e)
+
+    # 4. library-aware pipeline
     lib_summary = {}
     try:
         from . import library, series as series_mod, movies as movies_mod
@@ -454,7 +497,7 @@ def run_once() -> dict:
         log.warning("Library pipeline error: %s", e)
         lib_summary = {"error": str(e)}
 
-    # 4. housekeeping: purge expired sessions + used/expired reset tokens
+    # 5. housekeeping: purge expired sessions + used/expired reset tokens
     # (they previously accumulated forever)
     try:
         now = datetime.now().isoformat(timespec="seconds")

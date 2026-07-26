@@ -1878,3 +1878,163 @@ def test_matches_episode_rejects_wrong_episode():
     assert matches_episode("Show 1x05 HDTV", "Show", 1, 5)
     assert not matches_episode("Show.S01E01E02.1080p", "Show", 1, 3)
     assert episode_numbers("Show.S02E10-12.720p") == (2, [10, 11, 12])
+
+
+# ---------------- movie quality upgrades ----------------
+def _mov_env(tmp_path, monkeypatch, files):
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "ev.jsonl"))
+    mv = tmp_path / "lib" / "movies"
+    for rel in files:
+        f = mv / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_bytes(b"x" * (60 * 1024 * 1024))
+    monkeypatch.setenv("LIBRARY_ROOT", str(tmp_path / "lib"))
+    import importlib, json
+    from faucet import config as cfgmod
+    importlib.reload(cfgmod)
+    from faucet import db
+    importlib.reload(db)
+    db.init()
+    from faucet import library as L
+    importlib.reload(L)
+    L.scan()
+    from faucet import movies as M
+    importlib.reload(M)
+    with db.connect() as c:
+        pid = c.execute("INSERT INTO profiles (name,min_seeders,resolutions,sources) "
+                        "VALUES ('HD',0,?,?)",
+                        (json.dumps(["1080p"]), json.dumps(["WEB-DL"]))).lastrowid
+    return db, L, M, pid
+
+
+def test_movie_cam_flags_upgrade(tmp_path, monkeypatch):
+    """A telesync file (Zootopia 2 case) must flag the movie for upgrade even
+    though its name claims 1080p."""
+    db, L, M, pid = _mov_env(tmp_path, monkeypatch,
+                             ["Zootopia 2 (2025)/Zootopia 2 2025 1080p TS EN-RGB.mp4"])
+    mid = M.add_movie(11, "Zootopia 2", 2025, None, pid)
+    r = M.reconcile(mid)
+    assert r["have"] is True and r["upgrade"] is True
+    with db.connect() as c:
+        w = c.execute("SELECT reason,status FROM wanted WHERE kind='movie' AND series_id=?",
+                      (mid,)).fetchone()
+        src = c.execute("SELECT source FROM library_movies").fetchone()["source"]
+    assert w["reason"] == "upgrade" and w["status"] == "wanted" and src == "CAM"
+
+
+def test_movie_720p_upgrades_and_clears_when_satisfied(tmp_path, monkeypatch):
+    db, L, M, pid = _mov_env(tmp_path, monkeypatch,
+                             ["Rags (2012)/Rags.2012.720p.WEB-DL.x264.mkv"])
+    mid = M.add_movie(12, "Rags", 2012, None, pid)
+    assert M.reconcile(mid)["upgrade"] is True
+    # the better copy lands on disk -> want retired, better file kept
+    f = tmp_path / "lib" / "movies" / "Rags (2012)" / "Rags.2012.1080p.WEB-DL.x264.mkv"
+    f.write_bytes(b"x" * (60 * 1024 * 1024))
+    L.scan()
+    r = M.reconcile(mid)
+    assert r["have"] is True and r["upgrade"] is False
+    with db.connect() as c:
+        row = c.execute("SELECT quality FROM library_movies WHERE title='Rags'").fetchone()
+        n = c.execute("SELECT COUNT(*) AS n FROM wanted WHERE kind='movie' AND series_id=?",
+                      (mid,)).fetchone()["n"]
+    assert row["quality"] == "1080p" and n == 0
+    # rescans don't regress to the worse file
+    L.scan(force=True)
+    with db.connect() as c:
+        assert c.execute("SELECT quality FROM library_movies WHERE title='Rags'").fetchone()["quality"] == "1080p"
+
+
+def test_movie_upgrade_disabled_by_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("HUNT_UPGRADES", "0")
+    db, L, M, pid = _mov_env(tmp_path, monkeypatch,
+                             ["Rags (2012)/Rags.2012.720p.WEB-DL.mkv"])
+    mid = M.add_movie(13, "Rags", 2012, None, pid)
+    r = M.reconcile(mid)
+    assert r["have"] is True and r["upgrade"] is False
+
+
+def test_hunt_allows_movie_upgrade_want(tmp_path, monkeypatch):
+    """The stale-want ownership guard must NOT eat movie upgrade wants."""
+    db, SCH = _pack_env(tmp_path, monkeypatch)
+    with db.connect() as c:
+        c.execute("INSERT INTO movies (tmdb_id,title,year,monitored,status) "
+                  "VALUES (44,'Rags',2012,1,'have')")
+        mid = c.execute("SELECT id FROM movies WHERE tmdb_id=44").fetchone()["id"]
+        c.execute("INSERT INTO wanted (kind,series_id,title,reason,status) "
+                  "VALUES ('movie',?,?,'upgrade','wanted')", (mid, "Rags 2012"))
+    GB = 1024 ** 3
+    SCH.searchmod.search = lambda *a, **k: [
+        {"title": "Rags.2012.1080p.WEB-DL.x264", "href": "magnet:up", "seeders": 40,
+         "size": 2 * GB, "badges": {"res": "1080p", "source": "WEB-DL"}}]
+    SCH.make_client = lambda *a, **k: _FC()
+    r = SCH.hunt_wanted()
+    grabbed = [d["grabbed"] for d in r["details"] if d.get("grabbed")]
+    assert grabbed == ["Rags.2012.1080p.WEB-DL.x264"]
+
+
+# ---------------- discover + calendar endpoints ----------------
+def test_discover_endpoint_marks_library(client_app, monkeypatch):
+    from faucet import app as appmod, db
+    with db.connect() as c:
+        c.execute("INSERT INTO series (tmdb_id,title,monitored) VALUES (777,'Known Show',1)")
+    monkeypatch.setattr(appmod.tmdbmod, "enabled", lambda: True)
+    monkeypatch.setattr(appmod.tmdbmod, "discover", lambda k, l: [
+        {"tmdb_id": 777, "media_type": "tv", "title": "Known Show", "year": 2020,
+         "overview": "", "poster": None, "rating": 8.0, "date": "2020-01-01"},
+        {"tmdb_id": 888, "media_type": "tv", "title": "New Show", "year": 2026,
+         "overview": "", "poster": None, "rating": 7.0, "date": "2026-01-01"}])
+    d = client_app.get("/api/meta/discover?kind=tv&list=trending").json()
+    by = {r["tmdb_id"]: r for r in d["results"]}
+    assert by[777]["in_library"] is True and by[777]["library_id"]
+    assert by[888]["in_library"] is False
+
+
+def test_calendar_endpoint(client_app):
+    from faucet import db
+    from datetime import date, timedelta
+    today = date.today()
+    with db.connect() as c:
+        c.execute("INSERT INTO series (tmdb_id,title,monitored) VALUES (901,'Cal Show',1)")
+        sid = c.execute("SELECT id FROM series WHERE tmdb_id=901").fetchone()["id"]
+        for off, ep in ((-1, 1), (0, 2), (3, 3)):
+            c.execute("INSERT INTO series_episodes (series_id,season,episode,title,air_date) "
+                      "VALUES (?,1,?,?,?)",
+                      (sid, ep, f"E{ep}", (today + timedelta(days=off)).isoformat()))
+        c.execute("INSERT INTO library_episodes (show_name,season,episode,path) "
+                  "VALUES ('Cal Show',1,1,'/x1.mkv')")
+    d = client_app.get("/api/calendar?past=7&days=14").json()
+    eps = [e for e in d["episodes"] if e["title"] == "Cal Show"]
+    st = {e["episode"]: e["status"] for e in eps}
+    assert st[1] == "have" and st[2] == "missing" and st[3] == "upcoming"
+
+
+# ---------------- season-pack interactive search ----------------
+def test_season_releases_and_grab(client_app, monkeypatch):
+    from faucet import app as appmod, db
+    with db.connect() as c:
+        c.execute("INSERT INTO series (tmdb_id,title,monitored) VALUES (902,'Family Guy',1)")
+        sid = c.execute("SELECT id FROM series WHERE tmdb_id=902").fetchone()["id"]
+        for ep in (1, 2, 3):
+            c.execute("INSERT INTO wanted (kind,series_id,season,episode,title,reason,status) "
+                      "VALUES ('episode',?,13,?,?,'missing','wanted')", (sid, ep, f"E{ep}"))
+    GB = 1024 ** 3
+    monkeypatch.setattr(appmod.searchmod, "search", lambda *a, **k: [
+        {"title": "Family Guy S13 1080p WEB-DL", "href": "magnet:p", "seeders": 100,
+         "peers": 4, "size": 9 * GB, "size_h": "9 GB", "tracker": "t",
+         "badges": {"res": "1080p", "source": "WEB-DL", "ext": None}},
+        {"title": "Family Guy S13E02 1080p", "href": "magnet:e", "seeders": 60,
+         "peers": 2, "size": GB, "size_h": "1 GB", "tracker": "t",
+         "badges": {"res": "1080p", "source": None, "ext": None}},
+        {"title": "Family Guy S12 1080p WEB-DL", "href": "magnet:w", "seeders": 90,
+         "peers": 2, "size": 9 * GB, "size_h": "9 GB", "tracker": "t",
+         "badges": {"res": "1080p", "source": "WEB-DL", "ext": None}}])
+    d = client_app.get(f"/api/series/{sid}/seasons/13/releases").json()
+    assert [r["title"] for r in d["releases"]] == ["Family Guy S13 1080p WEB-DL"]
+    r = client_app.post(f"/api/series/{sid}/seasons/13/grab",
+                        json={"magnet": "magnet:p", "title": "Family Guy S13 1080p WEB-DL"})
+    assert r.status_code == 200
+    from faucet import db as _db
+    with _db.connect() as c:
+        n = c.execute("SELECT COUNT(*) AS n FROM wanted WHERE series_id=? "
+                      "AND status='grabbed'", (sid,)).fetchone()["n"]
+    assert n == 3                                   # whole season flipped

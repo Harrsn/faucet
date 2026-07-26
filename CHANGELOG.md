@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.5.0
+
+### Added
+
+- **Movie quality upgrades.** The scanner records each movie file's source
+  (cam-family rips detected from the name) and keeps the best file per
+  movie. Reconcile flags owned movies for upgrade when the file is a
+  CAM/TS/telesync or below the profile's target resolution; the hunter
+  grabs a better copy (per-movie, never packs). Movie cards show an
+  "upgrading" chip; the detail page marks cam files. Honors
+  `HUNT_UPGRADES=0`.
+- **Discover page.** TMDb trending / popular / upcoming poster walls
+  (6-hour cache). Titles already monitored are badged and deep-link to
+  their detail page; everything else is one click to add (admin) or
+  request (users).
+- **Calendar.** Every episode airing across monitored shows — past week
+  through the next two — grouped by day with on-disk / grabbed / missing /
+  upcoming status. Click through to the show. Readable by all users.
+- **Season-pack interactive search.** The hourglass on season headers:
+  verified packs for that exact season, profile-ranked, one-click grab
+  that flips the whole season's wants.
+- **Discord notifications are rich embeds** with the poster as thumbnail;
+  add `added` to `NOTIFY_ON` to get grab notifications from the hunter.
+- **The catch-up sweep runs automatically** each scheduler tick
+  (`SWEEP_ENABLED=0` to opt out) — no more manual `docker exec` cron.
+- README refreshed with new-UI screenshots and features.
+
 ## 1.4.0
 
 ### Added

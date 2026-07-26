@@ -104,6 +104,31 @@ def _detect_quality(name: str) -> str | None:
     return None
 
 
+_CAM_RE = None
+
+
+def _detect_cam(name: str) -> bool:
+    """Cam-family rip (CAM/TS/TC/telesync/screener) — a '1080p TS' is 1080p in
+    name only; these files are always upgrade-eligible."""
+    global _CAM_RE
+    if _CAM_RE is None:
+        import re
+        _CAM_RE = re.compile(
+            r"\b(hd-?cam|cam-?rip|telesync|hd-?ts|telecine|dvd-?scr|screener|"
+            r"ts|tc|cam|scr)\b", re.I)
+    return bool(_CAM_RE.search(name))
+
+
+# resolution rank shared with reconcile (higher = better; cam is below any
+# real source at equal resolution)
+RES_RANK = {"2160p": 4, "1080p": 3, "720p": 2, "480p": 1, None: 0, "": 0}
+
+
+def _movie_file_rank(quality: str | None, is_cam: bool) -> float:
+    r = RES_RANK.get(quality, 0)
+    return r - 0.5 if is_cam else r
+
+
 def _record_unparsed(path: str, kind: str, reason: str) -> None:
     try:
         with db.connect() as c:
@@ -214,13 +239,27 @@ def _scan_movies(root: Path, stats: dict, force: bool = False,
             continue
         year = info.get("year")
         quality = _detect_quality(f.name)
+        is_cam = _detect_cam(f.name) or _detect_cam(str(f.parent.name))
         with db.connect() as c:
+            # Keep the BEST file per (title, year): after an upgrade lands, the
+            # old copy and the new one can briefly coexist — blindly last-write
+            # -wins made the recorded quality depend on directory walk order.
+            row = c.execute("SELECT path, quality, source FROM library_movies "
+                            "WHERE title=? AND year IS ?", (title, year)).fetchone()
+            if (row and row["path"] != str(f)
+                    and os.path.exists(row["path"] or "")
+                    and _movie_file_rank(row["quality"], row["source"] == "CAM")
+                    > _movie_file_rank(quality, is_cam)):
+                stats["movies"] += 1
+                continue                          # existing file is better — keep it
             c.execute(
-                "INSERT INTO library_movies (title, year, quality, path, size, mtime) "
-                "VALUES (?,?,?,?,?,?) "
+                "INSERT INTO library_movies (title, year, quality, source, path, size, mtime) "
+                "VALUES (?,?,?,?,?,?,?) "
                 "ON CONFLICT(title, year) DO UPDATE SET "
-                "quality=excluded.quality, path=excluded.path, size=excluded.size, mtime=excluded.mtime",
-                (title, year, quality, str(f), st.st_size, st.st_mtime))
+                "quality=excluded.quality, source=excluded.source, "
+                "path=excluded.path, size=excluded.size, mtime=excluded.mtime",
+                (title, year, quality, "CAM" if is_cam else None,
+                 str(f), st.st_size, st.st_mtime))
             c.execute("DELETE FROM scan_unparsed WHERE path=?", (str(f),))
         stats["movies"] += 1
 
