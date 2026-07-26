@@ -79,23 +79,47 @@ def _is_public(path: str) -> bool:
     return any(path.startswith(p) for p in _PUBLIC_PREFIXES)
 
 
+# State-changing API endpoints that must work WITHOUT a CSRF token because no
+# session (and thus no CSRF cookie) exists yet when they're called.
+_CSRF_EXEMPT = ("/api/auth/login", "/api/auth/register", "/api/auth/reset/consume")
+
+
+def _csrf_ok(request: _Request) -> bool:
+    import secrets as _secrets
+    cookie = request.cookies.get(_auth_routes.CSRF_COOKIE)
+    header = request.headers.get("x-csrf-token")
+    return bool(cookie and header and _secrets.compare_digest(cookie, header))
+
+
 @app.middleware("http")
 async def _auth_gate(request: _Request, call_next):
     path = request.url.path
-    # Before any user exists, allow through so the first-run admin setup works.
+    # First-run (no users yet): expose ONLY the public pages + auth endpoints
+    # so the admin can be registered. Everything else stays locked — the old
+    # behavior of waving EVERY request through unauthenticated meant a wiped
+    # or freshly-mounted DB left the entire admin API open to the internet
+    # until someone happened to register.
     try:
         no_users = _auth.user_count() == 0
     except Exception:                            # noqa: BLE001
         no_users = False
-    if no_users or _is_public(path):
+    if _is_public(path):
         return await call_next(request)
-    user = _auth.session_user(request.cookies.get(_auth.SESSION_COOKIE))
+    user = None if no_users else _auth.session_user(
+        request.cookies.get(_auth.SESSION_COOKIE))
     if not user:
         # API calls get 401 JSON; page loads redirect to the login screen.
         if path.startswith("/api/"):
             return _JSONResponse({"detail": "Authentication required."}, status_code=401)
         from fastapi.responses import RedirectResponse as _Redirect
         return _Redirect(url="/login", status_code=302)
+    # CSRF (double-submit cookie) for EVERY state-changing API call, not just
+    # the auth router's endpoints — /api/add, torrent actions, settings, etc.
+    # were previously unprotected.
+    if (request.method in ("POST", "PUT", "PATCH", "DELETE")
+            and path.startswith("/api/") and path not in _CSRF_EXEMPT
+            and not _csrf_ok(request)):
+        return _JSONResponse({"detail": "CSRF check failed."}, status_code=403)
     # admin-only: management endpoints (writes, search, torrents, settings).
     # Library *reads* (GET series/movies) are allowed for any logged-in user so
     # they can browse what's available; everything else stays admin-only.
@@ -735,25 +759,28 @@ class SeriesAdd(BaseModel):
 def api_series_list():
     from . import series as series_mod
     from .library import normalize_title
+    from collections import defaultdict
+    # one pass over shared tables instead of re-reading ALL library episodes
+    # per show (the old loop was O(shows × library) on every page load)
+    with db.connect() as c:
+        canon_by_series = defaultdict(set)
+        for r in c.execute("SELECT series_id, season, episode FROM series_episodes"):
+            canon_by_series[r["series_id"]].add((r["season"], r["episode"]))
+        lib_by_key = defaultdict(set)
+        for r in c.execute("SELECT show_name, season, episode FROM library_episodes"):
+            lib_by_key[normalize_title(r["show_name"] or "")].add(
+                (r["season"], r["episode"]))
+        wanted_by_series = {r["series_id"]: r["n"] for r in c.execute(
+            "SELECT series_id, COUNT(*) AS n FROM wanted "
+            "WHERE status='wanted' GROUP BY series_id")}
     out = []
     for s in series_mod.list_series():
-        with db.connect() as c:
-            # canonical episodes for this series
-            canon = c.execute(
-                "SELECT season, episode FROM series_episodes WHERE series_id=?",
-                (s["id"],)).fetchall()
-            total = len(canon)
-            # library episodes, matched to this show by normalized title
-            lib = c.execute("SELECT show_name, season, episode FROM library_episodes").fetchall()
-            want = c.execute("SELECT COUNT(*) AS n FROM wanted WHERE series_id=? AND status='wanted'",
-                             (s["id"],)).fetchone()["n"]
-        key = normalize_title(s["title"])
-        owned = {(r["season"], r["episode"]) for r in lib
-                 if normalize_title(r["show_name"]) == key}
-        canon_set = {(r["season"], r["episode"]) for r in canon}
+        canon_set = canon_by_series.get(s["id"], set())
+        owned = lib_by_key.get(normalize_title(s["title"]), set())
         # "have" = canonical episodes we actually own (so it can't exceed total)
         have = len(owned & canon_set) if canon_set else len(owned)
-        s.update(have=have, total=total, wanted=want)
+        s.update(have=have, total=len(canon_set),
+                 wanted=wanted_by_series.get(s["id"], 0))
         out.append(s)
     return {"series": out}
 
@@ -884,8 +911,14 @@ def api_movies_delete(mid: int):
 
 
 @app.get("/health")
-def health():
-    status = {"indexer": "unknown", "client": "unknown"}
+def health(request: _Request):
+    """Public liveness probe (Docker healthcheck). Detail — which internal
+    services are reachable, and their error strings — is admin-only: on an
+    internet-facing deployment those messages leak internal hostnames."""
+    user = _auth.session_user(request.cookies.get(_auth.SESSION_COOKIE))
+    if not user or user.get("role") != "admin":
+        return {"status": "ok"}
+    status = {"status": "ok", "indexer": "unknown", "client": "unknown"}
     try:
         import requests
         requests.get(f"{cfg().jackett_url}/", timeout=5)
