@@ -1730,3 +1730,71 @@ def test_hunt_upgrades_env_disables_upgrades(tmp_path, monkeypatch):
     sid = S.add_series(321, "Show", 2020, None, pid)
     r = S.reconcile(sid)
     assert r["upgrades"] == 0 and r["have"] == 1          # 720p kept, no re-grab
+
+
+# ---------------- hunt-time ownership double-check ----------------
+def test_hunt_skips_stale_want_for_owned_episode(tmp_path, monkeypatch):
+    """A stale wanted row (mount blip / stall flip) for an episode that IS on
+    disk must be cleared, never grabbed."""
+    db, SCH = _pack_env(tmp_path, monkeypatch)
+    lib = tmp_path / "lib" / "tvshows" / "American Dad" / "Season 20"
+    lib.mkdir(parents=True)
+    (lib / "American Dad - S20E03.mkv").write_bytes(b"x" * (60 * 1024 * 1024))
+    monkeypatch.setenv("LIBRARY_ROOT", str(tmp_path / "lib"))
+    import importlib
+    from faucet import library as L
+    importlib.reload(L)
+    L.scan()
+    _mk_series(db, "American Dad!", 20, aired=3, missing_eps=[3])   # stale want
+    calls = []
+    def fake_search(*a, **k):
+        calls.append(a[3] if len(a) > 3 else "")
+        return [{"title": "American Dad S20E03 1080p WEBRip", "href": "magnet:x",
+                 "seeders": 100, "size": 10**9, "badges": {"res": "1080p"}}]
+    SCH.searchmod.search = fake_search
+    SCH.make_client = lambda *a, **k: _FC()
+    r = SCH.hunt_wanted()
+    assert r["grabbed"] == 0 and not calls        # never even searched
+    with db.connect() as c:
+        n = c.execute("SELECT COUNT(*) AS n FROM wanted").fetchone()["n"]
+    assert n == 0                                  # stale want cleared
+
+
+def test_prune_skipped_on_mass_disappearance(tmp_path, monkeypatch):
+    """If most of the library 'vanishes' in one scan (NAS hiccup), pruning is
+    skipped instead of wiping the inventory."""
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "ev.jsonl"))
+    root = tmp_path / "lib"
+    tv = root / "tvshows" / "Show" / "Season 01"
+    tv.mkdir(parents=True)
+    monkeypatch.setenv("LIBRARY_ROOT", str(root))
+    import importlib
+    from faucet import config as cfgmod
+    importlib.reload(cfgmod)
+    from faucet import db
+    importlib.reload(db)
+    db.init()
+    from faucet import library as L
+    importlib.reload(L)
+    # 20 rows recorded whose files never existed under this root (simulates a
+    # subtree the mount stopped serving)
+    with db.connect() as c:
+        for e in range(1, 21):
+            c.execute("INSERT INTO library_episodes (show_name,season,episode,path) "
+                      "VALUES ('Show',1,?,?)", (e, str(tv / f"Show - S01E{e:02d}.mkv")))
+    s = L.scan()
+    assert s.get("pruned") == 0 and s.get("prune_skipped") == 20
+    with db.connect() as c:
+        n = c.execute("SELECT COUNT(*) AS n FROM library_episodes").fetchone()["n"]
+    assert n == 20                                 # nothing deleted
+    # small-scale deletion still prunes: drop to 5 gone by "restoring" 15 files
+    with db.connect() as c:
+        c.execute("DELETE FROM library_episodes WHERE episode > 5")
+        for e in range(6, 21):
+            f = tv / f"Show - S01E{e:02d}.mkv"
+            f.write_bytes(b"x" * (60 * 1024 * 1024))
+    L.scan()
+    s2 = L.scan()
+    with db.connect() as c:
+        n = c.execute("SELECT COUNT(*) AS n FROM library_episodes WHERE episode <= 5").fetchone()["n"]
+    assert n == 0                                  # the 5 truly-gone rows pruned

@@ -223,6 +223,16 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
                 continue
             if (w.get("reason") or "missing") != "missing":
                 continue                     # upgrades hunt per-episode only
+            # drop stale wants for episodes already on disk (see per-episode
+            # ownership check below) so they can't inflate a season into
+            # pack-worthiness
+            from . import library as _lib
+            if (w.get("series_title") and w.get("episode") is not None
+                    and _lib.have_episode(w["series_title"], int(w["season"]),
+                                          int(w["episode"]))):
+                with db.connect() as c:
+                    c.execute("DELETE FROM wanted WHERE id=?", (w["id"],))
+                continue
             by_season[(w["series_id"], w["season"])].append(w)
         today = datetime.now().date().isoformat()
         for (sid, season), eps in by_season.items():
@@ -283,14 +293,30 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
             series_id = w.get("series_id")  # for movies this is the movie id
             profile = _load_profile_for_movie(series_id)
             with db.connect() as c:
-                mrow = c.execute("SELECT title, year FROM movies WHERE id=?",
+                mrow = c.execute("SELECT title, year, status FROM movies WHERE id=?",
                                  (series_id,)).fetchone()
             if mrow:
                 movie_title, movie_year = mrow["title"], mrow["year"]
+                # last-second ownership check: a stale want (mount blip, stall
+                # flip, old DB row) must never re-download something on disk
+                if mrow["status"] == "have":
+                    with db.connect() as c:
+                        c.execute("DELETE FROM wanted WHERE id=?", (w["id"],))
+                    continue
         else:
             title = w.get("series_title") or ""
             season, episode = w.get("season"), w.get("episode")
             if not title or season is None or episode is None:
+                continue
+            # last-second ownership check against the live library inventory —
+            # the wanted table can be stale (a want flipped back by the stall
+            # handler, or rows created during a NAS-mount hiccup). Grabbing is
+            # expensive; a SELECT is not.
+            from . import library as _lib
+            owned = _lib.have_episode(title, int(season), int(episode))
+            if owned and w.get("reason") != "upgrade":
+                with db.connect() as c:
+                    c.execute("DELETE FROM wanted WHERE id=?", (w["id"],))
                 continue
             query = f"{title} S{int(season):02d}E{int(episode):02d}"
             profile = _load_profile_for_series(w.get("series_id"))

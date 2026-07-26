@@ -247,23 +247,45 @@ def scan(force: bool = False) -> dict:
     # inventory says an episode is still owned forever, so reconcile never
     # re-hunts anything that was removed from disk. Only prune paths under the
     # walked subtrees, so a briefly-unmounted sibling dir can't wipe the DB.
+    #
+    # SAFETY VALVE: on a network mount (CIFS/NFS) a hiccup can make a whole
+    # subtree "vanish" for one scan. Mass-pruning on that lie marks owned
+    # episodes missing and the hunter re-downloads them. If more than
+    # PRUNE_MAX_FRACTION of known rows (and more than a handful) look gone at
+    # once, assume the mount is sick and skip pruning entirely this scan.
     stats["pruned"] = 0
+    PRUNE_MAX_FRACTION = float(os.environ.get("PRUNE_MAX_FRACTION", "0.2"))
     tv_prefix = str(root / "tvshows")
     mv_prefix = str(root / "movies")
     with db.connect() as c:
+        gone_eps = []
         for row in c.execute("SELECT id, path FROM library_episodes").fetchall():
             p = row["path"] or ""
             if (p.startswith(tv_prefix) and p not in seen_tv
                     and not os.path.exists(p)):
-                c.execute("DELETE FROM library_episodes WHERE id=?", (row["id"],))
-                stats["pruned"] += 1
+                gone_eps.append((row["id"], p))
+        gone_mv = []
         for row in c.execute("SELECT id, path FROM library_movies").fetchall():
             p = row["path"] or ""
             # manually-linked files (Fix Location) can live outside movies/ and
             # below the size floor — the exists() check keeps those safe
             if (p.startswith(mv_prefix) and p not in seen_mv
                     and not os.path.exists(p)):
-                c.execute("DELETE FROM library_movies WHERE id=?", (row["id"],))
+                gone_mv.append((row["id"], p))
+        total_rows = (c.execute("SELECT COUNT(*) AS n FROM library_episodes").fetchone()["n"]
+                      + c.execute("SELECT COUNT(*) AS n FROM library_movies").fetchone()["n"])
+        gone = len(gone_eps) + len(gone_mv)
+        if gone and total_rows and gone > 10 and gone / total_rows > PRUNE_MAX_FRACTION:
+            log.warning("Prune skipped: %d/%d library files look missing at once — "
+                        "treating this as a mount/NAS hiccup, not deletions.",
+                        gone, total_rows)
+            stats["prune_skipped"] = gone
+        else:
+            for rid, _ in gone_eps:
+                c.execute("DELETE FROM library_episodes WHERE id=?", (rid,))
+                stats["pruned"] += 1
+            for rid, _ in gone_mv:
+                c.execute("DELETE FROM library_movies WHERE id=?", (rid,))
                 stats["pruned"] += 1
     log.info("Library scan: %d episodes, %d movies (%d skipped, %d unparsed, %d pruned)",
              stats["episodes"], stats["movies"], stats["skipped"], stats["unparsed"],

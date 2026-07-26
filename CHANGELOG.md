@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.3.1
+
+### Fixed
+
+- **Hunts double-check the disk at grab time.** The wanted table can hold
+  stale rows (a want flipped back by the stall handler, or rows created while
+  the NAS mount hiccuped) — episodes/movies already on disk were re-grabbed
+  from them. Every episode and movie want is now verified against the live
+  library inventory immediately before searching; stale wants are deleted,
+  not downloaded. Applies to the season-pack pre-pass too.
+- **Prune safety valve.** On a CIFS/NFS mount, one sick scan could make a
+  whole subtree "vanish", prune its rows, and mark owned episodes missing.
+  If more than `PRUNE_MAX_FRACTION` (default 20%) of known files look gone
+  at once, pruning is skipped for that scan and a warning is logged.
+
 ## 1.3.0
 
 ### Changed — full UI overhaul (poster-first)
