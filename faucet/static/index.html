@@ -248,6 +248,14 @@
   .stpill.miss{background:color-mix(in srgb,var(--bad) 14%,transparent);color:var(--bad);}
   .stpill.unair{background:color-mix(in srgb,var(--muted) 14%,transparent);color:var(--muted);}
   .eprow .q{font-family:var(--mono);font-size:10.5px;color:var(--muted);width:44px;text-align:right;flex:none;}
+  .ep-search{border:1px solid var(--line-hi);background:transparent;color:var(--muted);border-radius:6px;
+    font-size:12px;padding:2px 9px;cursor:pointer;flex:none;opacity:0;transition:opacity .12s,color .12s,border-color .12s;}
+  .eprow:hover .ep-search{opacity:1;}
+  .eprow.is-missing .ep-search{opacity:.75;color:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 45%,transparent);}
+  .ep-search:hover{color:var(--accent-soft);border-color:var(--accent);opacity:1;}
+  .rel-why{font-family:var(--mono);font-size:10px;color:var(--bad);}
+  .rel-pass{font-family:var(--mono);font-size:10px;color:var(--good);}
+  @media (max-width:760px){.ep-search{opacity:.75;}}
 
   /* ── search page ── */
   form.bar{display:flex;gap:8px;margin:0 0 8px;flex-wrap:wrap;position:relative;}
@@ -1059,15 +1067,21 @@ async function openShowDetail(sid){
         <span class="chev">›</span>
       </div>
       <div class="season-b">${se.episodes.map(e=>`
-        <div class="eprow">
+        <div class="eprow ${!e.have&&e.aired?'is-missing':''}">
           <span class="num">E${String(e.episode).padStart(2,'0')}</span>
           <span class="et">${esc(e.title||'')}</span>
           <span class="q">${e.have?esc(e.quality||'✓'):''}</span>
           <span class="stpill ${e.have?'have':e.aired?'miss':'unair'}">${e.have?'on disk':e.aired?'missing':'unaired'}</span>
           <span class="date">${esc(e.air_date||'TBA')}</span>
+          ${e.aired?`<button class="ep-search admin-only" title="Search releases for this episode"
+            data-eps="${se.season}" data-epe="${e.episode}" data-ept="${esc(e.title||'')}">⌛</button>`:''}
         </div>`).join("")}</div>
     </div>`;}).join("")||"<div class='empty'>No episode data. Make sure a TMDb key is set, then scan.</div>";
   $("sdBody").querySelectorAll("[data-acc]").forEach(h=>h.addEventListener("click",()=>h.parentElement.classList.toggle("open")));
+  $("sdBody").querySelectorAll(".ep-search").forEach(b=>b.addEventListener("click",e=>{
+    e.stopPropagation();
+    openEpisodeSearch(sid,s.title,+b.dataset.eps,+b.dataset.epe,b.dataset.ept);
+  }));
   // wire hero controls
   $("sdHunt").addEventListener("click",async()=>{
     $("sdHunt").disabled=true;$("sdHunt").textContent="hunting…";
@@ -1095,6 +1109,40 @@ async function openShowDetail(sid){
   });
 }
 $("sdBack").addEventListener("click",()=>{showPage("shows");document.querySelectorAll(".navlink").forEach(l=>l.classList.toggle("on",l.dataset.page==="shows"));loadShows();});
+
+// ── per-episode interactive search (the Sonarr hourglass) ──
+async function openEpisodeSearch(sid,showTitle,season,episode,epTitle){
+  const tag=`S${String(season).padStart(2,'0')}E${String(episode).padStart(2,'0')}`;
+  openModal(`${showTitle} · ${tag}`,`
+    <div class="muted" style="margin-top:0;font-size:12.5px">${esc(epTitle||'')}</div>
+    <div id="epsr" style="margin-top:12px"><div class="muted">searching the indexer…</div></div>`);
+  let d;
+  try{ d=await jget(`/api/series/${sid}/episodes/${season}/${episode}/releases`); }
+  catch(e){ $("epsr").innerHTML=`<div class='empty'>Search failed: ${esc(e.message)}</div>`; return; }
+  const rel=d.releases||[];
+  if(!rel.length){
+    $("epsr").innerHTML=`<div class='empty'>No matching releases found (${d.considered||0} results checked — non-matching titles and season packs are filtered out). Try again later; new releases appear over time.</div>`;
+    return;
+  }
+  $("epsr").innerHTML=`
+    <div class="hint" style="margin-bottom:8px">${rel.length} verified release${rel.length===1?'':'s'} for this exact episode
+      ${d.profile?` · ranked by profile <b>${esc(d.profile)}</b>`:' · ranked by seeders'}</div>
+    <table><thead><tr><th>release</th><th>size</th><th>health</th><th></th></tr></thead>
+    <tbody>${rel.map((r,i)=>`<tr>
+      <td class="title">${esc(r.title)}${badgeHtml(r.badges)}
+        ${r._passes?'':`<div class="rel-why">✕ profile: ${esc(r._why||'rejected')}</div>`}</td>
+      <td>${esc(r.size_h||human(r.size))}</td>
+      <td>${healthHtml(r)}</td>
+      <td><button class="addbtn" data-eg="${i}">grab</button></td></tr>`).join("")}</tbody></table>`;
+  $("epsr").querySelectorAll("[data-eg]").forEach(b=>b.addEventListener("click",async()=>{
+    const r=rel[+b.dataset.eg];
+    b.disabled=true;b.textContent="grabbing…";
+    try{
+      await jsend(`/api/series/${sid}/episodes/${season}/${episode}/grab`,"POST",{magnet:r.href,title:r.title});
+      toast(`Grabbed ${tag}: ${r.title.slice(0,44)}`);b.textContent="grabbed";refreshDock();
+    }catch(e){b.disabled=false;b.textContent="grab";toast("Grab failed: "+e.message,"err");}
+  }));
+}
 
 // ── Fix Match modal (shared shows + movies) ──
 let fixKind=null,fixId=null;

@@ -152,6 +152,10 @@ def _admin_only(path: str, method: str) -> bool:
         return False
     if any(path.startswith(p) for p in _ADMIN_ALWAYS):
         return True
+    # interactive release search/grab hit the indexer + client — admin-only
+    # even though they live under the user-readable /api/series prefix
+    if "/releases" in path or "/grab" in path:
+        return True
     # series/movies/meta: GET is user-readable; writes are admin-only.
     if any(path.startswith(p) for p in _USER_READABLE):
         return method not in ("GET", "HEAD")
@@ -841,6 +845,75 @@ def api_series_hunt(sid: int):
 def api_series_wanted(sid: int):
     from . import series as series_mod
     return {"wanted": [w for w in series_mod.list_wanted() if w.get("series_id") == sid]}
+
+
+@app.get("/api/series/{sid}/episodes/{season}/{episode}/releases")
+def api_episode_releases(sid: int, season: int, episode: int):
+    """Interactive per-episode search (the Sonarr hourglass): every release the
+    indexer returns for this exact episode, title-verified so spin-offs and
+    season packs never appear, ranked by the show's profile. Releases that
+    fail the profile's hard constraints are still listed (marked with the
+    reason) so the admin can override deliberately."""
+    from . import series as series_mod, releasematch, packs
+    from . import profiles as prof
+    from . import scheduler as sched
+    s = series_mod.get_series(sid)
+    if not s:
+        raise HTTPException(404, "Series not found")
+    query = f"{s['title']} S{season:02d}E{episode:02d}"
+    try:
+        results = searchmod.search(cfg().jackett_url, cfg().jackett_api_key,
+                                   cfg().jackett_indexer, query, "all",
+                                   cfg().search_limit, cfg().request_timeout)
+    except searchmod.SearchError as e:
+        raise HTTPException(502, str(e))
+    matched = [r for r in results
+               if packs.classify_pack(r["title"]).get("kind") == "single"
+               and releasematch.matches_episode(r["title"], s["title"],
+                                                season, episode)]
+    profile = sched._load_profile_for_series(sid)
+    out = []
+    for r in matched:
+        rr = dict(r)
+        if profile:
+            ok, why = prof.passes(r, profile)
+            rr["_passes"], rr["_why"] = ok, why
+            rr["_score"] = prof.score(r, profile) if ok else 0
+        else:
+            rr["_passes"], rr["_why"], rr["_score"] = True, "", r.get("seeders", 0)
+        out.append(rr)
+    out.sort(key=lambda x: (not x["_passes"], -x["_score"], -x.get("seeders", 0)))
+    return {"query": query, "profile": profile["name"] if profile else None,
+            "considered": len(results), "releases": out}
+
+
+@app.post("/api/series/{sid}/episodes/{season}/{episode}/grab")
+def api_episode_grab(sid: int, season: int, episode: int, req: AddRequest):
+    """Grab a specific release for a specific episode (from the interactive
+    search modal). Unlike raw /api/add this also records the release in the
+    grabbed table and flips the episode's wanted row to 'grabbed', so the
+    background hunter won't double-grab a different release meanwhile."""
+    from . import series as series_mod
+    from datetime import datetime as _dt
+    s = series_mod.get_series(sid)
+    if not s:
+        raise HTTPException(404, "Series not found")
+    if not req.magnet:
+        raise HTTPException(400, "No magnet/href provided.")
+    try:
+        res = client().add(req.magnet, cfg().download_dir or None)
+    except DownloadClientError as e:
+        raise HTTPException(502, str(e))
+    title = req.title or res.name or ""
+    if title:
+        db.mark_grabbed(title, None)
+    db.add_history("added", title,
+                   f"manual grab: {s['title']} S{season:02d}E{episode:02d}")
+    with db.connect() as c:
+        c.execute("UPDATE wanted SET status='grabbed', last_search=? "
+                  "WHERE kind='episode' AND series_id=? AND season=? AND episode=?",
+                  (_dt.now().isoformat(timespec="seconds"), sid, season, episode))
+    return {"status": "ok", "id": res.id, "name": res.name, "duplicate": res.duplicate}
 
 
 @app.post("/api/library/import")

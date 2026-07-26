@@ -351,7 +351,8 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
             from . import packs as _packs
             fresh = [r for r in fresh
                      if _packs.classify_pack(r["title"]).get("kind") == "single"
-                     and _rm.matches_series(r["title"], title)]
+                     and _rm.matches_episode(r["title"], title,
+                                             int(season), int(episode))]
         if profile:
             ranked = prof.rank(fresh, profile)
         else:

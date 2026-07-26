@@ -1798,3 +1798,83 @@ def test_prune_skipped_on_mass_disappearance(tmp_path, monkeypatch):
     with db.connect() as c:
         n = c.execute("SELECT COUNT(*) AS n FROM library_episodes WHERE episode <= 5").fetchone()["n"]
     assert n == 0                                  # the 5 truly-gone rows pruned
+
+
+# ---------------- per-episode interactive search ----------------
+def test_episode_releases_endpoint(client_app, monkeypatch):
+    from faucet import app as appmod, db
+    with db.connect() as c:
+        c.execute("INSERT INTO series (tmdb_id,title,year,monitored) VALUES (501,'The Office',2005,1)")
+        sid = c.execute("SELECT id FROM series WHERE tmdb_id=501").fetchone()["id"]
+    GB = 1024 ** 3
+    monkeypatch.setattr(appmod.searchmod, "search", lambda *a, **k: [
+        {"title": "The Office S03E07 1080p WEB-DL", "href": "magnet:good", "seeders": 80,
+         "peers": 5, "size": GB, "size_h": "1.0 GB", "tracker": "t",
+         "badges": {"res": "1080p", "source": "WEB-DL", "ext": None}},
+        {"title": "The Office US S03 COMPLETE 1080p", "href": "magnet:pack", "seeders": 300,
+         "peers": 9, "size": 30 * GB, "size_h": "30 GB", "tracker": "t",
+         "badges": {"res": "1080p", "source": None, "ext": None}},
+        {"title": "The Office Superfan Episodes S03E07 1080p", "href": "magnet:spin", "seeders": 50,
+         "peers": 2, "size": GB, "size_h": "1.0 GB", "tracker": "t",
+         "badges": {"res": "1080p", "source": None, "ext": None}}])
+    r = client_app.get(f"/api/series/{sid}/episodes/3/7/releases")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["query"] == "The Office S03E07"
+    titles = [x["title"] for x in d["releases"]]
+    assert titles == ["The Office S03E07 1080p WEB-DL"]   # pack + spin-off filtered
+    assert d["considered"] == 3
+
+
+def test_episode_grab_endpoint(client_app):
+    from faucet import db
+    with db.connect() as c:
+        c.execute("INSERT INTO series (tmdb_id,title,year,monitored) VALUES (502,'Show',2020,1)")
+        sid = c.execute("SELECT id FROM series WHERE tmdb_id=502").fetchone()["id"]
+        c.execute("INSERT INTO wanted (kind,series_id,season,episode,title,reason,status) "
+                  "VALUES ('episode',?,1,4,'ep','missing','wanted')", (sid,))
+    r = client_app.post(f"/api/series/{sid}/episodes/1/4/grab",
+                        json={"magnet": "magnet:x", "title": "Show S01E04 1080p WEB"})
+    assert r.status_code == 200 and r.json()["status"] == "ok"
+    with db.connect() as c:
+        w = c.execute("SELECT status FROM wanted WHERE series_id=? AND episode=4", (sid,)).fetchone()
+        g = c.execute("SELECT 1 FROM grabbed WHERE title='Show S01E04 1080p WEB'").fetchone()
+    assert w["status"] == "grabbed" and g          # hunter won't double-grab
+
+
+def test_episode_releases_admin_only(tmp_path, monkeypatch):
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "ev.jsonl"))
+    monkeypatch.setenv("SESSION_SECRET", "test")
+    monkeypatch.setenv("JACKETT_API_KEY", "k")
+    import importlib
+    for m in ["config", "db", "auth", "auth_routes", "app"]:
+        importlib.reload(importlib.import_module("faucet." + m))
+    from faucet import db, app as appmod
+    db.init()
+    from fastapi.testclient import TestClient
+    admin = TestClient(appmod.app, follow_redirects=False)
+    admin.post("/api/auth/register", json={"username": "admin", "password": "adminpass123"})
+    admin.post("/api/auth/login", json={"username": "admin", "password": "adminpass123"})
+    csrf = admin.cookies.get("faucet_csrf")
+    admin.post("/api/admin/users", json={"username": "bob", "password": "bobpass1234",
+                                         "role": "user", "status": "active"},
+               headers={"X-CSRF-Token": csrf})
+    bob = TestClient(appmod.app, follow_redirects=False)
+    bob.post("/api/auth/login", json={"username": "bob", "password": "bobpass1234"})
+    assert bob.get("/api/series/1/episodes/1/1/releases").status_code == 403
+    bcsrf = bob.cookies.get("faucet_csrf")
+    assert bob.post("/api/series/1/episodes/1/1/grab", json={"magnet": "m"},
+                    headers={"X-CSRF-Token": bcsrf}).status_code == 403
+
+
+def test_matches_episode_rejects_wrong_episode():
+    from faucet.releasematch import matches_episode, episode_numbers
+    assert matches_episode("The.Office.S03E07.1080p.WEB-DL", "The Office", 3, 7)
+    assert not matches_episode("The.Office.S03E07.1080p.WEB-DL", "The Office", 3, 2)
+    assert not matches_episode("The.Office.S04E07.1080p", "The Office", 3, 7)
+    # multi-episode releases cover their range
+    assert matches_episode("Show.S01E01E02.1080p", "Show", 1, 2)
+    assert matches_episode("Show.S01E01-03.1080p", "Show", 1, 3)
+    assert matches_episode("Show 1x05 HDTV", "Show", 1, 5)
+    assert not matches_episode("Show.S01E01E02.1080p", "Show", 1, 3)
+    assert episode_numbers("Show.S02E10-12.720p") == (2, [10, 11, 12])

@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.4.0
+
+### Added
+
+- **Per-episode interactive search** (the Sonarr hourglass). Every aired
+  episode row in show detail has a search button; it opens a modal listing
+  releases for that exact episode — title-verified (no spin-offs), season
+  packs excluded, and **episode-number-verified** (a search for S03E02 can
+  never show or grab an S03E07 release; multi-episode releases like
+  S01E01-03 count for each episode they cover). Ranked by the show's
+  profile with profile-failing releases listed but marked, and a one-click
+  **grab** that also flips the wanted row and blocklists the release so the
+  background hunter won't double-grab.
+- New endpoints: `GET /api/series/{id}/episodes/{s}/{e}/releases` and
+  `POST .../grab` (admin-only).
+
+### Fixed
+
+- The background hunter now also verifies the episode NUMBER on every
+  candidate release, not just the show title.
+
 ## 1.3.1
 
 ### Fixed

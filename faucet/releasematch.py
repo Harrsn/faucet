@@ -119,6 +119,39 @@ def matches_series(release_title: str, series_title: str,
     return got == want
 
 
+_EP_NUMS = re.compile(r"(?i)s(\d{1,2})\s*[.\s]?e(\d{1,3})(?:\s*[-–e]+\s*(\d{1,3}))?")
+_EP_NUMS_X = re.compile(r"\b(\d{1,2})x(\d{2,3})(?:\s*[-–]\s*(\d{2,3}))?\b")
+
+
+def episode_numbers(release_title: str) -> tuple[int, list[int]] | None:
+    """(season, [episodes]) parsed from a release name, handling multi-episode
+    forms (S01E01E02, S01E01-03, 1x01-02). None when no episode marker."""
+    r = _clean(release_title)
+    m = _EP_NUMS.search(r) or _EP_NUMS_X.search(r)
+    if not m:
+        return None
+    season = int(m.group(1))
+    first = int(m.group(2))
+    last = int(m.group(3)) if m.group(3) else first
+    if last < first or last - first > 30:      # nonsense range — trust only first
+        last = first
+    return season, list(range(first, last + 1))
+
+
+def matches_episode(release_title: str, series_title: str,
+                    season: int, episode: int) -> bool:
+    """The strict per-episode check: right SHOW (matches_series) and the
+    release's episode marker actually covers the requested episode — a search
+    for S03E02 must never accept an S03E07 release the indexer threw in."""
+    if not matches_series(release_title, series_title):
+        return False
+    nums = episode_numbers(release_title)
+    if not nums:
+        return False
+    rel_season, rel_eps = nums
+    return rel_season == int(season) and int(episode) in rel_eps
+
+
 def matches_movie(release_title: str, movie_title: str,
                   year: int | None = None) -> bool:
     """True when the release's title portion equals the monitored movie's title
