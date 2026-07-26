@@ -136,6 +136,7 @@ def _try_season_pack(title, season, profile):
     packs (classify_pack -> 'season' for the right season); ignores series packs
     (too large, per design) and individual episodes."""
     from . import packs
+    from . import releasematch
     query = f"{title} S{int(season):02d}"
     try:
         results = searchmod.search(
@@ -147,8 +148,14 @@ def _try_season_pack(title, season, profile):
     for r in results:
         if db.already_grabbed(r["title"]):
             continue
+        # the release must actually BE this show — substring search happily
+        # returns spin-offs ("Trailer Park Boys: Out of the Park ...")
+        if not releasematch.matches_series(r["title"], title):
+            continue
         cls = packs.classify_pack(r["title"])
-        if cls["kind"] == "season" and (cls["season"] in (season, None)):
+        # require the EXACT season: a pack whose season can't be determined
+        # may be any season (or a mislabeled range) — too risky to grab
+        if cls["kind"] == "season" and cls["season"] == season:
             candidates.append(r)
     if not candidates:
         return None
@@ -252,10 +259,16 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
         if w.get("id") in covered_episode_wants:
             continue
         kind = w.get("kind", "episode")
+        movie_title, movie_year = None, None
         if kind == "movie":
             query = w.get("title") or ""
             series_id = w.get("series_id")  # for movies this is the movie id
             profile = _load_profile_for_movie(series_id)
+            with db.connect() as c:
+                mrow = c.execute("SELECT title, year FROM movies WHERE id=?",
+                                 (series_id,)).fetchone()
+            if mrow:
+                movie_title, movie_year = mrow["title"], mrow["year"]
         else:
             title = w.get("series_title") or ""
             season, episode = w.get("season"), w.get("episode")
@@ -276,14 +289,25 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
             continue
 
         fresh = [r for r in results if not db.already_grabbed(r["title"])]
-        # For episode wants, never grab a season or series pack here — the pack
-        # pre-pass already handled pack-worthy seasons, and an episode search can
-        # return huge multi-season packs (e.g. "S01-S21") that contain the query
-        # episode. Grabbing those re-downloads seasons we already own.
-        if kind != "movie":
+        # Verify every candidate actually IS the wanted title. Indexer search is
+        # substring-based, so "Trailer Park Boys S01E01" also returns
+        # "Trailer Park Boys: Out of the Park: Europe S01E01" — without this
+        # check the best-seeded spin-off wins and the wrong show is grabbed.
+        from . import releasematch as _rm
+        if kind == "movie":
+            if movie_title:
+                fresh = [r for r in fresh
+                         if _rm.matches_movie(r["title"], movie_title, movie_year)]
+        else:
+            # For episode wants, never grab a season or series pack here — the
+            # pack pre-pass already handled pack-worthy seasons, and an episode
+            # search can return huge multi-season packs (e.g. "S01-S21") that
+            # contain the query episode. Grabbing those re-downloads seasons we
+            # already own.
             from . import packs as _packs
             fresh = [r for r in fresh
-                     if _packs.classify_pack(r["title"]).get("kind") == "single"]
+                     if _packs.classify_pack(r["title"]).get("kind") == "single"
+                     and _rm.matches_series(r["title"], title)]
         if profile:
             ranked = prof.rank(fresh, profile)
         else:
@@ -371,6 +395,18 @@ def run_once() -> dict:
     except Exception as e:                       # noqa: BLE001 - never kill the tick
         log.warning("Library pipeline error: %s", e)
         lib_summary = {"error": str(e)}
+
+    # 3. housekeeping: purge expired sessions + used/expired reset tokens
+    # (they previously accumulated forever)
+    try:
+        now = datetime.now().isoformat(timespec="seconds")
+        with db.connect() as c:
+            c.execute("DELETE FROM sessions WHERE expires_ts IS NOT NULL AND expires_ts < ?",
+                      (now,))
+            c.execute("DELETE FROM reset_tokens WHERE used=1 OR "
+                      "(expires_ts IS NOT NULL AND expires_ts < ?)", (now,))
+    except Exception:                            # noqa: BLE001
+        pass
 
     _last_run.update(ts=datetime.now().isoformat(timespec="seconds"),
                      checked=len(subs), grabbed=grabbed)
