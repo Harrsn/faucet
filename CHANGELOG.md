@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.3.0
+
+### Changed — full UI overhaul (poster-first)
+
+- **Shows and Movies are now poster grids** — TMDb art with completion bars
+  along the card edge, status chips (monitored/complete/paused · in
+  library/wanted), hover quick-hunt, plus filter, status and sort controls.
+  Titles without art get a deterministic gradient placeholder.
+- **Detail pages got a cinematic hero**: full-width TMDb backdrop (fetched at
+  w1280 now instead of w342), big poster, facts row (year, seasons, rating,
+  genres), overview, and all management controls inline. Below: a completion
+  strip and per-season accordions with episode rows (on disk / missing /
+  unaired pills, detected quality, air dates). Newest season first; the first
+  incomplete season starts open. Remove moved into the detail hero.
+- **Dashboard rebuilt**: stat tiles (storage bar, services, throughput,
+  library, wanted, members), download rows with progress + inline stall
+  warning, recent history, and two poster rails — "Hunting next" and
+  "Recently added shows".
+- Nav polish: avatar button with your initial, brand click goes home, and
+  `/` focuses search from anywhere.
+- All functionality preserved: search (title + release modes), requests,
+  users, settings, profiles, auto-grab, activity drawer, file browser, fix
+  match/location, mobile bottom nav + sheet, light/dark theme.
+
 ## 1.2.1
 
 ### Fixed

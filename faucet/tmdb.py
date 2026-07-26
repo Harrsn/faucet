@@ -21,6 +21,7 @@ from . import db
 
 _BASE = "https://api.themoviedb.org/3"
 _IMG = "https://image.tmdb.org/t/p/w342"
+_IMG_WIDE = "https://image.tmdb.org/t/p/w1280"   # backdrops (hero banners)
 _CACHE_TTL = 60 * 60 * 24  # 24h
 
 
@@ -53,6 +54,11 @@ def _cache_put(key: str, data):
 
 def _poster(path: Optional[str]) -> Optional[str]:
     return f"{_IMG}{path}" if path else None
+
+
+def _backdrop(path: Optional[str]) -> Optional[str]:
+    """Backdrops render full-width in the detail hero — w342 looks like mud."""
+    return f"{_IMG_WIDE}{path}" if path else None
 
 
 def search(query: str, kind: str = "multi") -> list[dict]:
@@ -129,7 +135,8 @@ def episodes(tmdb_id: int, total_seasons: int) -> list[dict]:
 def details(tmdb_id: int, media_type: str) -> dict:
     if not enabled():
         return {}
-    ck = f"details:{media_type}:{tmdb_id}"
+    # v2 cache key: busts pre-1.3 cached entries whose backdrop was low-res
+    ck = f"details2:{media_type}:{tmdb_id}"
     cached = _cache_get(ck)
     if cached is not None:
         return cached
@@ -145,7 +152,7 @@ def details(tmdb_id: int, media_type: str) -> dict:
         "year": int(date[:4]) if date[:4].isdigit() else None,
         "overview": d.get("overview", ""),
         "poster": _poster(d.get("poster_path")),
-        "backdrop": _poster(d.get("backdrop_path")),
+        "backdrop": _backdrop(d.get("backdrop_path")),
         "rating": round(d.get("vote_average", 0), 1),
         "genres": [g["name"] for g in d.get("genres", [])],
         "seasons": d.get("number_of_seasons"),
