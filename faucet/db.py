@@ -231,7 +231,9 @@ CREATE TABLE IF NOT EXISTS wanted (
     reason      TEXT,                 -- missing | upgrade
     status      TEXT DEFAULT 'wanted',-- wanted | searching | grabbed | unavailable
     last_search TEXT,
-    UNIQUE(kind, series_id, season, episode, title)
+    -- keyed WITHOUT the episode title: TMDb retitles episodes between
+    -- refreshes, and a title-keyed constraint duplicated wants when it did
+    UNIQUE(kind, series_id, season, episode)
 );
 """
 
@@ -284,6 +286,15 @@ def _migrate(c) -> None:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
         except Exception:                        # noqa: BLE001 - table may not exist yet
             pass
+    # Older DBs keyed `wanted` on (…, title): a TMDb episode retitle then
+    # duplicated the want and it was hunted twice. Collapse such duplicates,
+    # keeping the earliest row per (kind, series_id, season, episode).
+    try:
+        c.execute(
+            "DELETE FROM wanted WHERE id NOT IN ("
+            "  SELECT MIN(id) FROM wanted GROUP BY kind, series_id, season, episode)")
+    except Exception:                            # noqa: BLE001
+        pass
 
 
 # ---- generic settings KV (the in-app settings editor uses this) ----
@@ -306,10 +317,17 @@ def set_setting(key: str, value: Any) -> None:
 
 
 def all_settings() -> dict:
+    """User-facing settings only. Internal keys (leading underscore — the TMDb
+    response cache, etc.) and secrets are excluded: they were being shipped to
+    the Settings UI wholesale, ballooning the payload and leaking the session
+    secret to any admin browser."""
+    _EXCLUDE = {"session_secret"}
     with connect() as c:
         rows = c.execute("SELECT key, value FROM settings").fetchall()
     out = {}
     for r in rows:
+        if r["key"].startswith("_") or r["key"] in _EXCLUDE:
+            continue
         try:
             out[r["key"]] = json.loads(r["value"])
         except (ValueError, TypeError):

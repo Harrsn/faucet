@@ -115,7 +115,8 @@ def _record_unparsed(path: str, kind: str, reason: str) -> None:
         pass
 
 
-def _scan_tv(root: Path, stats: dict, force: bool = False) -> None:
+def _scan_tv(root: Path, stats: dict, force: bool = False,
+             seen: set | None = None) -> None:
     tv = root / "tvshows"
     if not tv.exists():
         return
@@ -128,6 +129,8 @@ def _scan_tv(root: Path, stats: dict, force: bool = False) -> None:
             continue
         if st.st_size < MIN_SIZE:
             continue
+        if seen is not None:
+            seen.add(str(f))
         # incremental: skip unchanged files already recorded
         with db.connect() as c:
             row = c.execute("SELECT mtime FROM library_episodes WHERE path=?",
@@ -181,7 +184,8 @@ def _scan_tv(root: Path, stats: dict, force: bool = False) -> None:
         stats["episodes"] += 1
 
 
-def _scan_movies(root: Path, stats: dict, force: bool = False) -> None:
+def _scan_movies(root: Path, stats: dict, force: bool = False,
+                 seen: set | None = None) -> None:
     mv = root / "movies"
     if not mv.exists():
         return
@@ -194,6 +198,8 @@ def _scan_movies(root: Path, stats: dict, force: bool = False) -> None:
             continue
         if st.st_size < MIN_SIZE:
             continue
+        if seen is not None:
+            seen.add(str(f))
         with db.connect() as c:
             row = c.execute("SELECT mtime FROM library_movies WHERE path=?",
                             (str(f),)).fetchone()
@@ -233,10 +239,35 @@ def scan(force: bool = False) -> dict:
     if guessit is None:
         stats["error"] = "guessit not installed"
         return stats
-    _scan_tv(root, stats, force=force)
-    _scan_movies(root, stats, force=force)
-    log.info("Library scan: %d episodes, %d movies (%d skipped, %d unparsed)",
-             stats["episodes"], stats["movies"], stats["skipped"], stats["unparsed"])
+    seen_tv: set = set()
+    seen_mv: set = set()
+    _scan_tv(root, stats, force=force, seen=seen_tv)
+    _scan_movies(root, stats, force=force, seen=seen_mv)
+    # Prune rows whose files vanished (deleted/renamed/moved). Without this the
+    # inventory says an episode is still owned forever, so reconcile never
+    # re-hunts anything that was removed from disk. Only prune paths under the
+    # walked subtrees, so a briefly-unmounted sibling dir can't wipe the DB.
+    stats["pruned"] = 0
+    tv_prefix = str(root / "tvshows")
+    mv_prefix = str(root / "movies")
+    with db.connect() as c:
+        for row in c.execute("SELECT id, path FROM library_episodes").fetchall():
+            p = row["path"] or ""
+            if (p.startswith(tv_prefix) and p not in seen_tv
+                    and not os.path.exists(p)):
+                c.execute("DELETE FROM library_episodes WHERE id=?", (row["id"],))
+                stats["pruned"] += 1
+        for row in c.execute("SELECT id, path FROM library_movies").fetchall():
+            p = row["path"] or ""
+            # manually-linked files (Fix Location) can live outside movies/ and
+            # below the size floor — the exists() check keeps those safe
+            if (p.startswith(mv_prefix) and p not in seen_mv
+                    and not os.path.exists(p)):
+                c.execute("DELETE FROM library_movies WHERE id=?", (row["id"],))
+                stats["pruned"] += 1
+    log.info("Library scan: %d episodes, %d movies (%d skipped, %d unparsed, %d pruned)",
+             stats["episodes"], stats["movies"], stats["skipped"], stats["unparsed"],
+             stats["pruned"])
     return stats
 
 
@@ -255,13 +286,19 @@ def have_episode(show_name: str, season: int, episode: int) -> dict | None:
 
 
 def have_movie(title: str, year: int | None = None) -> dict | None:
+    """Is this movie on disk? Matches on the normalized title (exact SQL title
+    equality misses every punctuation/casing difference between the on-disk
+    parse and TMDb's canonical form) with a ±1-year fuzz when both are known."""
+    key = normalize_title(title)
     with db.connect() as c:
-        if year:
-            r = c.execute("SELECT * FROM library_movies WHERE title=? AND year=?",
-                          (title, year)).fetchone()
-        else:
-            r = c.execute("SELECT * FROM library_movies WHERE title=?", (title,)).fetchone()
-    return dict(r) if r else None
+        rows = c.execute("SELECT * FROM library_movies").fetchall()
+    for r in rows:
+        if normalize_title(r["title"]) != key:
+            continue
+        if year and r["year"] and abs(int(r["year"]) - int(year)) > 1:
+            continue
+        return dict(r)
+    return None
 
 
 def scan_report() -> dict:

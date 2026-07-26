@@ -12,6 +12,7 @@ searches. This module owns series CRUD, episode-list refresh, and the diff.
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime
 
 from . import db
@@ -22,6 +23,11 @@ log = logging.getLogger("faucet.series")
 
 # resolution rank for upgrade comparison (higher = better)
 _RES_RANK = {"2160p": 4, "1080p": 3, "720p": 2, "480p": 1, None: 0, "": 0}
+
+# A want marked 'grabbed' whose download never materialized (client error,
+# dead torrent, stalled seed) is retried after this many hours — otherwise a
+# single failed grab orphans the episode forever.
+GRAB_RETRY_HOURS = int(os.environ.get("GRAB_RETRY_HOURS", "48"))
 
 
 def add_series(tmdb_id: int, title: str, year: int | None, poster: str | None,
@@ -35,7 +41,10 @@ def add_series(tmdb_id: int, title: str, year: int | None, poster: str | None,
         cur = c.execute(
             "INSERT INTO series (tmdb_id, title, year, poster, profile_id, monitored, "
             "total_seasons, added_ts, last_refresh) VALUES (?,?,?,?,?,1,?,?,?) "
-            "ON CONFLICT(tmdb_id) DO UPDATE SET monitored=1, profile_id=excluded.profile_id",
+            # re-adding an existing show must not WIPE its assigned profile when
+            # the caller passes none (e.g. a request approval with no profile)
+            "ON CONFLICT(tmdb_id) DO UPDATE SET monitored=1, "
+            "profile_id=COALESCE(excluded.profile_id, series.profile_id)",
             (tmdb_id, title, year, poster, profile_id, total_seasons, now, now))
         sid = cur.lastrowid
         if not sid:  # conflict path — fetch existing id
@@ -130,8 +139,10 @@ def reconcile(series_id: int) -> dict:
     today = datetime.now().date().isoformat()
     for ep in canonical:
         season, episode = ep["season"], ep["episode"]
-        # skip episodes that haven't aired yet (no point hunting them)
-        if ep["air_date"] and ep["air_date"] > today:
+        # skip episodes that haven't aired yet — including ones with NO air
+        # date (TBA / unannounced): hunting those searches forever for
+        # releases that can't exist
+        if not ep["air_date"] or ep["air_date"] > today:
             continue
         # 'future' mode: skip episodes that aired before the show was added
         if cutoff and ep["air_date"] and ep["air_date"] < cutoff:
@@ -157,25 +168,49 @@ def reconcile(series_id: int) -> dict:
                 _add_wanted(series_id, season, episode, ep["title"], "upgrade")
                 upgrades += 1
             else:
-                _clear_wanted(series_id, season, episode)
+                # satisfied at (or above) target — retire any want, including a
+                # stale 'grabbed' row (those used to linger forever)
+                _clear_wanted(series_id, season, episode, any_status=True)
     return {"missing": missing, "upgrades": upgrades, "have": have}
 
 
 def _add_wanted(series_id: int, season: int, episode: int, title: str, reason: str) -> None:
+    """Upsert one episode want keyed on (series, season, episode) — NOT on the
+    episode title, which TMDb can rename between refreshes (the old title-keyed
+    UNIQUE constraint duplicated wants when that happened). A row stuck in
+    'grabbed' with nothing on disk is flipped back to 'wanted' after
+    GRAB_RETRY_HOURS so a failed download eventually retries."""
+    from datetime import timedelta
     with db.connect() as c:
-        c.execute(
-            "INSERT INTO wanted (kind, series_id, season, episode, title, reason, status) "
-            "VALUES ('episode',?,?,?,?,?,'wanted') "
-            "ON CONFLICT(kind, series_id, season, episode, title) DO UPDATE SET "
-            "reason=excluded.reason WHERE wanted.status='wanted'",
-            (series_id, season, episode, title or "", reason))
+        row = c.execute(
+            "SELECT id, status, last_search FROM wanted WHERE kind='episode' "
+            "AND series_id=? AND season=? AND episode=?",
+            (series_id, season, episode)).fetchone()
+        if row is None:
+            c.execute(
+                "INSERT INTO wanted (kind, series_id, season, episode, title, reason, status) "
+                "VALUES ('episode',?,?,?,?,?,'wanted')",
+                (series_id, season, episode, title or "", reason))
+            return
+        if row["status"] == "wanted":
+            c.execute("UPDATE wanted SET reason=?, title=? WHERE id=?",
+                      (reason, title or "", row["id"]))
+        elif row["status"] == "grabbed":
+            retry_before = (datetime.now()
+                            - timedelta(hours=GRAB_RETRY_HOURS)).isoformat(timespec="seconds")
+            if not row["last_search"] or row["last_search"] < retry_before:
+                c.execute("UPDATE wanted SET status='wanted', reason=?, title=? WHERE id=?",
+                          (reason, title or "", row["id"]))
 
 
-def _clear_wanted(series_id: int, season: int, episode: int) -> None:
+def _clear_wanted(series_id: int, season: int, episode: int,
+                  any_status: bool = False) -> None:
+    q = ("DELETE FROM wanted WHERE kind='episode' AND series_id=? "
+         "AND season=? AND episode=?")
+    if not any_status:
+        q += " AND status='wanted'"
     with db.connect() as c:
-        c.execute("DELETE FROM wanted WHERE kind='episode' AND series_id=? "
-                  "AND season=? AND episode=? AND status='wanted'",
-                  (series_id, season, episode))
+        c.execute(q, (series_id, season, episode))
 
 
 def reconcile_all() -> dict:
@@ -219,7 +254,8 @@ def episode_breakdown(series_id: int) -> dict:
         if ep["season"] == 0:
             continue  # specials shown separately if ever needed
         owned = library.have_episode(s["title"], ep["season"], ep["episode"])
-        aired = not ep["air_date"] or ep["air_date"] <= today
+        # no air date = TBA/unannounced -> not aired (matches reconcile())
+        aired = bool(ep["air_date"]) and ep["air_date"] <= today
         if aired:
             total += 1
             if owned:

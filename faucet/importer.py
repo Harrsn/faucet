@@ -44,10 +44,15 @@ def _already_have_series(show_name: str) -> bool:
 
 
 def _already_have_movie(title: str, year) -> bool:
+    """Same-title-different-year films ('Dune' 1984 vs 2021) are distinct — a
+    title-only check silently skipped every remake in the library."""
     key = library.normalize_title(title)
     for m in movies_mod.list_movies():
-        if library.normalize_title(m["title"]) == key:
-            return True
+        if library.normalize_title(m["title"]) != key:
+            continue
+        if year and m.get("year") and abs(int(m["year"]) - int(year)) > 1:
+            continue
+        return True
     return False
 
 
@@ -82,12 +87,25 @@ def _best_tmdb_match(name: str, kind: str, year=None) -> dict | None:
                 continue
             return r
     # year-aware fallback: if we have a year, prefer a result that matches it
+    # AND shares the folder title's tokens (a bare year match can still be a
+    # totally different film released the same year)
+    key_tokens = set(key.split())
     if year:
         for r in results:
-            if r.get("year") and abs(int(r["year"]) - int(year)) <= 1:
+            if not (r.get("year") and abs(int(r["year"]) - int(year)) <= 1):
+                continue
+            rt = set(library.normalize_title(r["title"]).split())
+            if key_tokens and (key_tokens <= rt or rt <= key_tokens):
                 return r
-    # else take the top result if there's any (TMDb ranks by relevance)
-    return results[0] if results else None
+    # last resort: the top TMDb result, but only when its title meaningfully
+    # overlaps the folder name — never link something entirely unrelated
+    # (blind top-result linking is how 'Trailer Park Boys' folders end up
+    # monitored as a spin-off). Otherwise report unmatched for manual review.
+    for r in results[:3]:
+        rt = set(library.normalize_title(r["title"]).split())
+        if key_tokens and (key_tokens <= rt or rt <= key_tokens):
+            return r
+    return None
 
 
 def import_library(profile_id: int | None = None, default_monitor: bool = True) -> dict:

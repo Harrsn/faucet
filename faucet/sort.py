@@ -98,7 +98,11 @@ def iter_video_files(root: Path):
     for p in candidates:
         if p.suffix.lower() not in VIDEO_EXTS:
             continue
-        if p.stat().st_size < MIN_SIZE_MB * 1024 * 1024:
+        try:
+            size = p.stat().st_size
+        except OSError:
+            continue                     # vanished mid-scan (NAS hiccup)
+        if size < MIN_SIZE_MB * 1024 * 1024:
             logging.info("SKIP (under %dMB): %s", MIN_SIZE_MB, p.name)
             continue
         yield p
@@ -179,9 +183,13 @@ def plan_destination(video: Path):
         episode = info.get("episode")
         if show is None or season is None or episode is None:
             return None
+        # guessit can return a list for multi-SEASON names too (e.g. 'S01-S03');
+        # a range spans folders, so treat it as unparseable rather than crash
+        if isinstance(season, list):
+            return None
         # guessit can return a list for multi-episode files
         if isinstance(episode, list):
-            ep_tag = "".join(f"E{e:02d}" for e in episode)
+            ep_tag = "".join(f"E{int(e):02d}" for e in episode)
         else:
             ep_tag = f"E{int(episode):02d}"
         show_s = sanitize(show)
@@ -393,6 +401,11 @@ def _cleanup_release_dir(root: Path) -> None:
         leftovers = [p for p in root.rglob("*") if p.is_file()]
         for p in leftovers:
             name = p.name.lower()
+            # subtitles are small but NOT junk — an unmoved .srt (e.g. in a
+            # subs/ folder that didn't match a sidecar stem) blocks cleanup
+            if p.suffix.lower() in SUB_EXTS:
+                logging.info("leaving release dir (has subtitle file): %s", p.name)
+                return
             is_junk = (p.suffix.lower() in JUNK_EXTS
                        or "sample" in name
                        or p.stat().st_size < SMALL)
@@ -443,16 +456,21 @@ def main():
             continue
 
         for video in iter_video_files(root):
-            plan = plan_destination(video)
-            if not plan:
-                logging.warning("UNPARSEABLE, skipping: %s", video.name)
-                continue
-            dest_dir, dest_name = plan
-            dest = dest_dir / dest_name
-            place(video, dest, dry)
-            for sub in find_sidecars(video):
-                place(sub, dest_dir / (dest.stem + sub.suffix), dry)
-            processed += 1
+            # one bad file must never abort the whole release (a raised
+            # OSError/ValueError here used to kill every remaining file)
+            try:
+                plan = plan_destination(video)
+                if not plan:
+                    logging.warning("UNPARSEABLE, skipping: %s", video.name)
+                    continue
+                dest_dir, dest_name = plan
+                dest = dest_dir / dest_name
+                place(video, dest, dry)
+                for sub in find_sidecars(video):
+                    place(sub, dest_dir / (dest.stem + sub.suffix), dry)
+                processed += 1
+            except Exception as e:               # noqa: BLE001
+                logging.error("failed to file %s: %s", video.name, e)
 
         # Clean up the leftover torrent folder once its video(s) are filed.
         # Only when MODE actually relocated the video (move/auto) — for

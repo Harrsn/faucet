@@ -50,6 +50,12 @@ def passes(result: dict, profile: dict) -> tuple[bool, str]:
     if res_pref and badges.get("res") and badges["res"] not in res_pref:
         return False, f"resolution {badges['res']} not in profile"
 
+    # Cam-family releases (CAM/TS/TC/screeners) are never acceptable for an
+    # unattended profile-driven grab unless the profile explicitly lists CAM.
+    src_pref = _as_list(profile.get("sources"))
+    if badges.get("source") == "CAM" and "CAM" not in src_pref:
+        return False, "cam/telesync release"
+
     # Preferred language hard filter. Releases we can't classify ('und') pass,
     # so we never drop something just because detection was unsure.
     lang_pref = _effective_language(profile)

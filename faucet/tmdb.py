@@ -77,7 +77,7 @@ def search(query: str, kind: str = "multi") -> list[dict]:
             continue
         title = r.get("title") or r.get("name") or ""
         date = r.get("release_date") or r.get("first_air_date") or ""
-        year = date[:4] if date else None
+        year = int(date[:4]) if date[:4].isdigit() else None
         out.append({
             "tmdb_id": r.get("id"),
             "media_type": media,
@@ -142,7 +142,7 @@ def details(tmdb_id: int, media_type: str) -> dict:
     date = d.get("release_date") or d.get("first_air_date") or ""
     out = {
         "tmdb_id": tmdb_id, "media_type": media_type, "title": title,
-        "year": date[:4] if date else None,
+        "year": int(date[:4]) if date[:4].isdigit() else None,
         "overview": d.get("overview", ""),
         "poster": _poster(d.get("poster_path")),
         "backdrop": _poster(d.get("backdrop_path")),

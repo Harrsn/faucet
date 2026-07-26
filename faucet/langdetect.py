@@ -75,19 +75,34 @@ def detect(result: dict) -> str:
     sl = _script_lang(title)
     if sl:
         return sl
-    # 2. explicit language words/tags
+    # 2. explicit language words/tags. Collect ALL hits first: a dual-audio
+    # release tagged 'ITA ENG' contains an English track, so returning the
+    # first foreign tag found (old behavior) wrongly filtered it from English
+    # profiles. 'ENG SUBS' next to a foreign tag still means foreign audio.
     tokens = re.split(r"[^A-Za-z]+", title.lower())
     tokenset = set(tokens)
-    for word, lang in _TAG_LANG.items():
-        if word in tokenset:
-            return lang
+    hits = {lang for word, lang in _TAG_LANG.items() if word in tokenset}
+    if hits:
+        has_subs = tokenset & {"subs", "sub", "subbed", "subtitles", "vostfr"}
+        if "en" in hits and (len(hits) == 1 or not has_subs):
+            return "en"
+        foreign = sorted(hits - {"en"})
+        if foreign:
+            return foreign[0]
     # 'MULTI' means multiple audio tracks incl. (usually) English — treat as en
     if "multi" in tokenset:
         return "en"
-    # 3. short standalone tokens (lower confidence)
-    for tok, lang in _SHORT_TAG.items():
-        if tok in tokenset:
-            return lang
+    # 3. short standalone tokens — LOW confidence, and a huge false-positive
+    # trap: 'It', 'Es', 'De' appear as ordinary words/titles ("It (2017)" was
+    # being detected as Italian and filtered out of English profiles). Only
+    # count a short tag when it appears UPPERCASE in the original title and
+    # isn't at the very start (scene tags sit after the episode/quality part,
+    # titles sit at the front).
+    raw_tokens = re.split(r"[^A-Za-z]+", title)
+    for i, rt in enumerate(raw_tokens):
+        low = rt.lower()
+        if low in _SHORT_TAG and rt.isupper() and i >= 2:
+            return _SHORT_TAG[low]
     # 4. plain Latin-script release with no foreign markers -> assume English
     if title and all(ord(c) < 0x250 for c in title):
         return "en"

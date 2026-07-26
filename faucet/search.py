@@ -39,7 +39,8 @@ def parse_badges(title: str) -> dict:
     t = title.lower()
     badges = {"ext": None, "res": None, "source": None}
     for ext in ("mkv", "mp4", "avi", "m4v", "ts"):
-        if re.search(rf"\b{ext}\b", t) or t.endswith("." + ext):
+        # dot-anchored: a bare 'TS' token is a telesync tag, not a .ts file
+        if re.search(rf"\.{ext}\b", t):
             badges["ext"] = ext.upper()
             break
     for pat, label in ((r"\b(2160p|4k|uhd)\b", "2160p"), (r"\b1080p\b", "1080p"),
@@ -49,7 +50,10 @@ def parse_badges(title: str) -> dict:
             break
     for pat, label in ((r"\bremux\b", "REMUX"), (r"\b(blu-?ray|bdrip|brrip)\b", "BluRay"),
                        (r"\bweb-?dl\b", "WEB-DL"), (r"\bwebrip\b", "WEBRip"),
-                       (r"\bhdtv\b", "HDTV"), (r"\bdvdrip\b", "DVDRip")):
+                       (r"\bhdtv\b", "HDTV"), (r"\bdvdrip\b", "DVDRip"),
+                       # cam-family last so a real source tag always wins
+                       (r"\b(hd-?cam|cam-?rip|telesync|hd-?ts|telecine|"
+                        r"dvd-?scr|screener|ts|tc|cam|scr)\b", "CAM")):
         if re.search(pat, t):
             badges["source"] = label
             break
