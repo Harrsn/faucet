@@ -56,7 +56,7 @@ It runs as one container over Jackett (or Prowlarr) and your torrent client. No 
 - **Automatic background hunting** — a built-in scheduler scans the library, reconciles every monitored show and movie, and grabs what's missing on a timer (default every 30 minutes). No extra container or cron job.
 - **Season-pack preference** — when two or more episodes of a season are wanted, Faucet grabs a single season pack instead of many individual episodes: one client slot, many episodes, better seeded.
 - **Stalled-download handling** — a download with zero progress for `STALL_HOURS` is removed, blocklisted, and re-hunted with a different release automatically.
-- **Movie quality upgrades** — cams/telesyncs and below-profile files are hunted for better copies; the best file per movie wins.
+- **Quality upgrades** — cams/telesyncs and below-profile files are hunted for copies that actually beat what's on disk; the best file per movie/episode wins and the replaced copy is parked in `_superseded/` for you to purge.
 - **Concurrency caps** — never floods your client. Won't start hunting if too many torrents are already downloading, and grabs only a few per cycle; the rest stay queued for the next tick. Tunable via `HUNT_MAX_ACTIVE` / `HUNT_MAX_PER_RUN`.
 - **Per-show monitor modes** — `all` (hunt every missing episode), `future` (only new episodes from the add date forward — ignore a huge back catalog), or `paused`. Keeps big shows from trying to backfill hundreds of episodes.
 
@@ -148,6 +148,7 @@ All via environment / `.env`:
 | `REMOVE_ON_COMPLETE` | `0` | Remove finished torrents (stops seeding). Only after a clean sort; unfiled content is quarantined first. |
 | `MEDIASORT_MODE` | `auto` | `auto` \| `hardlink` \| `copy` \| `move`. See [docs/HOOKS.md](docs/HOOKS.md). |
 | `QUARANTINE_DIR` | `<release parent>/_failed` | Where the sorter parks content it couldn't file. |
+| `SUPERSEDED_ACTION` | `move` | After an upgrade lands, `move` parks the old copy in `LIBRARY_ROOT/_superseded/` (same relative path, reversible); `keep` leaves it in place. |
 | `HUNT_MAX_ACTIVE` | `5` | Skip hunting if this many torrents are already downloading. |
 | `HUNT_MAX_PER_RUN` | `3` | Max grabs per scheduler tick. |
 | `RSS_INTERVAL_SECONDS` | `1800` | How often the scheduler scans/reconciles/hunts. |
