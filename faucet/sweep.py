@@ -152,7 +152,9 @@ def run(dry: bool = False, settle_min: int | None = None) -> dict:
             continue
         log.info("SORTING: %s", item.name)
         rc = _sort_one(item, dry)
-        if rc == 0:
+        # 0 = filed; 4 = filed, with leftovers quarantined to _failed/ (which
+        # this sweep never revisits)
+        if rc in (0, 4):
             swept += 1
         else:
             failed += 1
