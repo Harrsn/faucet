@@ -220,6 +220,19 @@ CREATE TABLE IF NOT EXISTS library_movies (
     UNIQUE(title, year)
 );
 
+-- Quality of files the sorter placed. The sorter renames releases to
+-- 'Title (Year).ext' / 'Show - S01E01.ext', which strips the resolution tag,
+-- so this is the only record of what an on-disk file actually is. The sorter
+-- consults it before replacing an existing file ("replace only if better").
+CREATE TABLE IF NOT EXISTS library_files (
+    path        TEXT PRIMARY KEY,
+    quality     TEXT,                 -- 2160p | 1080p | 720p | 480p | NULL
+    is_cam      INTEGER DEFAULT 0,
+    release     TEXT,                 -- the release name it was parsed from
+    size        INTEGER DEFAULT 0,
+    sorted_ts   TEXT
+);
+
 -- The computed wants: missing or upgrade-eligible items the hunter targets.
 CREATE TABLE IF NOT EXISTS wanted (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

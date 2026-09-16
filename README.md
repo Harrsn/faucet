@@ -145,7 +145,9 @@ All via environment / `.env`:
 | `DOWNLOAD_DIR` | `/downloads` | Active download dir. |
 | `DISK_PATH` | `/downloads` | Path used for the disk-free gauge. |
 | `BROWSE_ROOT` | `LIBRARY_ROOT` | Root the admin file browser is scoped to. |
-| `REMOVE_ON_COMPLETE` | `0` | Remove finished torrents (stops seeding). |
+| `REMOVE_ON_COMPLETE` | `0` | Remove finished torrents (stops seeding). Only after a clean sort; unfiled content is quarantined first. |
+| `MEDIASORT_MODE` | `auto` | `auto` \| `hardlink` \| `copy` \| `move`. See [docs/HOOKS.md](docs/HOOKS.md). |
+| `QUARANTINE_DIR` | `<release parent>/_failed` | Where the sorter parks content it couldn't file. |
 | `HUNT_MAX_ACTIVE` | `5` | Skip hunting if this many torrents are already downloading. |
 | `HUNT_MAX_PER_RUN` | `3` | Max grabs per scheduler tick. |
 | `RSS_INTERVAL_SECONDS` | `1800` | How often the scheduler scans/reconciles/hunts. |

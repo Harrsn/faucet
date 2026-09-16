@@ -18,6 +18,13 @@ from pathlib import Path
 from . import db
 from .config import config
 
+# quality detection/ranking is shared with the sorter; the private aliases keep
+# existing call sites (fixmatch, tests) working
+from .quality import RES_RANK  # noqa: F401 - re-exported for movies.py
+from .quality import detect_cam as _detect_cam
+from .quality import detect_quality as _detect_quality
+from .quality import file_rank as _movie_file_rank
+
 try:
     from guessit import guessit
 except ImportError:                              # pragma: no cover
@@ -27,9 +34,6 @@ log = logging.getLogger("faucet.library")
 
 VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".m4v", ".mov", ".wmv", ".ts", ".m2ts"}
 MIN_SIZE = 50 * 1024 * 1024  # ignore sub-50MB junk/samples
-
-_RES_TOKENS = [("2160p", ("2160p", "4k", "uhd")), ("1080p", ("1080p",)),
-               ("720p", ("720p",)), ("480p", ("480p",))]
 
 
 def _clean_episode_filename(name: str) -> str:
@@ -94,39 +98,6 @@ def normalize_title(name: str) -> str:
 
 def _library_root() -> Path:
     return Path(os.environ.get("LIBRARY_ROOT", "/library"))
-
-
-def _detect_quality(name: str) -> str | None:
-    n = name.lower()
-    for label, toks in _RES_TOKENS:
-        if any(t in n for t in toks):
-            return label
-    return None
-
-
-_CAM_RE = None
-
-
-def _detect_cam(name: str) -> bool:
-    """Cam-family rip (CAM/TS/TC/telesync/screener) — a '1080p TS' is 1080p in
-    name only; these files are always upgrade-eligible."""
-    global _CAM_RE
-    if _CAM_RE is None:
-        import re
-        _CAM_RE = re.compile(
-            r"\b(hd-?cam|cam-?rip|telesync|hd-?ts|telecine|dvd-?scr|screener|"
-            r"ts|tc|cam|scr)\b", re.I)
-    return bool(_CAM_RE.search(name))
-
-
-# resolution rank shared with reconcile (higher = better; cam is below any
-# real source at equal resolution)
-RES_RANK = {"2160p": 4, "1080p": 3, "720p": 2, "480p": 1, None: 0, "": 0}
-
-
-def _movie_file_rank(quality: str | None, is_cam: bool) -> float:
-    r = RES_RANK.get(quality, 0)
-    return r - 0.5 if is_cam else r
 
 
 def _record_unparsed(path: str, kind: str, reason: str) -> None:

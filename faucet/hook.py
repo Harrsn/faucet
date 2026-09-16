@@ -37,6 +37,11 @@ except Exception:                            # noqa: BLE001 - DB is optional for
     db = None
 
 
+# faucet/sort.py exit codes the hook acts on
+SORT_OK = 0
+SORT_QUARANTINED = 4
+
+
 def _path_size(path: str) -> int:
     """Total bytes of the completed download (file or dir tree)."""
     p = Path(path)
@@ -98,19 +103,30 @@ def main():
     if "completed" in config.notify_on:
         notify(config.notify_urls, "Download complete", name)
 
-    # 1. sort — delegate to the sorter script, pointed at the completed path
+    # 1. sort — delegate to the sorter script, pointed at the completed path.
+    # Exit codes (see faucet/sort.py): 0 filed, 4 filed with some content
+    # quarantined to _failed/, anything else = leave the torrent alone. The
+    # torrent is only removed on 0 or 4, because in those cases nothing of
+    # value is left inside it.
     sorter = Path(__file__).resolve().parent / "sort.py"
     env = dict(os.environ, FAUCET_PATH=path, CASCADE_PATH=path)
     res = subprocess.run([sys.executable, str(sorter)], env=env)
-    if res.returncode != 0:
-        record("sort_failed", name, f"sort failed (rc={res.returncode})")
+    rc = res.returncode
+    if rc not in (SORT_OK, SORT_QUARANTINED):
+        record("sort_failed", name, f"sort failed (rc={rc}); torrent left in place")
         if "failed" in config.notify_on:
             notify(config.notify_urls, "Sort failed", name)
-        return res.returncode
+        return rc
 
-    record("sorted", name, "filed onto library")
-    if "sorted" in config.notify_on:
-        notify(config.notify_urls, "Sorted to library", name)
+    if rc == SORT_QUARANTINED:
+        record("quarantined", name,
+               "some content couldn't be filed; moved to _failed/ for review")
+        if "failed" in config.notify_on:
+            notify(config.notify_urls, "Needs review (quarantined)", name)
+    else:
+        record("sorted", name, "filed onto library")
+        if "sorted" in config.notify_on:
+            notify(config.notify_urls, "Sorted to library", name)
 
     # 2. optional auto-remove
     if os.environ.get("REMOVE_ON_COMPLETE", "0") in ("1", "true", "yes") and tid:

@@ -70,6 +70,11 @@ Two things make this setup work cleanly:
   NAS mount). Then the sorter relocates finished files with an instant rename —
   one copy, no duplication. If they're on different filesystems, the sorter must
   copy, which leaves the original behind (and fills your download disk).
+  Note that two *separate* bind mounts count as different filesystems even when
+  they point into the same share (`/mnt/nas/torrents:/downloads` +
+  `/mnt/nas/media:/library`): rename fails with EXDEV and every move becomes a
+  copy. Mounting the share's parent once and pointing both paths inside it
+  restores instant renames.
 - **`MEDIASORT_MODE`.** Set this in the container's environment. `auto` (default)
   tries hardlink → move → copy; on a CIFS/SMB share (no hardlinks) it moves.
   Set it to `move` explicitly if you want predictable move-and-clean behavior and
@@ -83,8 +88,37 @@ Two things make this setup work cleanly:
 3. Fires notifications per `NOTIFY_ON`.
 4. If `REMOVE_ON_COMPLETE=1`, removes the torrent from the client (stops seeding).
 
-If the sort fails, the torrent is **not** removed — you never lose a file that
-didn't make it to the library.
+### How the sorter protects your files
+
+- **Nothing half-written is ever visible.** Copies are written to a hidden
+  `.<name>.<pid>.faucet-partial` beside the destination, fsynced, size-checked,
+  and only then renamed into place. A crash, a dropped share, or a container
+  restart mid-copy leaves the library untouched (idle partials are cleaned up
+  after 30 minutes).
+- **Existing files are replaced only by provably better releases.** The sorter
+  records the resolution and cam/telesync status of every file it places. A
+  new release for the same path replaces it only if it ranks higher; equal,
+  worse, or unknown quality keeps what you have.
+- **Samples are skipped, extras are kept.** `Sample/` content is ignored;
+  `Featurettes/`, `Behind The Scenes/`, `-trailer` files etc. go to the
+  matching Plex extras folder. Two videos that would get the same name never
+  overwrite each other (numbered `CD1`/`CD2` parts become `- pt1`/`- pt2`).
+- **Subtitles keep their tags** (`Movie (2019).en.forced.srt`), including
+  RARBG-style `Subs/` folders.
+- **Anything that can't be filed is quarantined, not deleted.** When the release
+  is being consumed (`MEDIASORT_MODE=move` or `REMOVE_ON_COMPLETE=1`), leftover
+  content — unparseable files, lower-quality duplicates, disc images, archives —
+  is moved intact to `_failed/` next to the release (override with
+  `QUARANTINE_DIR`). The sweep never touches `_failed/`; review it by hand.
+
+The sorter's exit code tells the hook what's safe:
+
+| rc | Meaning | Torrent removed? |
+|----|---------|------------------|
+| 0 | Everything of value filed (or left seeding) | yes, if `REMOVE_ON_COMPLETE=1` |
+| 4 | Filed; some content quarantined to `_failed/` | yes — nothing is left inside it |
+| 2 | I/O error; release left in place for retry | no |
+| 1 | Library not mounted / no input | no |
 
 ## Catch-up sweep (safety net)
 
