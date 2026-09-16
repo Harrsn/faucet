@@ -88,6 +88,27 @@ def _movie_matches(lib_title: str, lib_year, mon_title: str, mon_year) -> bool:
     return False
 
 
+def _owned_row(m: dict):
+    """The library_movies row that satisfies monitored movie `m`, or None."""
+    with db.connect() as c:
+        lib = c.execute("SELECT title, year, quality, source, path "
+                        "FROM library_movies").fetchall()
+    for r in lib:
+        if _movie_matches(r["title"], r["year"], m["title"], m.get("year")):
+            return r
+    return None
+
+
+def owned_quality(movie_id: int) -> tuple[bool, str | None, bool]:
+    """(owned, quality, is_cam) for a monitored movie — what an upgrade grab
+    has to beat."""
+    m = get_movie(movie_id)
+    r = _owned_row(m) if m else None
+    if r is None:
+        return False, None, False
+    return True, r["quality"], r["source"] == "CAM"
+
+
 def reconcile(movie_id: int) -> dict:
     """Mark a monitored movie have/wanted by matching the library. Uses
     year-anchored subset matching so truncated disk folders still match TMDb's
@@ -95,17 +116,10 @@ def reconcile(movie_id: int) -> dict:
     m = get_movie(movie_id)
     if not m:
         return {"have": False}
-    with db.connect() as c:
-        lib = c.execute("SELECT title, year, quality, source FROM library_movies").fetchall()
-    owned = None
-    for r in lib:
-        if _movie_matches(r["title"], r["year"], m["title"], m.get("year")):
-            owned = r
-            break
+    owned = _owned_row(m)
     have = owned is not None
     from .series import GRAB_RETRY_HOURS, _profile_min_res
     from .library import RES_RANK
-    from datetime import timedelta
     import os as _os
 
     # ── quality-upgrade check (the Radarr side of upgrades) ──
@@ -123,8 +137,8 @@ def reconcile(movie_id: int) -> dict:
             except Exception:                    # noqa: BLE001
                 profile_id = None
         target_rank = RES_RANK.get(_profile_min_res(profile_id), 0)
-        owned_q = owned["quality"] if "quality" in owned.keys() else None
-        owned_cam = (owned["source"] if "source" in owned.keys() else None) == "CAM"
+        owned_q = owned["quality"]
+        owned_cam = owned["source"] == "CAM"
         if target_rank and owned_cam:
             upgrade_needed = True                # a cam is never good enough
         elif target_rank and owned_q and RES_RANK.get(owned_q, 0) < target_rank:
@@ -133,45 +147,15 @@ def reconcile(movie_id: int) -> dict:
     with db.connect() as c:
         c.execute("UPDATE movies SET status=? WHERE id=?",
                   ("have" if have else "wanted", movie_id))
-        if have and upgrade_needed:
-            title = f"{m['title']} {m['year']}" if m.get("year") else m["title"]
-            row = c.execute(
-                "SELECT id, status, last_search FROM wanted WHERE kind='movie' AND series_id=?",
-                (movie_id,)).fetchone()
-            if not row:
-                c.execute(
-                    "INSERT INTO wanted (kind, series_id, title, reason, status) "
-                    "VALUES ('movie',?,?, 'upgrade','wanted')",
-                    (movie_id, title))
-            elif row["status"] == "grabbed":
-                retry_before = (datetime.now() - timedelta(hours=GRAB_RETRY_HOURS)
-                                ).isoformat(timespec="seconds")
-                if not row["last_search"] or row["last_search"] < retry_before:
-                    c.execute("UPDATE wanted SET status='wanted', reason='upgrade' "
-                              "WHERE id=?", (row["id"],))
-            else:
-                c.execute("UPDATE wanted SET reason='upgrade' WHERE id=?", (row["id"],))
-        elif have:
+        if have and not upgrade_needed:
             # on disk at (or above) target — retire any want, incl. stale 'grabbed'
             c.execute("DELETE FROM wanted WHERE kind='movie' AND series_id=?",
                       (movie_id,))
-        else:
-            title = f"{m['title']} {m['year']}" if m.get("year") else m["title"]
-            row = c.execute(
-                "SELECT id, status, last_search FROM wanted WHERE kind='movie' AND series_id=?",
-                (movie_id,)).fetchone()
-            if not row:
-                c.execute(
-                    "INSERT INTO wanted (kind, series_id, title, reason, status) "
-                    "VALUES ('movie',?,?, 'missing','wanted')",
-                    (movie_id, title))
-            elif row["status"] == "grabbed":
-                # a grab that never landed on disk retries after the window
-                retry_before = (datetime.now() - timedelta(hours=GRAB_RETRY_HOURS)
-                                ).isoformat(timespec="seconds")
-                if not row["last_search"] or row["last_search"] < retry_before:
-                    c.execute("UPDATE wanted SET status='wanted' WHERE id=?",
-                              (row["id"],))
+    if not have or upgrade_needed:
+        from . import wants
+        title = f"{m['title']} {m['year']}" if m.get("year") else m["title"]
+        wants.upsert("movie", movie_id, None, None, title,
+                     "upgrade" if have else "missing", GRAB_RETRY_HOURS)
     return {"have": have, "upgrade": upgrade_needed}
 
 
