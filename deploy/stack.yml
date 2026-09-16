@@ -1,0 +1,50 @@
+# deploy/stack.yml — the faucet service.
+#
+# Deployed by deploy/deploy.sh:
+#   docker compose -p cascade -f deploy/stack.yml up -d --force-recreate
+#
+# There are deliberately no secrets in this file.
+#
+# Config reaches the app in three layers, highest priority last:
+#
+#   1. this file's `environment:`  — structural settings the app reads
+#                                    directly from os.environ
+#   2. env_file                    — SESSION_SECRET, which config.py excludes
+#                                    from the wizard on purpose
+#   3. /config/faucet.env          — everything in config.py's WIZARD_KEYS.
+#                                    _load_persisted() writes these INTO the
+#                                    environment at import, so they override
+#                                    anything set above. Faucet's Settings
+#                                    panel owns this file.
+#
+# That last point is the one that bites: putting JACKETT_URL or CLIENT_PASS
+# here does nothing if faucet.env defines them. Change those in Settings.
+
+services:
+  faucet:
+    image: faucet:local
+    container_name: faucet
+    restart: unless-stopped
+
+    ports:
+      # host 8090 -> container 8088. 8088 on the host is the old mediapipe app.
+      - "8090:8088"
+
+    # SESSION_SECRET only. Root-owned 600 on the host; never in git.
+    env_file:
+      - /opt/cascade-config/faucet.secrets.env
+
+    environment:
+      # Not WIZARD_KEYS — the Settings panel cannot write these, so here is
+      # their only home.
+      EVENTS_FILE: "/config/events.jsonl"
+      HUNT_MAX_ACTIVE: "5"
+      HUNT_MAX_PER_RUN: "3"
+      MEDIASORT_MODE: "move"
+      DEFAULT_LANGUAGE: "en"
+
+    volumes:
+      - /mnt/nas:/nas
+      - /mnt/nas/media:/library
+      - /mnt/nas/torrents:/downloads
+      - /opt/cascade-config:/config
