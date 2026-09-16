@@ -52,3 +52,17 @@ def is_better(new_quality: str | None, new_cam: bool,
     if not new_quality or not old_quality:
         return False
     return file_rank(new_quality, new_cam) > file_rank(old_quality, old_cam)
+
+
+def is_upgrade(release_name: str, owned_quality: str | None, owned_cam: bool) -> bool:
+    """Would grabbing `release_name` improve on the owned file?
+
+    A cam of unknown resolution is beaten by any real source whose resolution
+    is known; otherwise the release must be provably better (is_better). An
+    upgrade grab that isn't better only gets quarantined by the sorter, so
+    without this check the hunter re-downloads same-quality copies every
+    GRAB_RETRY_HOURS forever."""
+    new_q, new_cam = detect_quality(release_name), detect_cam(release_name)
+    if owned_cam and not owned_quality:
+        return bool(new_q) and not new_cam
+    return is_better(new_q, new_cam, owned_quality, owned_cam)
