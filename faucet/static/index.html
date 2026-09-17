@@ -424,6 +424,7 @@
   .xfer .xmeta{color:var(--muted);display:flex;gap:10px;flex-wrap:wrap;}
   .xfer .xsize{color:var(--muted);font-family:var(--mono);font-size:10.5px;margin-top:4px;}
   .xfer .xact{margin-top:5px;display:flex;gap:8px;}
+  .xfer .xflag{color:var(--bad);font-size:11.5px;margin:2px 0 4px;line-height:1.35;}
   .hist-row{display:flex;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:12px;align-items:baseline;}
   .hist-row .ht{color:var(--muted);font-size:10px;white-space:nowrap;}
   .hist-row .he{font-size:10px;padding:1px 6px;border-radius:3px;border:1px solid var(--line-hi);white-space:nowrap;}
@@ -755,7 +756,8 @@ function toast(msg,kind){const t=$("toast");t.textContent=msg;t.className="toast
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));}
 function human(n){if(!n)return"0 B";const u=["B","KB","MB","GB","TB"];let i=0,v=n;while(v>=1024&&i<u.length-1){v/=1024;i++;}return v.toFixed(v<10&&i>0?1:0)+" "+u[i];}
 function csrfToken(){const m=document.cookie.match(/(?:^|;\s*)faucet_csrf=([^;]+)/);return m?decodeURIComponent(m[1]):"";}
-async function jget(u){const r=await fetch(u);if(!r.ok)throw new Error(r.status);return r.json();}
+async function jget(u){const r=await fetch(u);if(!r.ok){const d=(await r.json().catch(()=>({}))).detail;throw new Error(d?`${d} (${r.status})`:String(r.status));}return r.json();}
+function hiddenNote(n){return n?` · ${n} unsafe result${n===1?'':'s'} hidden (executable files)`:'';}
 async function jsend(u,m,b){const r=await fetch(u,{method:m,headers:{"Content-Type":"application/json","X-CSRF-Token":csrfToken()},body:b?JSON.stringify(b):undefined});if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||r.status);return r.json();}
 // deterministic hue for gradient placeholder art (no poster available)
 function hueOf(s){let h=0;for(const c of String(s||""))h=(h*31+c.charCodeAt(0))>>>0;return h%360;}
@@ -824,9 +826,9 @@ async function doSearch(){
   try{
     const d=await jget(`/api/search?q=${encodeURIComponent(q)}&cat=${$("cat").value}&limit=150`);
     allResults=d.results||[];
-    if(!allResults.length){$("status").textContent="";$("resultsTable").hidden=true;$("searchEmpty").hidden=false;$("searchEmpty").textContent="No results. Try fewer words or a different category.";return;}
+    if(!allResults.length){$("status").textContent="";$("resultsTable").hidden=true;$("searchEmpty").hidden=false;$("searchEmpty").textContent="No results. Try fewer words or a different category."+hiddenNote(d.hidden);return;}
     $("filters").hidden=false;applyFilters();
-    $("status").textContent=`${allResults.length} results`;
+    $("status").textContent=`${allResults.length} results`+hiddenNote(d.hidden);
   }catch(err){$("status").textContent="";$("searchEmpty").hidden=false;$("searchEmpty").textContent="Search failed: "+err.message;}
   finally{$("goBtn").disabled=false;}
 }
@@ -894,14 +896,14 @@ async function loadDashboard(withRails){
   const diskCls=dpct>90?"bad":dpct>78?"warn":"";
   const epPct=lib.episodes_total?Math.round(lib.episodes_have/lib.episodes_total*100):0;
 
-  let html=`<div class="tiles">
+  let html=(d.warnings||[]).map(w=>`<div class="set-warn" style="margin-bottom:10px">⚠ ${esc(w)}</div>`).join("")+`<div class="tiles">
     <div class="tile span2"><div class="k">Storage</div>
       <div class="v">${disk?esc(disk.used_h):'—'} <small>${disk?'of '+esc(disk.total_h)+' · '+dpct+'%':'unavailable'}</small></div>
       <div class="storagebar"><i class="${diskCls}" style="width:${dpct}%"></i></div>
       <div class="foot">${disk?esc(disk.free_h)+' free':''}</div></div>
     <div class="tile"><div class="k">Services</div>
       <div class="v" style="font-size:14px;flex-direction:column;align-items:flex-start;gap:6px">
-        <span class="spill ${tr.client_ok?'ok':'err'}"><i></i>Indexer</span>
+        <span class="spill ${(d.indexer&&d.indexer.configured)?'ok':'err'}"><i></i>${(d.indexer&&d.indexer.configured)?'Indexer':'Indexer not configured'}</span>
         <span class="spill ${tr.client_ok?'ok':'err'}"><i></i>${tr.client_ok?'Client':'Client offline'}</span>
       </div></div>
     ${tile("Throughput",`${esc(tr.down_h||'0 B/s')} <small>↓</small>`,`<b>${esc(tr.up_h||'0 B/s')}</b> ↑ · ${tr.downloading||0} active · ${tr.seeding||0} seeding`)}
@@ -1174,12 +1176,12 @@ async function openEpisodeSearch(sid,showTitle,season,episode,epTitle){
   catch(e){ $("epsr").innerHTML=`<div class='empty'>Search failed: ${esc(e.message)}</div>`; return; }
   const rel=d.releases||[];
   if(!rel.length){
-    $("epsr").innerHTML=`<div class='empty'>No matching releases found (${d.considered||0} results checked — non-matching titles and season packs are filtered out). Try again later; new releases appear over time.</div>`;
+    $("epsr").innerHTML=`<div class='empty'>No matching releases found (${d.considered||0} results checked — non-matching titles and season packs are filtered out${hiddenNote(d.hidden)}). Try again later; new releases appear over time.</div>`;
     return;
   }
   $("epsr").innerHTML=`
     <div class="hint" style="margin-bottom:8px">${rel.length} verified release${rel.length===1?'':'s'} for this exact episode
-      ${d.profile?` · ranked by profile <b>${esc(d.profile)}</b>`:' · ranked by seeders'}</div>
+      ${d.profile?` · ranked by profile <b>${esc(d.profile)}</b>`:' · ranked by seeders'}${hiddenNote(d.hidden)}</div>
     <table><thead><tr><th>release</th><th>size</th><th>health</th><th></th></tr></thead>
     <tbody>${rel.map((r,i)=>`<tr>
       <td class="title">${esc(r.title)}${badgeHtml(r.badges)}
@@ -1206,11 +1208,11 @@ async function openSeasonSearch(sid,showTitle,season){
   catch(e){ $("spsr").innerHTML=`<div class='empty'>Search failed: ${esc(e.message)}</div>`; return; }
   const rel=d.releases||[];
   if(!rel.length){
-    $("spsr").innerHTML=`<div class='empty'>No verified season packs found (${d.considered||0} results checked).</div>`;return;
+    $("spsr").innerHTML=`<div class='empty'>No verified season packs found (${d.considered||0} results checked${hiddenNote(d.hidden)}).</div>`;return;
   }
   $("spsr").innerHTML=`
     <div class="hint" style="margin-bottom:8px">${rel.length} verified pack${rel.length===1?'':'s'} for S${String(season).padStart(2,'0')}
-      ${d.profile?` · ranked by profile <b>${esc(d.profile)}</b>`:''}</div>
+      ${d.profile?` · ranked by profile <b>${esc(d.profile)}</b>`:''}${hiddenNote(d.hidden)}</div>
     <table><thead><tr><th>release</th><th>size</th><th>health</th><th></th></tr></thead>
     <tbody>${rel.map((r,i)=>`<tr>
       <td class="title">${esc(r.title)}${badgeHtml(r.badges)}
@@ -1700,7 +1702,7 @@ async function refreshDock(){
   if(drawerTab==="transfers"){
     try{const d=await jget("/api/transfers");const xs=d.transfers||[];
       $("drawerBody").innerHTML=xs.length?xs.map(x=>{const pct=Math.round(x.percent||0);
-        return `<div class="xfer"><div class="xt">${esc(x.name)}</div><div class="xbar"><i style="width:${pct}%"></i></div>
+        return `<div class="xfer"><div class="xt">${esc(x.name)}</div>${x.flag?`<div class="xflag">⚠ paused — suspicious: ${esc(x.flag)}. Don't open these files; remove it unless you're sure.</div>`:''}<div class="xbar"><i style="width:${pct}%"></i></div>
           <div class="xmeta"><span>${pct}%</span><span>${esc(x.status||'')}</span><span>↓${esc(x.down_h||'0/s')}</span></div>
           ${x.size?`<div class="xsize">${esc(human(x.size*(x.percent||0)/100))} of ${esc(x.size_h)}</div>`:''}
           <div class="xact"><button class="link-btn" data-pause="${x.id}">${x.status==='downloading'?'pause':'resume'}</button>
@@ -1748,6 +1750,8 @@ $("settingsBtn").addEventListener("click",async()=>{
 
     <div class="set-sec on" data-sec="conn">
       <label class="fld">Jackett URL</label><input type="text" id="st_jurl" value="${esc(env.JACKETT_URL||'')}" style="width:100%" placeholder="http://10.0.0.17:9117">
+      <label class="fld">Jackett API key ${env.JACKETT_API_KEY_SET?'<span class="pchip ok">✓ set</span>':'<span class="pchip bad">✕ not set</span>'}</label>
+      <input type="password" id="st_jkey" value="" autocomplete="off" placeholder="${env.JACKETT_API_KEY_SET?'•••••• (unchanged)':'paste from the Jackett dashboard (top right)'}" style="width:100%">
       <label class="fld">Jackett indexer</label><input type="text" id="st_jidx" value="${esc(env.JACKETT_INDEXER||'all')}" style="width:100%" placeholder="all">
       <div class="row2"><div><label class="fld">Download client</label>
         <select id="st_client" style="width:100%">${['transmission','qbittorrent','deluge'].map(k=>`<option ${env.DOWNLOAD_CLIENT===k?'selected':''}>${k}</option>`).join('')}</select></div>
@@ -1777,10 +1781,12 @@ $("settingsBtn").addEventListener("click",async()=>{
       <select id="st_rem" style="width:100%"><option value="0" ${env.REMOVE_ON_COMPLETE!=='1'?'selected':''}>off</option><option value="1" ${env.REMOVE_ON_COMPLETE==='1'?'selected':''}>on</option></select>
       <div class="row2"><div><label class="fld">Search result limit</label><input type="number" id="st_slimit" value="${esc(env.SEARCH_LIMIT||'150')}" style="width:100%"></div>
         <div><label class="fld">Request timeout (s)</label><input type="number" id="st_timeout" value="${esc(env.REQUEST_TIMEOUT||'30')}" style="width:100%"></div></div>
+      <label class="fld">Wait before hunting new episodes (days after air date) <span class="muted">(0 = on the air date; early "releases" are usually fakes)</span></label>
+      <input type="number" id="st_airdelay" min="0" max="30" value="${esc(env.AIR_DELAY_DAYS||'1')}" style="width:100%">
       <label class="fld">"Big download" warning threshold (GB)</label><input type="number" id="st_bigdl" value="${esc(env.BIG_DOWNLOAD_GB||'20')}" style="width:100%">
       <label class="fld">Notification URLs <span class="muted">(comma-separated, Apprise-style)</span></label>
       <input type="text" id="st_notify" value="${esc(env.NOTIFY_URLS||'')}" style="width:100%">
-      <label class="fld">Notify on <span class="muted">(comma-separated: completed, sorted, failed)</span></label>
+      <label class="fld">Notify on <span class="muted">(comma-separated: completed, sorted, failed, added, suspicious)</span></label>
       <input type="text" id="st_notifyon" value="${esc(env.NOTIFY_ON||'completed,sorted,failed')}" style="width:100%">
     </div>
 
@@ -1810,7 +1816,7 @@ $("settingsBtn").addEventListener("click",async()=>{
     // send currently-typed values; null fields fall back to saved config server-side
     const pw=$("st_cpass").value;
     const payload={
-      jackett_url:$("st_jurl").value.trim(), jackett_api_key:null, jackett_indexer:$("st_jidx").value.trim(),
+      jackett_url:$("st_jurl").value.trim(), jackett_api_key:$("st_jkey").value.trim()||null, jackett_indexer:$("st_jidx").value.trim(),
       client_kind:$("st_client").value, client_url:$("st_curl").value.trim(),
       client_user:$("st_cuser").value.trim(), client_pass:pw||null,
     };
@@ -1836,11 +1842,13 @@ $("settingsBtn").addEventListener("click",async()=>{
       REMOVE_ON_COMPLETE:$("st_rem").value, SEARCH_LIMIT:$("st_slimit").value,
       REQUEST_TIMEOUT:$("st_timeout").value, BIG_DOWNLOAD_GB:$("st_bigdl").value,
       NOTIFY_URLS:$("st_notify").value.trim(), NOTIFY_ON:$("st_notifyon").value.trim(),
+      AIR_DELAY_DAYS:$("st_airdelay").value,
       LIBRARY_ROOT:$("st_lib").value.trim(), DOWNLOAD_DIR:$("st_dldir").value.trim(),
       DISK_PATH:$("st_disk").value.trim(), BROWSE_ROOT:$("st_browse").value.trim(),
     };
     // only send password if the admin actually typed a new one
     const pw=$("st_cpass").value; if(pw)vals.CLIENT_PASS=pw;
+    const jk=$("st_jkey").value.trim(); if(jk)vals.JACKETT_API_KEY=jk;
     try{
       const r=await jsend("/api/settings","PATCH",{values:vals});
       if(r.warnings&&r.warnings.length){

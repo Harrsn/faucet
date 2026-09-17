@@ -40,6 +40,7 @@ except Exception:                            # noqa: BLE001 - DB is optional for
 # faucet/sort.py exit codes the hook acts on
 SORT_OK = 0
 SORT_QUARANTINED = 4
+SORT_SUSPICIOUS = 5
 
 
 def _path_size(path: str) -> int:
@@ -105,20 +106,27 @@ def main():
 
     # 1. sort — delegate to the sorter script, pointed at the completed path.
     # Exit codes (see faucet/sort.py): 0 filed, 4 filed with some content
-    # quarantined to _failed/, anything else = leave the torrent alone. The
-    # torrent is only removed on 0 or 4, because in those cases nothing of
-    # value is left inside it.
+    # quarantined to _failed/, 5 suspicious payload quarantined with its
+    # executables neutralized; anything else = leave the torrent alone. The
+    # torrent is only removed on 0, 4 or 5, because then nothing of value is
+    # left inside it.
     sorter = Path(__file__).resolve().parent / "sort.py"
     env = dict(os.environ, FAUCET_PATH=path, CASCADE_PATH=path)
     res = subprocess.run([sys.executable, str(sorter)], env=env)
     rc = res.returncode
-    if rc not in (SORT_OK, SORT_QUARANTINED):
+    if rc not in (SORT_OK, SORT_QUARANTINED, SORT_SUSPICIOUS):
         record("sort_failed", name, f"sort failed (rc={rc}); torrent left in place")
         if "failed" in config.notify_on:
             notify(config.notify_urls, "Sort failed", name)
         return rc
 
-    if rc == SORT_QUARANTINED:
+    if rc == SORT_SUSPICIOUS:
+        record("suspicious", name,
+               "executable payload with no video; quarantined to _failed/ "
+               "with executables renamed *.faucet-blocked")
+        if config.notify_urls and ({"failed", "suspicious"} & set(config.notify_on)):
+            notify(config.notify_urls, "Suspicious download quarantined", name)
+    elif rc == SORT_QUARANTINED:
         record("quarantined", name,
                "some content couldn't be filed; moved to _failed/ for review")
         if "failed" in config.notify_on:

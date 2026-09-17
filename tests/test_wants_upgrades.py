@@ -230,45 +230,45 @@ def _movie_upgrade_setup(env):
     return mid
 
 
-def test_hunter_skips_same_quality_upgrade(env):
+def test_hunter_skips_same_quality_upgrade(env, monkeypatch):
     mid = _movie_upgrade_setup(env)
     client = _Client()
-    env.SCH.make_client = lambda *a, **k: client
-    env.SCH.searchmod.search = lambda *a, **k: [
-        _release("Rags.2012.720p.BluRay.x264-OTHER", "magnet:same")]
+    monkeypatch.setattr(env.SCH, "make_client", lambda *a, **k: client)
+    monkeypatch.setattr(env.SCH.searchmod, "search", lambda *a, **k: [
+        _release("Rags.2012.720p.BluRay.x264-OTHER", "magnet:same")])
     r = env.SCH.hunt_wanted()
     assert client.added == [] and r["grabbed"] == 0
     assert "no release better than owned 720p" in r["details"][0]["error"]
     assert _count_wants(env.db, kind="movie", series_id=mid, status="wanted") == 1
 
 
-def test_hunter_grabs_a_real_upgrade(env):
+def test_hunter_grabs_a_real_upgrade(env, monkeypatch):
     _movie_upgrade_setup(env)
     client = _Client()
-    env.SCH.make_client = lambda *a, **k: client
-    env.SCH.searchmod.search = lambda *a, **k: [
+    monkeypatch.setattr(env.SCH, "make_client", lambda *a, **k: client)
+    monkeypatch.setattr(env.SCH.searchmod, "search", lambda *a, **k: [
         _release("Rags.2012.1080p.WEB-DL.x264-GRP", "magnet:better"),
-        _release("Rags.2012.720p.BluRay.x264-OTHER", "magnet:same")]
+        _release("Rags.2012.720p.BluRay.x264-OTHER", "magnet:same")])
     env.SCH.hunt_wanted()
     assert client.added == ["magnet:better"]
 
 
-def test_hunter_cam_upgrade_needs_a_real_source(env):
+def test_hunter_cam_upgrade_needs_a_real_source(env, monkeypatch):
     mk(env.lib / "movies" / "Zootopia 2 (2025)" / "Zootopia 2 2025 1080p TS EN-RGB.mp4", 2)
     env.L.scan()
     mid = env.M.add_movie(11, "Zootopia 2", 2025, None, _profile(env.db, ["1080p", "720p"]))
     assert env.M.reconcile(mid)["upgrade"] is True
     client = _Client()
-    env.SCH.make_client = lambda *a, **k: client
-    env.SCH.searchmod.search = lambda *a, **k: [
+    monkeypatch.setattr(env.SCH, "make_client", lambda *a, **k: client)
+    monkeypatch.setattr(env.SCH.searchmod, "search", lambda *a, **k: [
         _release("Zootopia.2.2025.1080p.HDTS.x264-CAMGRP", "magnet:cam"),
         _release("Zootopia.2.2025.720p.WEB-DL.x264-GRP", "magnet:720"),
-        _release("Zootopia.2.2025.1080p.WEB-DL.x264-GRP", "magnet:1080")]
+        _release("Zootopia.2.2025.1080p.WEB-DL.x264-GRP", "magnet:1080")])
     env.SCH.hunt_wanted()
     assert client.added == ["magnet:1080"]
 
 
-def test_hunter_episode_upgrade_filter(env):
+def test_hunter_episode_upgrade_filter(env, monkeypatch):
     mk(env.lib / "tvshows" / "Show" / "Season 01" / "Show.S01E01.720p.WEB-DL.mkv", 2)
     env.L.scan()
     sid = _series(env.db, "Show", _profile(env.db, ["1080p", "720p"]))
@@ -279,14 +279,14 @@ def test_hunter_episode_upgrade_filter(env):
     # the series side upgrades against the profile's first resolution
     assert env.S.reconcile(sid)["upgrades"] == 1
     client = _Client()
-    env.SCH.make_client = lambda *a, **k: client
-    env.SCH.searchmod.search = lambda *a, **k: [
-        _release("Show.S01E01.720p.HDTV.x264-OTHER", "magnet:same")]
+    monkeypatch.setattr(env.SCH, "make_client", lambda *a, **k: client)
+    monkeypatch.setattr(env.SCH.searchmod, "search", lambda *a, **k: [
+        _release("Show.S01E01.720p.HDTV.x264-OTHER", "magnet:same")])
     env.SCH.hunt_wanted()
     assert client.added == []
-    env.SCH.searchmod.search = lambda *a, **k: [
+    monkeypatch.setattr(env.SCH.searchmod, "search", lambda *a, **k: [
         _release("Show.S01E01.720p.HDTV.x264-OTHER", "magnet:same"),
-        _release("Show.S01E01.1080p.WEB-DL.x264-GRP", "magnet:better")]
+        _release("Show.S01E01.1080p.WEB-DL.x264-GRP", "magnet:better")])
     env.SCH.hunt_wanted()
     assert client.added == ["magnet:better"]
 

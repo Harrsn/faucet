@@ -30,8 +30,15 @@ import os
 from datetime import datetime
 
 from . import db
-from .config import config
+from . import config as _cfgmod
 from .clients import make_client, DownloadClientError
+
+def _cfg():
+    """The live config. Settings saves swap `faucet.config.config` for a new
+    object (config.reload); binding it at import time left the scheduler
+    hunting with whatever was configured when the process started."""
+    return _cfgmod.config
+
 
 log = logging.getLogger("faucet.stalls")
 
@@ -105,9 +112,9 @@ def check() -> dict:
     removed corpse frees its client slot for the same tick's re-hunt."""
     result = {"checked": 0, "stalled": [], "flipped": 0, "errors": []}
     try:
-        client = make_client(config.client_kind, config.client_url,
-                             config.client_user, config.client_pass,
-                             config.request_timeout)
+        client = make_client(_cfg().client_kind, _cfg().client_url,
+                             _cfg().client_user, _cfg().client_pass,
+                             _cfg().request_timeout)
         transfers = client.list_transfers()
     except Exception as e:                             # noqa: BLE001
         result["errors"].append(f"client unreachable: {e}")
@@ -172,10 +179,10 @@ def check() -> dict:
                        f"{t.percent:.1f}%; {flipped} want(s) re-queued")
         log.warning("STALLED: removed '%s' (%.1f%%), re-queued %d want(s)",
                     t.name, t.percent, flipped)
-        if "failed" in config.notify_on:
+        if "failed" in _cfg().notify_on:
             try:
                 from .notify import notify
-                notify(config.notify_urls, "Stalled download removed",
+                notify(_cfg().notify_urls, "Stalled download removed",
                        f"{t.name} ({t.percent:.1f}%) — will retry a different release")
             except Exception:                        # noqa: BLE001
                 pass

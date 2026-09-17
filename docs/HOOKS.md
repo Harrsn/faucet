@@ -105,6 +105,11 @@ Two things make this setup work cleanly:
   overwrite each other (numbered `CD1`/`CD2` parts become `- pt1`/`- pt2`).
 - **Subtitles keep their tags** (`Movie (2019).en.forced.srt`), including
   RARBG-style `Subs/` folders.
+- **Executable "releases" are quarantined and defused.** A media download
+  whose payload is executables with no video (a common bait for brand-new
+  episodes) is moved to `_failed/` with every executable renamed
+  `*.faucet-blocked`, so it can't be launched from the share. The live guard
+  normally catches these earlier and pauses them — see "Fake releases" below.
 - **Anything that can't be filed is quarantined, not deleted.** When the release
   is being consumed (`MEDIASORT_MODE=move` or `REMOVE_ON_COMPLETE=1`), leftover
   content — unparseable files, lower-quality duplicates, disc images, archives —
@@ -117,8 +122,29 @@ The sorter's exit code tells the hook what's safe:
 |----|---------|------------------|
 | 0 | Everything of value filed (or left seeding) | yes, if `REMOVE_ON_COMPLETE=1` |
 | 4 | Filed; some content quarantined to `_failed/` | yes — nothing is left inside it |
+| 5 | Suspicious (executables, no video); quarantined and defused | yes — nothing is left inside it |
 | 2 | I/O error; release left in place for retry | no |
 | 1 | Library not mounted / no input | no |
+
+## Fake releases
+
+Faucet checks every download three times:
+
+1. **Before grabbing** — search results and hunter candidates whose name is an
+   executable (`Show.S01E01.1080p.exe`) are dropped (`BLOCK_EXECUTABLE_RELEASES`).
+   Hidden counts show up next to search results.
+2. **While downloading** — every `GUARD_INTERVAL_SECONDS` (60) Faucet reads each
+   torrent's file list once its metadata arrives. A media torrent whose files are
+   executables with no video is **paused**, flagged in Activity → Transfers and
+   on the dashboard, recorded as a `suspicious` event, and notified when
+   `failed` or `suspicious` is in `NOTIFY_ON`. The release is never grabbed
+   again and the episode goes back to wanted. Faucet never deletes it: remove it
+   yourself, or resume it if you're sure (the guard won't pause it twice).
+   Games and software are exempt.
+3. **After downloading** — the sorter backstop above (exit code 5).
+
+New episodes also aren't hunted until `AIR_DELAY_DAYS` (default 1) after their
+air date: bait uploads appear hours before a broadcast, real ones after it.
 
 ## Catch-up sweep (safety net)
 

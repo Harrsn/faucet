@@ -26,6 +26,12 @@ class SearchError(Exception):
     pass
 
 
+class Results(list):
+    """Search results; `hidden` counts releases dropped as unsafe
+    (faucet.safety.filter_release_names)."""
+    hidden: int = 0
+
+
 def human_size(n: int) -> str:
     f = float(n)
     for unit in ("B", "KB", "MB", "GB", "TB"):
@@ -102,7 +108,7 @@ def indexers(jackett_url: str, api_key: str, timeout: int = 15) -> list[dict]:
 
 
 def search(jackett_url: str, api_key: str, indexer: str, query: str,
-           category: str, limit: int, timeout: int = 30) -> list[dict]:
+           category: str, limit: int, timeout: int = 30) -> Results:
     if not api_key:
         raise SearchError("Indexer API key not configured.")
     cat = CATS.get(category, "")
@@ -119,6 +125,11 @@ def search(jackett_url: str, api_key: str, indexer: str, query: str,
         root = ET.fromstring(r.content)
     except ET.ParseError as e:
         raise SearchError(f"Bad XML from indexer: {e}")
+    if root.tag == "error":
+        # Torznab reports failures (bad API key, disabled indexer) as HTTP 200
+        # with an <error> document — previously read as "no results"
+        raise SearchError(f"Indexer error {root.get('code', '?')}: "
+                          f"{root.get('description', 'unknown')}")
 
     results = []
     for item in root.iter("item"):
@@ -154,5 +165,9 @@ def search(jackett_url: str, api_key: str, indexer: str, query: str,
             "ctype": klass["type"], "platform": klass["platform"],
             "category": cat_num,
         })
-    results.sort(key=lambda x: x["seeders"], reverse=True)
-    return results[:limit]
+    from .safety import filter_release_names
+    kept, hidden = filter_release_names(results)
+    kept.sort(key=lambda x: x["seeders"], reverse=True)
+    out = Results(kept[:limit])
+    out.hidden = hidden
+    return out
