@@ -21,8 +21,15 @@ from datetime import datetime
 from . import db
 from . import search as searchmod
 from . import profiles as prof
-from .config import config
+from . import config as _cfgmod
 from .clients import make_client, DownloadClientError
+
+def _cfg():
+    """The live config. Settings saves swap `faucet.config.config` for a new
+    object (config.reload); binding it at import time left the scheduler
+    hunting with whatever was configured when the process started."""
+    return _cfgmod.config
+
 
 log = logging.getLogger("faucet.scheduler")
 
@@ -81,8 +88,8 @@ def check_subscription(sub: dict) -> dict:
 
     try:
         results = searchmod.search(
-            config.jackett_url, config.jackett_api_key, config.jackett_indexer,
-            query, "all", config.search_limit, config.request_timeout)
+            _cfg().jackett_url, _cfg().jackett_api_key, _cfg().jackett_indexer,
+            query, "all", _cfg().search_limit, _cfg().request_timeout)
     except searchmod.SearchError as e:
         result["error"] = f"search failed: {e}"
         return result
@@ -110,9 +117,9 @@ def check_subscription(sub: dict) -> dict:
         return result  # someone/another tick grabbed it between search and now
 
     try:
-        client = make_client(config.client_kind, config.client_url,
-                             config.client_user, config.client_pass, config.request_timeout)
-        add = client.add(pick["href"], config.download_dir or None)
+        client = make_client(_cfg().client_kind, _cfg().client_url,
+                             _cfg().client_user, _cfg().client_pass, _cfg().request_timeout)
+        add = client.add(pick["href"], _cfg().download_dir or None)
         result["grabbed"] = pick["title"]
         db.add_history("added", pick["title"], f"auto-grab: {title}")
         db.update_subscription(
@@ -140,8 +147,8 @@ def _try_season_pack(title, season, profile):
     query = f"{title} S{int(season):02d}"
     try:
         results = searchmod.search(
-            config.jackett_url, config.jackett_api_key, config.jackett_indexer,
-            query, "all", config.search_limit, config.request_timeout)
+            _cfg().jackett_url, _cfg().jackett_api_key, _cfg().jackett_indexer,
+            query, "all", _cfg().search_limit, _cfg().request_timeout)
     except searchmod.SearchError:
         return None
     candidates = []
@@ -177,14 +184,22 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
     from . import series as series_mod
     db.init()
 
+    if not (_cfg().jackett_url and _cfg().jackett_api_key):
+        # every search would fail the same way; say so once instead of
+        # silently failing hundreds of wants
+        log.warning("Hunt skipped: indexer not configured (Jackett URL/API key "
+                    "missing — Settings → Connections).")
+        return {"wanted": 0, "grabbed": 0, "details": [],
+                "skipped_reason": "indexer not configured"}
+
     max_active = int(os.environ.get("HUNT_MAX_ACTIVE", "5"))
     max_per_run = max_override if max_override is not None else int(os.environ.get("HUNT_MAX_PER_RUN", "3"))
 
     # how many torrents are already downloading right now?
     active = 0
     try:
-        client0 = make_client(config.client_kind, config.client_url,
-                             config.client_user, config.client_pass, config.request_timeout)
+        client0 = make_client(_cfg().client_kind, _cfg().client_url,
+                             _cfg().client_user, _cfg().client_pass, _cfg().request_timeout)
         active = sum(1 for t in client0.list_transfers()
                      if getattr(t, "status", "") == "downloading")
     except Exception:                            # noqa: BLE001
@@ -223,6 +238,8 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
                 continue
             if (w.get("reason") or "missing") != "missing":
                 continue                     # upgrades hunt per-episode only
+            if not _episode_eligible(w):
+                continue                     # aired too recently (AIR_DELAY_DAYS)
             # drop stale wants for episodes already on disk (see per-episode
             # ownership check below) so they can't inflate a season into
             # pack-worthiness
@@ -234,7 +251,7 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
                     c.execute("DELETE FROM wanted WHERE id=?", (w["id"],))
                 continue
             by_season[(w["series_id"], w["season"])].append(w)
-        today = datetime.now().date().isoformat()
+        cutoff = series_mod.hunt_cutoff()
         for (sid, season), eps in by_season.items():
             if grabbed >= budget:
                 break
@@ -248,7 +265,7 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
                 row = c.execute(
                     "SELECT COUNT(*) AS n FROM series_episodes WHERE series_id=? "
                     "AND season=? AND air_date != '' AND air_date <= ?",
-                    (sid, season, today)).fetchone()
+                    (sid, season, cutoff)).fetchone()
             aired = row["n"] if row else 0
             owned = max(0, aired - len(eps))
             if aired <= 0 or owned > max(1, aired // 10):
@@ -260,9 +277,9 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
             if not db.mark_grabbed(pack["title"], None):
                 continue
             try:
-                client = make_client(config.client_kind, config.client_url,
-                                     config.client_user, config.client_pass, config.request_timeout)
-                client.add(pack["href"], config.download_dir or None)
+                client = make_client(_cfg().client_kind, _cfg().client_url,
+                                     _cfg().client_user, _cfg().client_pass, _cfg().request_timeout)
+                client.add(pack["href"], _cfg().download_dir or None)
                 grabbed += 1
                 db.add_history("added", pack["title"], f"season pack: {title} S{int(season):02d} ({len(eps)} eps)")
                 # mark every wanted episode in this season as grabbed-by-pack
@@ -281,7 +298,9 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
                     c.execute("DELETE FROM grabbed WHERE title=?", (pack["title"],))
                 details.append({"want": f"{title} S{int(season):02d} (pack)",
                                 "reason": "pack", "grabbed": None, "error": f"add failed: {e}"})
+                _grab_failed(pack["title"], f"{title} S{int(season):02d} pack", e)
 
+    search_errors: list[str] = []
     for w in wanted:
         if grabbed >= budget:
             break
@@ -311,6 +330,8 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
             season, episode = w.get("season"), w.get("episode")
             if not title or season is None or episode is None:
                 continue
+            if not _episode_eligible(w):
+                continue                     # aired too recently (AIR_DELAY_DAYS)
             # last-second ownership check against the live library inventory —
             # the wanted table can be stale (a want flipped back by the stall
             # handler, or rows created during a NAS-mount hiccup). Grabbing is
@@ -328,11 +349,12 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
         res = {"want": query, "reason": w.get("reason"), "grabbed": None, "error": None}
         try:
             results = searchmod.search(
-                config.jackett_url, config.jackett_api_key, config.jackett_indexer,
-                query, "all", config.search_limit, config.request_timeout)
+                _cfg().jackett_url, _cfg().jackett_api_key, _cfg().jackett_indexer,
+                query, "all", _cfg().search_limit, _cfg().request_timeout)
         except searchmod.SearchError as e:
             res["error"] = f"search failed: {e}"
             details.append(res)
+            search_errors.append(str(e))
             continue
 
         fresh = [r for r in results if not db.already_grabbed(r["title"])]
@@ -389,9 +411,9 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
             details.append(res)
             continue
         try:
-            client = make_client(config.client_kind, config.client_url,
-                                 config.client_user, config.client_pass, config.request_timeout)
-            client.add(pick["href"], config.download_dir or None)
+            client = make_client(_cfg().client_kind, _cfg().client_url,
+                                 _cfg().client_user, _cfg().client_pass, _cfg().request_timeout)
+            client.add(pick["href"], _cfg().download_dir or None)
             res["grabbed"] = pick["title"]
             grabbed += 1
             db.add_history("added", pick["title"], f"hunt: {query} ({w.get('reason')})")
@@ -406,14 +428,41 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
             res["error"] = f"add failed: {e}"
             with db.connect() as c:
                 c.execute("DELETE FROM grabbed WHERE title=?", (pick["title"],))
+            _grab_failed(pick["title"], query, e)
         details.append(res)
+    if search_errors:
+        log.warning("Hunt: %d search(es) failed this pass (first: %s)",
+                    len(search_errors), search_errors[0])
     return {"wanted": len(wanted), "grabbed": grabbed, "details": details}
+
+
+def _grab_failed(release: str, context: str, err: Exception) -> None:
+    """A grab the client refused. It used to vanish without a trace (F33)."""
+    log.warning("Hunt add failed for '%s' (%s): %s", release, context, err)
+    try:
+        db.add_history("grab_failed", release, f"{context}: {err}")
+    except Exception:                            # noqa: BLE001
+        pass
+
+
+def _episode_eligible(w: dict) -> bool:
+    """Has this episode want's air date passed AIR_DELAY_DAYS? A want created
+    before the delay was configured (or before the episode's date moved)
+    must not be hunted early either."""
+    from . import series as series_mod
+    with db.connect() as c:
+        row = c.execute("SELECT air_date FROM series_episodes WHERE series_id=? "
+                        "AND season=? AND episode=?",
+                        (w.get("series_id"), w.get("season"), w.get("episode"))).fetchone()
+    if row is None:
+        return True                          # not in the canonical list: nothing to gate on
+    return series_mod.hunt_eligible(row["air_date"])
 
 
 def _notify_grab(release_title: str, context: str,
                  series_id=None, movie_id=None) -> None:
     """Poster-embedded grab notification (when 'added' is in NOTIFY_ON)."""
-    if "added" not in config.notify_on or not config.notify_urls:
+    if "added" not in _cfg().notify_on or not _cfg().notify_urls:
         return
     poster = None
     try:
@@ -431,7 +480,7 @@ def _notify_grab(release_title: str, context: str,
         poster = None
     try:
         from .notify import notify
-        notify(config.notify_urls, f"Grabbed · {context}", release_title, poster)
+        notify(_cfg().notify_urls, f"Grabbed · {context}", release_title, poster)
     except Exception:                            # noqa: BLE001
         pass
 
@@ -477,6 +526,13 @@ def run_once() -> dict:
         details.append(r)
         if r["grabbed"]:
             grabbed += 1
+
+    # 1b. fake-release guard (also runs on its own fast loop)
+    try:
+        from . import safety
+        safety.check_transfers()
+    except Exception as e:                       # noqa: BLE001 - never kill the tick
+        log.warning("Safety check error: %s", e)
 
     # 2. stalled-download handling: remove dead torrents FIRST so their client
     # slots are free for this same tick's hunt, and their wants re-queue now
@@ -555,15 +611,35 @@ async def _loop():
         await asyncio.sleep(INTERVAL)
 
 
+GUARD_INTERVAL = int(os.environ.get("GUARD_INTERVAL_SECONDS", "60"))
+_guard_task: asyncio.Task | None = None
+
+
+async def _guard_loop():
+    """Payload check on a short cadence: a 1 GB fake finishes in a couple of
+    minutes, far inside the main tick interval."""
+    from . import safety
+    await asyncio.sleep(15)
+    while True:
+        try:
+            await asyncio.to_thread(safety.check_transfers)
+        except Exception as e:                       # noqa: BLE001 - never kill the loop
+            log.warning("Safety guard error: %s", e)
+        await asyncio.sleep(GUARD_INTERVAL)
+
+
 def start():
-    global _task
+    global _task, _guard_task
     if _task is None or _task.done():
         _task = asyncio.create_task(_loop())
+    if GUARD_INTERVAL > 0 and (_guard_task is None or _guard_task.done()):
+        _guard_task = asyncio.create_task(_guard_loop())
     return _task
 
 
 def stop():
-    global _task
-    if _task and not _task.done():
-        _task.cancel()
-        _task = None
+    global _task, _guard_task
+    for t in (_task, _guard_task):
+        if t and not t.done():
+            t.cancel()
+    _task = _guard_task = None

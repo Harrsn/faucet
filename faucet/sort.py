@@ -30,11 +30,13 @@ Safety model (every rule here exists because its absence lost data):
     moved to a quarantine dir (default: <release parent>/_failed, which the
     sweep skips) instead of being deleted with the torrent.
 
-Exit codes (the hook only removes the torrent on 0 or 4):
+Exit codes (the hook only removes the torrent on 0, 4 or 5):
   0  done; everything of value was filed (or the release is left seeding)
   1  fatal before any work (no inputs, library not mounted)
   2  transient failure; the release was left in place so it can be retried
   4  done; some content was quarantined for review
+  5  suspicious: a media release that is only executables — quarantined with
+     its executables renamed '*.faucet-blocked' (see faucet/safety.py)
 
 Env:
   LIBRARY_ROOT / MEDIA_ROOT   library root (default /library)
@@ -108,6 +110,7 @@ EXIT_OK = 0
 EXIT_FATAL = 1
 EXIT_RETRY = 2
 EXIT_QUARANTINED = 4
+EXIT_SUSPICIOUS = 5
 
 VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".m4v", ".mov", ".wmv", ".ts", ".m2ts"}
 SUB_EXTS = {".srt", ".ass", ".ssa", ".sub", ".idx", ".vtt"}
@@ -677,13 +680,13 @@ def quarantine_dir(root: Path) -> Path:
     return Path(explicit) if explicit else root.parent / QUARANTINE_NAME
 
 
-def quarantine(root: Path) -> bool:
+def quarantine(root: Path) -> Path | None:
     """Move a whole release (dir or file) into the quarantine dir, intact.
-    Returns False if it couldn't be moved (the caller must then not let the
-    hook delete it)."""
+    Returns where it went, or None if it couldn't be moved (the caller must
+    then not let the hook delete it)."""
     if not _safe_to_remove(root):
         logging.error("refusing to quarantine %s", root)
-        return False
+        return None
     base = quarantine_dir(root)
     target = base / root.name
     n = 2
@@ -704,9 +707,9 @@ def quarantine(root: Path) -> bool:
                 root.unlink()
     except OSError as e:
         logging.error("QUARANTINE FAILED for %s: %s", root, e)
-        return False
+        return None
     logging.warning("QUARANTINED %s -> %s", root.name, target)
-    return True
+    return target
 
 
 def _consumed(handled: set) -> bool:
@@ -744,7 +747,7 @@ def _finish(root: Path, handled: set, unfiled: list, dry: bool) -> int:
     for p in valuable:
         if not any(p == u for u, _ in unfiled):
             logging.warning("NOT FILED %s: no rule for this file", p.name)
-    return EXIT_QUARANTINED if quarantine(root) else EXIT_RETRY
+    return EXIT_QUARANTINED if quarantine(root) is not None else EXIT_RETRY
 
 
 # ----------------------------------------------------------------------------
@@ -891,11 +894,45 @@ def sort_video_release(root: Path, dry: bool) -> int:
     return _finish(root, handled, unfiled, dry)
 
 
+def suspicious_reason(root: Path, ctype: str | None) -> str | None:
+    """A media release whose payload is executables with no video."""
+    if ctype == "game":
+        return None
+    try:
+        from faucet.safety import payload_problem
+    except Exception:                            # noqa: BLE001 - standalone
+        return None
+    rels = [str(p.relative_to(root)) if root.is_dir() else p.name for p in _files(root)]
+    return payload_problem(rels)
+
+
+def quarantine_suspicious(root: Path, reason: str, dry: bool) -> int:
+    logging.warning("SUSPICIOUS release %s: %s", root.name, reason)
+    if dry:
+        return EXIT_SUSPICIOUS
+    if not (MODE == "move" or _truthy("REMOVE_ON_COMPLETE")):
+        return EXIT_SUSPICIOUS                    # still seeding; the guard paused it
+    try:
+        from faucet.safety import neutralize
+    except Exception:                            # noqa: BLE001
+        neutralize = None
+    moved = quarantine(root)
+    if moved is None:
+        return EXIT_RETRY
+    if neutralize:
+        for p in neutralize(moved):
+            logging.warning("neutralized %s", p)
+    return EXIT_SUSPICIOUS
+
+
 def sort_release(root: Path, dry: bool) -> int:
     if not root.exists():
         logging.warning("Input not found: %s", root)
         return EXIT_RETRY
     ctype, platform = _classify(root)
+    reason = suspicious_reason(root, ctype)
+    if reason:
+        return quarantine_suspicious(root, reason, dry)
     if release_is_game(root, ctype):
         try:
             outcome = handle_game(root, platform, dry)
@@ -969,7 +1006,7 @@ def resolve_inputs(args):
     return []
 
 
-_SEVERITY = {EXIT_OK: 0, EXIT_QUARANTINED: 1, EXIT_RETRY: 2}
+_SEVERITY = {EXIT_OK: 0, EXIT_QUARANTINED: 1, EXIT_SUSPICIOUS: 2, EXIT_RETRY: 3}
 
 
 def main() -> int:
@@ -992,7 +1029,7 @@ def main() -> int:
     rc = EXIT_OK
     for root in inputs:
         r = sort_release(root, dry)
-        if _SEVERITY.get(r, 2) > _SEVERITY.get(rc, 2):
+        if _SEVERITY.get(r, 3) > _SEVERITY.get(rc, 3):
             rc = r
     logging.info("Done: rc=%d (mode=%s, dry=%s).", rc, MODE, dry)
     return rc

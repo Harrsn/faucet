@@ -30,6 +30,26 @@ _RES_RANK = {"2160p": 4, "1080p": 3, "720p": 2, "480p": 1, None: 0, "": 0}
 GRAB_RETRY_HOURS = int(os.environ.get("GRAB_RETRY_HOURS", "48"))
 
 
+def air_delay_days() -> int:
+    """AIR_DELAY_DAYS: whole days after an episode's air date before it is
+    hunted (default 1). TMDb only gives dates, so 0 means 'from the air date'
+    — which races the broadcast and invites fake early releases."""
+    try:
+        return max(0, int(os.environ.get("AIR_DELAY_DAYS", "1")))
+    except ValueError:
+        return 1
+
+
+def hunt_cutoff() -> str:
+    """Latest air date (YYYY-MM-DD) that is eligible for hunting today."""
+    from datetime import timedelta
+    return (datetime.now().date() - timedelta(days=air_delay_days())).isoformat()
+
+
+def hunt_eligible(air_date: str | None) -> bool:
+    return bool(air_date) and air_date <= hunt_cutoff()
+
+
 def add_series(tmdb_id: int, title: str, year: int | None, poster: str | None,
                profile_id: int | None = None) -> int:
     """Start monitoring a series. Pulls its episode list immediately."""
@@ -141,13 +161,13 @@ def reconcile(series_id: int) -> dict:
             (series_id,)).fetchall()
 
     missing = upgrades = have = 0
-    today = datetime.now().date().isoformat()
     for ep in canonical:
         season, episode = ep["season"], ep["episode"]
-        # skip episodes that haven't aired yet — including ones with NO air
-        # date (TBA / unannounced): hunting those searches forever for
-        # releases that can't exist
-        if not ep["air_date"] or ep["air_date"] > today:
+        # skip episodes that haven't aired (or aired too recently: real
+        # releases lag the broadcast and early "releases" are fakes) —
+        # including ones with NO air date (TBA / unannounced), which would
+        # search forever for releases that can't exist
+        if not hunt_eligible(ep["air_date"]):
             continue
         # 'future' mode: skip episodes that aired before the show was added
         if cutoff and ep["air_date"] and ep["air_date"] < cutoff:

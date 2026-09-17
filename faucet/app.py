@@ -196,13 +196,17 @@ class TorrentAction(BaseModel):
 def api_search(q: str = Query(..., min_length=1), cat: str = Query("all"),
                limit: int = Query(None)):
     lim = limit or cfg().search_limit
+    if not (cfg().jackett_url and cfg().jackett_api_key):
+        raise HTTPException(503, "Indexer not configured — set the Jackett URL and "
+                                 "API key in Settings → Connections.")
     try:
         results = searchmod.search(cfg().jackett_url, cfg().jackett_api_key,
                                    cfg().jackett_indexer, q, cat, lim,
                                    cfg().request_timeout)
     except searchmod.SearchError as e:
         raise HTTPException(502, str(e))
-    return {"query": q, "category": cat, "total": len(results), "results": results}
+    return {"query": q, "category": cat, "total": len(results), "results": results,
+            "hidden": getattr(results, "hidden", 0)}
 
 
 @app.post("/api/add")
@@ -243,14 +247,21 @@ def api_transfers():
         xs = client().list_transfers()
     except DownloadClientError as e:
         raise HTTPException(502, str(e))
+    try:
+        from . import safety
+        flagged = safety.flags()
+    except Exception:                            # noqa: BLE001 - never break the list
+        flagged = {}
     out = []
     for t in xs:
+        f = flagged.get(str(t.id))
         out.append({
             "id": t.id, "name": t.name, "percent": t.percent,
             "down_h": searchmod.human_size(t.down_rate) + "/s",
             "status": t.status, "eta_h": _fmt_eta(t.eta), "ratio": t.ratio,
             "size": t.size,
             "size_h": searchmod.human_size(t.size), "error": t.error, "done": t.done,
+            "flag": f["reason"] if f and f.get("name") == t.name else None,
         })
     out.sort(key=lambda x: (x["done"], -x["percent"]))
     return {"transfers": out}
@@ -318,6 +329,28 @@ def api_stats():
     return out
 
 
+def config_warnings(client_ok: bool | None = None) -> list[str]:
+    """Problems that silently stop Faucet from working. Cheap: no network."""
+    c = cfg()
+    w = []
+    if not c.jackett_url or not c.jackett_api_key:
+        w.append("Jackett API key is not set — search and hunting are disabled. "
+                 "Settings → Connections.")
+    if not c.client_url:
+        w.append("No download client URL configured. Settings → Connections.")
+    elif client_ok is False:
+        w.append(f"Download client ({c.client_kind}) is unreachable.")
+    try:
+        from . import safety
+        n = len(safety.flags())
+        if n:
+            w.append(f"{n} suspicious download{'s' if n != 1 else ''} paused for review "
+                     "(Activity → Transfers).")
+    except Exception:                            # noqa: BLE001
+        pass
+    return w
+
+
 @app.get("/api/dashboard")
 def api_dashboard():
     """Consolidated admin overview: storage, live activity, library health,
@@ -360,6 +393,8 @@ def api_dashboard():
     except DownloadClientError:
         client_ok = False
     active.sort(key=lambda a: a["down_rate"], reverse=True)
+    out["indexer"] = {"configured": bool(cfg().jackett_url and cfg().jackett_api_key)}
+    out["warnings"] = config_warnings(client_ok=client_ok)
     out["transfers"] = {
         "active": active[:8], "active_count": len(active),
         "downloading": downloading, "seeding": seeding,
@@ -617,8 +652,10 @@ def api_settings_get():
         # metadata / ui
         "UI_THEME": c.ui_theme, "APP_TITLE": c.app_title,
     }
-    # CLIENT_PASS is editable but never returned; show only whether one is set.
+    env_view["AIR_DELAY_DAYS"] = os.environ.get("AIR_DELAY_DAYS", "1")
+    # secrets are editable but never returned; show only whether one is set.
     env_view["CLIENT_PASS_SET"] = bool(c.client_pass)
+    env_view["JACKETT_API_KEY_SET"] = bool(c.jackett_api_key)
     # live status of each path (exists / writable inside the container)
     path_status = {k: _path_status(env_view.get(k, "")) for k in PATH_KEYS}
     return {"env": env_view, "db": db.all_settings(),
@@ -658,6 +695,16 @@ def api_settings_patch(p: SettingsPatch):
                                     f"(is it mounted?). Saved anyway.")
                 elif not st["writable"]:
                     warnings.append(f"{k}: '{v}' exists but isn't writable. Saved anyway.")
+            if k == "AIR_DELAY_DAYS":
+                try:
+                    days = int(str(v).strip())
+                    if not 0 <= days <= 30:
+                        raise ValueError
+                except ValueError:
+                    warnings.append(f"AIR_DELAY_DAYS: '{v}' must be a whole number "
+                                    "from 0 to 30. Not saved.")
+                    continue
+                v = str(days)
             env_updates[k] = v
         else:
             db_updates[k] = v
@@ -953,7 +1000,8 @@ def api_episode_releases(sid: int, season: int, episode: int):
         out.append(rr)
     out.sort(key=lambda x: (not x["_passes"], -x["_score"], -x.get("seeders", 0)))
     return {"query": query, "profile": profile["name"] if profile else None,
-            "considered": len(results), "releases": out}
+            "considered": len(results), "releases": out,
+            "hidden": getattr(results, "hidden", 0)}
 
 
 @app.get("/api/series/{sid}/seasons/{season}/releases")
@@ -992,7 +1040,8 @@ def api_season_releases(sid: int, season: int):
         out.append(rr)
     out.sort(key=lambda x: (not x["_passes"], -x["_score"], -x.get("seeders", 0)))
     return {"query": query, "profile": profile["name"] if profile else None,
-            "considered": len(results), "releases": out}
+            "considered": len(results), "releases": out,
+            "hidden": getattr(results, "hidden", 0)}
 
 
 @app.post("/api/series/{sid}/seasons/{season}/grab")
@@ -1136,7 +1185,8 @@ def health(request: _Request):
     user = _auth.session_user(request.cookies.get(_auth.SESSION_COOKIE))
     if not user or user.get("role") != "admin":
         return {"status": "ok"}
-    status = {"status": "ok", "indexer": "unknown", "client": "unknown"}
+    status = {"status": "ok", "indexer": "unknown", "client": "unknown",
+              "warnings": config_warnings()}
     try:
         import requests
         requests.get(f"{cfg().jackett_url}/", timeout=5)
