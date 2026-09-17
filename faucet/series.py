@@ -181,31 +181,11 @@ def reconcile(series_id: int) -> dict:
 
 def _add_wanted(series_id: int, season: int, episode: int, title: str, reason: str) -> None:
     """Upsert one episode want keyed on (series, season, episode) — NOT on the
-    episode title, which TMDb can rename between refreshes (the old title-keyed
-    UNIQUE constraint duplicated wants when that happened). A row stuck in
+    episode title, which TMDb can rename between refreshes. A row stuck in
     'grabbed' with nothing on disk is flipped back to 'wanted' after
     GRAB_RETRY_HOURS so a failed download eventually retries."""
-    from datetime import timedelta
-    with db.connect() as c:
-        row = c.execute(
-            "SELECT id, status, last_search FROM wanted WHERE kind='episode' "
-            "AND series_id=? AND season=? AND episode=?",
-            (series_id, season, episode)).fetchone()
-        if row is None:
-            c.execute(
-                "INSERT INTO wanted (kind, series_id, season, episode, title, reason, status) "
-                "VALUES ('episode',?,?,?,?,?,'wanted')",
-                (series_id, season, episode, title or "", reason))
-            return
-        if row["status"] == "wanted":
-            c.execute("UPDATE wanted SET reason=?, title=? WHERE id=?",
-                      (reason, title or "", row["id"]))
-        elif row["status"] == "grabbed":
-            retry_before = (datetime.now()
-                            - timedelta(hours=GRAB_RETRY_HOURS)).isoformat(timespec="seconds")
-            if not row["last_search"] or row["last_search"] < retry_before:
-                c.execute("UPDATE wanted SET status='wanted', reason=?, title=? WHERE id=?",
-                          (reason, title or "", row["id"]))
+    from . import wants
+    wants.upsert("episode", series_id, season, episode, title, reason, GRAB_RETRY_HOURS)
 
 
 def _clear_wanted(series_id: int, season: int, episode: int,

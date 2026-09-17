@@ -11,6 +11,7 @@ WAL mode for concurrent reads. Schema is created/migrated idempotently on init.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -18,6 +19,8 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .config import config
+
+log = logging.getLogger("faucet.db")
 
 _lock = threading.Lock()
 _initialized = False
@@ -302,15 +305,41 @@ def _migrate(c) -> None:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
         except Exception:                        # noqa: BLE001 - table may not exist yet
             pass
-    # Older DBs keyed `wanted` on (…, title): a TMDb episode retitle then
-    # duplicated the want and it was hunted twice. Collapse such duplicates,
-    # keeping the earliest row per (kind, series_id, season, episode).
+    _migrate_wanted_key(c)
+
+
+def _migrate_wanted_key(c) -> None:
+    """Enforce one want per (kind, series_id, season, episode).
+
+    Older DBs keyed `wanted` on (..., title), so a TMDb episode retitle
+    duplicated the want and it was hunted twice. Even the current UNIQUE
+    constraint never covered movies: their season/episode are NULL, and SQLite
+    treats NULLs in a UNIQUE constraint as distinct. An expression index with
+    IFNULL() closes both holes without rebuilding the table — the old
+    title-keyed constraint is a superset key, so it never rejects anything the
+    new index allows.
+
+    Duplicates are collapsed first (the index can't be built over them),
+    keeping the row most likely to reflect reality: an in-flight grab over a
+    plain want, then the most recently searched, then the oldest.
+    """
     try:
         c.execute(
-            "DELETE FROM wanted WHERE id NOT IN ("
-            "  SELECT MIN(id) FROM wanted GROUP BY kind, series_id, season, episode)")
-    except Exception:                            # noqa: BLE001
-        pass
+            "DELETE FROM wanted WHERE id IN ("
+            "  SELECT id FROM ("
+            "    SELECT id, ROW_NUMBER() OVER ("
+            "      PARTITION BY kind, IFNULL(series_id, -1), IFNULL(season, -1), IFNULL(episode, -1)"
+            "      ORDER BY (status = 'grabbed') DESC, IFNULL(last_search, '') DESC, id"
+            "    ) AS rn FROM wanted"
+            "  ) WHERE rn > 1)")
+        c.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_wanted_key ON wanted ("
+            "kind, IFNULL(series_id, -1), IFNULL(season, -1), IFNULL(episode, -1))")
+    except sqlite3.Error as e:
+        # Loud on purpose: without this index concurrent reconciles duplicate
+        # wants and the same item is grabbed twice.
+        log.error("wanted-table key migration failed (%s); duplicate wants "
+                  "are possible until it succeeds", e)
 
 
 # ---- generic settings KV (the in-app settings editor uses this) ----

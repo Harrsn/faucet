@@ -111,6 +111,102 @@ def _record_unparsed(path: str, kind: str, reason: str) -> None:
         pass
 
 
+def _recorded_quality(c, path: str, size: int):
+    """(quality, is_cam) the sorter recorded for this file, or None.
+
+    The sorter renames releases to 'Title (Year).mkv' / 'Show - S01E01.mkv',
+    so for anything it placed the filename carries no quality at all; the
+    record is the only source. A record whose size no longer matches belongs
+    to a file that has since been replaced by hand, so it's ignored."""
+    row = c.execute("SELECT quality, is_cam, size FROM library_files WHERE path=?",
+                    (path,)).fetchone()
+    if row is None or (row["size"] and row["size"] != size):
+        return None
+    if not row["quality"] and not row["is_cam"]:
+        return None
+    return row["quality"], bool(row["is_cam"])
+
+
+def _unchanged(c, table: str, path: str, mtime: float) -> bool:
+    """Incremental-scan skip test. A row saved before the sorter's quality
+    record existed (quality NULL) is re-read once the record appears."""
+    row = c.execute(f"SELECT mtime, quality FROM {table} WHERE path=?",
+                    (path,)).fetchone()
+    if not row or abs((row["mtime"] or 0) - mtime) >= 1:
+        return False
+    if row["quality"] is not None:
+        return True
+    return c.execute(
+        "SELECT 1 FROM library_files WHERE path=? AND (quality IS NOT NULL OR is_cam=1)",
+        (path,)).fetchone() is None
+
+
+SUPERSEDED_DIR = "_superseded"                   # under LIBRARY_ROOT, outside Plex sections
+
+
+def _superseded(winner: Path, loser: Path, stats: dict) -> None:
+    """A strictly better copy of the same title/episode exists, so `loser` is
+    redundant. Candidates are only collected here; _retire_superseded moves
+    them after the walk, and only if the scan looked healthy."""
+    pending = stats.setdefault("_superseded", {})
+    pending[loser] = winner                       # a loser can be met twice in one walk
+    stats["superseded"] = len(pending)
+
+
+def _retire_superseded(root: Path, pairs: dict) -> int:
+    """Move superseded files (and their sidecar subtitles) to
+    <root>/_superseded/<same relative path>. Same share as the library, so
+    it's a rename; reversible; outside the movies/tvshows sections.
+
+    Guard rails — a file is only moved when:
+      * the winner is a file the sorter placed (library_files record whose
+        size still matches), so a half-written or hand-renamed file can't
+        push out a good one
+      * winner and loser sit in the same folder (collection folders and
+        Fix Location links are never touched)
+    SUPERSEDED_ACTION=keep disables moving entirely."""
+    if os.environ.get("SUPERSEDED_ACTION", "move").strip().lower() != "move":
+        return 0
+    moved = 0
+    base = root / SUPERSEDED_DIR
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        # keep media servers out even if a library points at the media root:
+        # .plexignore for Plex, .ignore for Jellyfin/Emby
+        for marker, body in ((".plexignore", "*\n"), (".ignore", "")):
+            if not (base / marker).exists():
+                (base / marker).write_text(body)
+    except OSError as e:
+        log.warning("cannot prepare %s: %s", base, e)
+        return 0
+    for loser, winner in pairs.items():
+        try:
+            if winner.parent != loser.parent or not loser.exists():
+                continue
+            with db.connect() as c:
+                if _recorded_quality(c, str(winner), winner.stat().st_size) is None:
+                    continue
+            rel = loser.relative_to(root)
+            companions = [p for p in loser.parent.iterdir()
+                          if p != loser and p.is_file()
+                          and p.name.startswith(loser.stem + ".")
+                          and p.suffix.lower() not in VIDEO_EXTS]
+            for src in [loser, *companions]:
+                dest = base / rel.parent / src.name
+                n = 2
+                while dest.exists():
+                    dest = base / rel.parent / f"{src.stem} ({n}){src.suffix}"
+                    n += 1
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                os.rename(src, dest)
+                log.info("retired superseded %s -> %s (better copy: %s)",
+                         src.name, dest, winner.name)
+            moved += 1
+        except OSError as e:
+            log.warning("could not retire superseded %s: %s", loser, e)
+    return moved
+
+
 def _scan_tv(root: Path, stats: dict, force: bool = False,
              seen: set | None = None) -> None:
     tv = root / "tvshows"
@@ -129,9 +225,8 @@ def _scan_tv(root: Path, stats: dict, force: bool = False,
             seen.add(str(f))
         # incremental: skip unchanged files already recorded
         with db.connect() as c:
-            row = c.execute("SELECT mtime FROM library_episodes WHERE path=?",
-                            (str(f),)).fetchone()
-        if not force and row and abs((row["mtime"] or 0) - st.st_mtime) < 1:
+            unchanged = _unchanged(c, "library_episodes", str(f), st.st_mtime)
+        if not force and unchanged:
             stats["skipped"] += 1
             continue
 
@@ -168,8 +263,25 @@ def _scan_tv(root: Path, stats: dict, force: bool = False,
             continue
         if isinstance(episode, list):
             episode = episode[0]
-        quality = _detect_quality(f.name) or _detect_quality(str(f))
         with db.connect() as c:
+            rec = _recorded_quality(c, str(f), st.st_size)
+            quality = rec[0] if rec else (_detect_quality(f.name) or _detect_quality(str(f)))
+            # Keep the BEST file per episode. Last-walked used to win, so an
+            # old 720p copy and its 1080p upgrade flip-flopped between scans
+            # and the upgrade want kept coming back.
+            row = c.execute("SELECT path, quality FROM library_episodes "
+                            "WHERE season=? AND episode=? AND show_name=?",
+                            (int(season), int(episode), show)).fetchone()
+            if (row and row["path"] != str(f)
+                    and os.path.exists(row["path"] or "")):
+                old_rank = _movie_file_rank(row["quality"], False)
+                new_rank = _movie_file_rank(quality, False)
+                if old_rank >= new_rank:
+                    if old_rank > new_rank:
+                        _superseded(Path(row["path"]), f, stats)
+                    stats["episodes"] += 1
+                    continue                      # existing file is at least as good
+                _superseded(f, Path(row["path"]), stats)
             c.execute(
                 "INSERT INTO library_episodes (show_name, season, episode, quality, path, size, mtime) "
                 "VALUES (?,?,?,?,?,?,?) "
@@ -197,9 +309,8 @@ def _scan_movies(root: Path, stats: dict, force: bool = False,
         if seen is not None:
             seen.add(str(f))
         with db.connect() as c:
-            row = c.execute("SELECT mtime FROM library_movies WHERE path=?",
-                            (str(f),)).fetchone()
-        if not force and row and abs((row["mtime"] or 0) - st.st_mtime) < 1:
+            unchanged = _unchanged(c, "library_movies", str(f), st.st_mtime)
+        if not force and unchanged:
             stats["skipped"] += 1
             continue
         info = guessit(f.name) if guessit else {}
@@ -209,8 +320,13 @@ def _scan_movies(root: Path, stats: dict, force: bool = False,
             _record_unparsed(str(f), "movie", "no title parsed")
             continue
         year = info.get("year")
-        quality = _detect_quality(f.name)
-        is_cam = _detect_cam(f.name) or _detect_cam(str(f.parent.name))
+        with db.connect() as c:
+            rec = _recorded_quality(c, str(f), st.st_size)
+        if rec:
+            quality, is_cam = rec
+        else:
+            quality = _detect_quality(f.name)
+            is_cam = _detect_cam(f.name) or _detect_cam(str(f.parent.name))
         with db.connect() as c:
             # Keep the BEST file per (title, year): after an upgrade lands, the
             # old copy and the new one can briefly coexist — blindly last-write
@@ -218,11 +334,15 @@ def _scan_movies(root: Path, stats: dict, force: bool = False,
             row = c.execute("SELECT path, quality, source FROM library_movies "
                             "WHERE title=? AND year IS ?", (title, year)).fetchone()
             if (row and row["path"] != str(f)
-                    and os.path.exists(row["path"] or "")
-                    and _movie_file_rank(row["quality"], row["source"] == "CAM")
-                    > _movie_file_rank(quality, is_cam)):
-                stats["movies"] += 1
-                continue                          # existing file is better — keep it
+                    and os.path.exists(row["path"] or "")):
+                old_rank = _movie_file_rank(row["quality"], row["source"] == "CAM")
+                new_rank = _movie_file_rank(quality, is_cam)
+                if old_rank >= new_rank:
+                    if old_rank > new_rank:
+                        _superseded(Path(row["path"]), f, stats)
+                    stats["movies"] += 1
+                    continue                      # existing file is at least as good
+                _superseded(f, Path(row["path"]), stats)
             c.execute(
                 "INSERT INTO library_movies (title, year, quality, source, path, size, mtime) "
                 "VALUES (?,?,?,?,?,?,?) "
@@ -290,13 +410,25 @@ def scan(force: bool = False) -> dict:
                         "treating this as a mount/NAS hiccup, not deletions.",
                         gone, total_rows)
             stats["prune_skipped"] = gone
+            healthy = False
         else:
+            healthy = True
             for rid, _ in gone_eps:
                 c.execute("DELETE FROM library_episodes WHERE id=?", (rid,))
                 stats["pruned"] += 1
             for rid, _ in gone_mv:
                 c.execute("DELETE FROM library_movies WHERE id=?", (rid,))
                 stats["pruned"] += 1
+            # quality records for files that no longer exist
+            for row in c.execute("SELECT path FROM library_files").fetchall():
+                p = row["path"] or ""
+                if (p.startswith((tv_prefix, mv_prefix))
+                        and p not in seen_tv and p not in seen_mv
+                        and not os.path.exists(p)):
+                    c.execute("DELETE FROM library_files WHERE path=?", (p,))
+    pairs = stats.pop("_superseded", {})
+    if pairs and healthy:
+        stats["superseded_moved"] = _retire_superseded(root, pairs)
     log.info("Library scan: %d episodes, %d movies (%d skipped, %d unparsed, %d pruned)",
              stats["episodes"], stats["movies"], stats["skipped"], stats["unparsed"],
              stats["pruned"])
@@ -315,6 +447,21 @@ def have_episode(show_name: str, season: int, episode: int) -> dict | None:
         if normalize_title(r["show_name"]) == key:
             return dict(r)
     return None
+
+
+def owned_file_quality(path: str | None, quality: str | None) -> tuple[str | None, bool]:
+    """(quality, is_cam) of an owned library file, preferring the sorter's record."""
+    if not path:
+        return quality, False
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        size = 0
+    with db.connect() as c:
+        rec = _recorded_quality(c, path, size)
+    if rec:
+        return rec
+    return quality, _detect_cam(os.path.basename(path))
 
 
 def have_movie(title: str, year: int | None = None) -> dict | None:

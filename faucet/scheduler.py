@@ -356,6 +356,26 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
                      if _packs.classify_pack(r["title"]).get("kind") == "single"
                      and _rm.matches_episode(r["title"], title,
                                              int(season), int(episode))]
+        if w.get("reason") == "upgrade":
+            # An upgrade has to beat the file on disk. The profile alone isn't
+            # enough: a ["1080p", "720p"] profile happily ranks a 720p release
+            # for a 720p-owned movie, the sorter refuses it (not better), and
+            # the want re-grabs another copy every GRAB_RETRY_HOURS.
+            from . import quality as _q
+            if kind == "movie":
+                from . import movies as _mov
+                is_owned, owned_q, owned_cam = _mov.owned_quality(series_id)
+            else:
+                is_owned = bool(owned)
+                owned_q, owned_cam = _lib.owned_file_quality(
+                    owned.get("path"), owned.get("quality")) if owned else (None, False)
+            if is_owned:
+                before = len(fresh)
+                fresh = [r for r in fresh if _q.is_upgrade(r["title"], owned_q, owned_cam)]
+                if not fresh:
+                    res["error"] = (f"no release better than owned "
+                                    f"{owned_q or 'unknown'}{' CAM' if owned_cam else ''} "
+                                    f"({before} candidates)")
         if profile:
             ranked = prof.rank(fresh, profile)
         else:
