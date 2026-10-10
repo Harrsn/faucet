@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Episode lists now refresh.** A show's episodes were read from TMDb once,
+  when it was added, so new seasons, new episodes and TBA episodes that later
+  got an air date never became wants or reached the calendar. Monitored shows
+  are re-read every `SERIES_REFRESH_HOURS` (12; ended shows weekly), at most
+  `SERIES_REFRESH_PER_TICK` (5) per tick. Episodes TMDb stops listing are
+  dropped with their wants — only for seasons TMDb actually answered for.
+- **Ignored / in-library titles are no longer hunted.** Unmonitoring a title
+  left its wants in place and the hunter kept grabbing it. Its wants are now
+  dropped immediately, every reconcile purges leftovers, and the hunter skips
+  wants of unmonitored or paused titles.
+- **Indexer load is bounded.** Every want was searched on every tick until the
+  grab cap was hit — hundreds of queries per cycle for a backlog with no
+  releases. Fruitless searches now back off exponentially (capped at 6h for
+  recent episodes, 72h otherwise), each tick makes at most
+  `HUNT_MAX_SEARCHES` (40) queries, and the newest episodes are searched
+  first. A manual per-show hunt ignores the backoff. Indexer errors don't
+  count as a miss.
+- **One cycle at a time.** The scheduler tick and the "check now" button could
+  run concurrently and grab two releases for the same want; a second caller is
+  now refused.
+- **Multi-episode files count for every episode** they contain
+  (`S01E01E02`, `S01E03-E04`); only the first was recorded, so the rest were
+  hunted forever. A multi-episode file is never retired as superseded.
+- **Stuck grabs are re-queued** after `GRAB_RETRY_HOURS` even when reconcile
+  doesn't revisit the episode.
+
 ## 1.5.0
 
 ### Added
