@@ -82,7 +82,7 @@ def test_setup_import_runs_in_the_background(env, monkeypatch):
     import threading
     gate = threading.Event()
 
-    def fake_import(profile_id=None):
+    def fake_import(profile_id=None, **kw):
         gate.wait(5)
         return {"shows_imported": 3, "movies_imported": 1, "unmatched": []}
     monkeypatch.setattr(env.m["importer"], "import_library", fake_import)
