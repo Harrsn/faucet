@@ -1334,6 +1334,43 @@ def _profiles_for(user: dict) -> list:
                 for r in c.execute("SELECT id, name FROM profiles ORDER BY name")]
 
 
+def _save_to(kind: str, title_id: int, chosen) -> dict:
+    """Where a title's downloads are filed, and the libraries it could be."""
+    from . import libraries
+    cur = libraries.title_library(kind, title_id)
+    return {"library_id": chosen, "current": cur["name"] if cur else None,
+            "options": [{"id": lib["id"], "name": lib["name"], "path": lib["path"],
+                         "default": bool(lib["is_default"])} for lib in libraries.of_kind(kind)]}
+
+
+class SaveToBody(BaseModel):
+    library_id: int | None = None       # None = follow the default library
+
+
+@app.post("/api/series/{sid}/library")
+def api_series_library(sid: int, body: SaveToBody):
+    from . import libraries
+    try:
+        libraries.set_title_library("tv", sid, body.library_id)
+    except LookupError:
+        raise HTTPException(404, "Series not found")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return _save_to("tv", sid, body.library_id)
+
+
+@app.post("/api/movies/{mid}/library")
+def api_movie_library(mid: int, body: SaveToBody):
+    from . import libraries
+    try:
+        libraries.set_title_library("movie", mid, body.library_id)
+    except LookupError:
+        raise HTTPException(404, "Movie not found")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return _save_to("movie", mid, body.library_id)
+
+
 @app.get("/api/series/{sid}/detail")
 def api_series_detail(sid: int, request: _Request):
     """Everything the show page needs: the series, TMDb metadata, every
@@ -1388,6 +1425,7 @@ def api_series_detail(sid: int, request: _Request):
            "profiles": _profiles_for(user)}
     if user.get("role") == "admin":
         from . import libraries
+        out["save_to"] = _save_to("tv", sid, s.get("library_id"))
         out["folders"] = [{"library": x["library"], "library_id": x["library_id"],
                            "folder": x["folder"], "path": x["library_path"].rstrip("/") + "/" + x["folder"],
                            "manual": not x["auto"]} for x in libraries.links(sid)]
@@ -1973,10 +2011,7 @@ def api_setup_state():
             "import": {k: v for k, v in _import_job.items()}}
 
 
-@app.post("/api/setup/import")
-def api_setup_import():
-    """Import what's already on disk (monitor every show and movie found),
-    in the background — matching a big library against TMDb takes minutes."""
+def _start_import(library_ids=None, monitor: str = "all") -> dict:
     import threading
     from datetime import datetime as _dt
     from . import importer
@@ -1987,15 +2022,45 @@ def api_setup_import():
 
     def run():
         try:
-            _import_job["result"] = importer.import_library(None)
+            _import_job["result"] = importer.import_library(None, library_ids=library_ids,
+                                                            monitor=monitor)
         except Exception as e:                   # noqa: BLE001
             _import_job["result"] = {"error": str(e)}
         finally:
             _import_job["running"] = False
 
-    _import_job.update(running=True, result=None, started=_dt.now().isoformat(timespec="seconds"))
+    _import_job.update(running=True, result=None, library_ids=library_ids,
+                       started=_dt.now().isoformat(timespec="seconds"))
     threading.Thread(target=run, name="library-import", daemon=True).start()
     return {"started": True, "running": True}
+
+
+@app.post("/api/setup/import")
+def api_setup_import():
+    """Import what's already on disk (monitor every show and movie found),
+    in the background — matching a big library against TMDb takes minutes."""
+    return _start_import()
+
+
+class ImportBody(BaseModel):
+    monitor: str = "all"
+
+
+@app.post("/api/libraries/{lib_id}/import")
+def api_library_import_one(lib_id: int, body: ImportBody):
+    """Import one library's titles (e.g. a relative's folder) without adopting
+    everything else on disk; each is filed into that library."""
+    from . import libraries
+    if not libraries.get(lib_id):
+        raise HTTPException(404, "No such library")
+    if body.monitor not in ("all", "future", "none"):
+        raise HTTPException(400, "monitor: all, future or none")
+    return _start_import([lib_id], body.monitor)
+
+
+@app.get("/api/libraries/import")
+def api_library_import_state():
+    return {k: v for k, v in _import_job.items()}
 
 
 @app.post("/api/setup/complete")
@@ -2088,6 +2153,8 @@ def api_movie_detail(mid: int, request: _Request):
                       "FROM wanted WHERE kind='movie' AND series_id=?", (mid,)).fetchone()
     out["want"] = dict(w) if w else None
     out["profiles"] = _profiles_for(user)
+    if user.get("role") == "admin":
+        out["save_to"] = _save_to("movie", mid, out["movie"].get("library_id"))
     return out
 
 

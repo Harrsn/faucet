@@ -537,6 +537,7 @@ def scan(force: bool = False) -> dict:
         linked = libs_mod.auto_link()
         stats["folders_linked"] = linked["linked"]
         stats["folders_unlinked"] = len(linked["unlinked"])
+        stats["titles_assigned"] = sum(libs_mod.assign_from_files().values())
     except Exception as e:                       # noqa: BLE001 - linking never fails a scan
         log.warning("folder linking failed: %s", e)
     log.info("Library scan: %d episodes, %d movies (%d skipped, %d unparsed, %d pruned)",
