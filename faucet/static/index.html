@@ -1816,6 +1816,10 @@ $("settingsBtn").addEventListener("click",async()=>{
       ${pathField("st_dldir","DOWNLOAD_DIR","Download directory","/downloads")}
       ${pathField("st_disk","DISK_PATH","Disk-usage path (for the dashboard gauge)","/downloads")}
       ${pathField("st_browse","BROWSE_ROOT","File-browser root","/nas")}
+      <label class="fld" style="margin-top:16px">Database</label>
+      <div class="hint" id="st_dbinfo">…</div>
+      <a class="btn ghost" href="/api/settings/backup" download style="display:inline-block;margin-top:8px;text-decoration:none">download backup</a>
+      <div class="hint" style="margin-top:6px">A consistent snapshot of <code>cascade.db</code> (sessions and the TMDb cache left out). To restore: stop Faucet, replace <code>cascade.db</code> in the config volume, start it.</div>
       <div class="set-warn" style="margin-top:14px">The session secret, database path, and listen port stay in your Docker stack — they can't be changed here by design.</div>
     </div>
 
@@ -1823,6 +1827,8 @@ $("settingsBtn").addEventListener("click",async()=>{
       <button class="btn" id="st_save">save changes</button>
       <span class="muted" id="st_savehint" style="font-size:12px"></span>
     </div>`);
+  jget("/api/settings/storage").then(d=>{if($("st_dbinfo"))$("st_dbinfo").textContent=
+    `${human(d.bytes)} · ${d.free_pct}% free pages`+(d.tables&&d.tables.length?` · largest: ${d.tables.slice(0,3).map(t=>`${t.name} ${human(t.bytes)}`).join(", ")}`:"");}).catch(()=>{});
   // tab switching
   $("modalBody").querySelectorAll(".set-tab").forEach(t=>t.addEventListener("click",()=>{
     const sec=t.dataset.sec;
@@ -1949,11 +1955,20 @@ async function openIndexerHealth(){
       <button class="btn ghost" id="ihProbe" style="margin-top:10px">probe now</button>
       <label class="fld">Hunter grabs by tracker · last 14 days</label>
       <div class="hint" style="margin-bottom:4px">Trackers whose grabs mostly stall are ranked lower automatically.</div>${grabRows}`;
+    if(d.probing){$("ihProbe").disabled=true;$("ihProbe").textContent="probing… (Cloudflare-protected indexers take ~15s each)";}
     $("ihProbe").addEventListener("click",async()=>{$("ihProbe").disabled=true;$("ihProbe").textContent="probing…";
-      try{await jsend("/api/indexers/probe","POST");render(await jget("/api/indexers/health"));}
+      try{await jsend("/api/indexers/probe","POST");poll();}
       catch(e){toast(e.message||"Probe failed","err");$("ihProbe").disabled=false;$("ihProbe").textContent="probe now";}});
   };
-  try{render(await jget("/api/indexers/health"));}
+  // a probe runs in the background; refresh until it finishes (or the modal closes)
+  const poll=async(n=0)=>{
+    if(!$("ihProbe")||n>100)return;
+    let d;try{d=await jget("/api/indexers/health");}catch(_){return;}
+    if(!$("ihProbe"))return;
+    render(d);
+    if(d.probing)setTimeout(()=>poll(n+1),3000);
+  };
+  try{const d=await jget("/api/indexers/health");render(d);if(d.probing)setTimeout(()=>poll(1),3000);}
   catch(e){$("modalBody").innerHTML=`<div class='empty'>Couldn't load: ${esc(e.message)}</div>`;}
 }
 function dupesSection(dd){

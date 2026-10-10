@@ -7,7 +7,6 @@ the single-page UI.
 from __future__ import annotations
 
 import os
-import json
 import shutil
 import sqlite3
 import logging
@@ -23,7 +22,6 @@ from .clients import make_client, DownloadClientError
 from . import search as searchmod
 from . import tmdb as tmdbmod
 from . import db
-from .notify import notify
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -76,7 +74,8 @@ _PUBLIC_PREFIXES = ("/static/", "/favicon", "/login", "/register", "/reset",
 
 
 def _is_public(path: str) -> bool:
-    if path in ("/login", "/register", "/reset"):
+    # /metrics does its own auth (bearer token or admin session)
+    if path in ("/login", "/register", "/reset", "/metrics"):
         return True
     return any(path.startswith(p) for p in _PUBLIC_PREFIXES)
 
@@ -489,24 +488,8 @@ def api_dashboard():
 
 @app.get("/api/events")
 def api_events(limit: int = Query(60, ge=1, le=300)):
-    p = Path(cfg().events_file)
-    if not p.exists():
-        return {"events": []}
-    try:
-        lines = p.read_text(errors="ignore").strip().splitlines()
-    except OSError:
-        return {"events": []}
-    events = []
-    for line in lines[-limit:]:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            events.append(json.loads(line))
-        except ValueError:
-            events.append({"ts": "", "event": "raw", "msg": line})
-    events.reverse()
-    return {"events": events}
+    from . import maintenance
+    return {"events": maintenance.tail_events(limit)}
 
 
 # ----------------------------------------------------------------------------
@@ -1261,8 +1244,11 @@ def api_indexer_health():
 
 @app.post("/api/indexers/probe")
 def api_indexer_probe():
+    """Starts a probe in the background; poll /api/indexers/health until
+    `probing` is false."""
     from . import indexerhealth
-    return indexerhealth.probe()
+    started = indexerhealth.probe_async()
+    return {"started": started, "probing": True}
 
 
 @app.get("/api/library/duplicates")
@@ -1327,6 +1313,42 @@ def api_movies_delete(mid: int):
     from . import movies as movies_mod
     movies_mod.delete_movie(mid)
     return {"status": "ok"}
+
+
+@app.get("/metrics")
+def metrics(request: _Request):
+    """Prometheus metrics. Bearer METRICS_TOKEN, or an admin session."""
+    from fastapi.responses import PlainTextResponse
+    from . import metrics as metricsmod
+    ok = metricsmod.authorized(request)
+    if ok is None:
+        raise HTTPException(404)
+    if not ok:
+        raise HTTPException(401, "Bearer token required.",
+                            headers={"WWW-Authenticate": "Bearer"})
+    return PlainTextResponse(metricsmod.render(),
+                             media_type="text/plain; version=0.0.4; charset=utf-8")
+
+
+@app.get("/api/settings/backup")
+def api_settings_backup():
+    """Download a consistent copy of the database (sessions and reset tokens
+    stripped, TMDb cache dropped). Restore by stopping Faucet and replacing
+    cascade.db in the config volume."""
+    from starlette.background import BackgroundTask
+    from . import maintenance
+    path = maintenance.backup_db()
+    log.info("Database backup downloaded (%d bytes)", path.stat().st_size)
+    return FileResponse(path, media_type="application/vnd.sqlite3",
+                        filename=maintenance.backup_filename(),
+                        headers={"Cache-Control": "no-store"},
+                        background=BackgroundTask(path.unlink, missing_ok=True))
+
+
+@app.get("/api/settings/storage")
+def api_settings_storage():
+    from . import maintenance
+    return maintenance.db_stats()
 
 
 @app.get("/health")

@@ -544,7 +544,7 @@ def _hunt_wanted(series_filter=None, max_override=None) -> dict:
 
         reasons: dict = {}
 
-        def keep(rows, bucket, pred):
+        def keep(rows, bucket, pred, reasons=reasons):
             out = [r for r in rows if pred(r)]
             if len(out) != len(rows):
                 reasons[bucket] = reasons.get(bucket, 0) + len(rows) - len(out)
@@ -558,8 +558,8 @@ def _hunt_wanted(series_filter=None, max_override=None) -> dict:
         from . import releasematch as _rm
         if kind == "movie":
             if movie_title:
-                fresh = keep(fresh, "wrong_title", lambda r: _rm.matches_movie(
-                    r["title"], movie_title, movie_year))
+                fresh = keep(fresh, "wrong_title", lambda r, t=movie_title, y=movie_year: _rm.matches_movie(
+                    r["title"], t, y))
         else:
             # For episode wants, never grab a season or series pack here — the
             # pack pre-pass already handled pack-worthy seasons, and an episode
@@ -569,8 +569,8 @@ def _hunt_wanted(series_filter=None, max_override=None) -> dict:
             from . import packs as _packs
             fresh = keep(fresh, "pack", lambda r: _packs.classify_pack(
                 r["title"]).get("kind") == "single")
-            fresh = keep(fresh, "wrong_title", lambda r: _rm.matches_episode(
-                r["title"], title, int(season), int(episode)))
+            fresh = keep(fresh, "wrong_title", lambda r, t=title, s=int(season), e=int(episode): _rm.matches_episode(
+                r["title"], t, s, e))
         if w.get("reason") == "upgrade":
             # An upgrade has to beat the file on disk. The profile alone isn't
             # enough: a ["1080p", "720p"] profile happily ranks a 720p release
@@ -588,7 +588,7 @@ def _hunt_wanted(series_filter=None, max_override=None) -> dict:
             if is_owned:
                 before = len(fresh)
                 fresh = keep(fresh, "not_upgrade",
-                             lambda r: _q.is_upgrade(r["title"], owned_q, owned_cam))
+                             lambda r, q=owned_q, cam=owned_cam: _q.is_upgrade(r["title"], q, cam))
                 if not fresh:
                     res["error"] = (f"no release better than owned "
                                     f"{owned_q or 'unknown'}{' CAM' if owned_cam else ''} "
@@ -805,6 +805,13 @@ def _run_once() -> dict:
         indexerhealth.probe_if_due()
     except Exception as e:                       # noqa: BLE001 - never kill the tick
         log.warning("Indexer probe error: %s", e)
+
+    # 4c. database / file hygiene (TMDb cache, events rotation, VACUUM)
+    try:
+        from . import maintenance
+        maintenance.run()
+    except Exception as e:                       # noqa: BLE001 - never kill the tick
+        log.warning("Maintenance error: %s", e)
 
     # 5. housekeeping: purge expired sessions + used/expired reset tokens
     # (they previously accumulated forever)
