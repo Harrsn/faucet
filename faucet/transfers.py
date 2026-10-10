@@ -31,7 +31,7 @@ _lock = threading.Lock()
 _wake = threading.Event()
 _ready = threading.Event()
 _state = {"items": [], "ok": None, "error": None, "ts": None, "mono": None,
-          "last_read": 0.0, "thread": None}
+          "last_read": None, "thread": None}
 
 
 def _interval() -> float:
@@ -82,10 +82,15 @@ def _poll_once() -> None:
     _ready.set()
 
 
+def _idle() -> bool:
+    last = _state["last_read"]
+    return last is None or time.monotonic() - last > _IDLE_AFTER
+
+
 def _loop() -> None:
     while True:
         with _lock:
-            idle = time.monotonic() - _state["last_read"] > _IDLE_AFTER
+            idle = _idle()
         if idle:
             _wake.wait()                         # until someone reads again
         _wake.clear()
@@ -108,12 +113,13 @@ def snapshot() -> dict:
     error, as_of, age, stale}. `ok` is about the latest poll; `items` is the
     last list that succeeded."""
     with _lock:
-        idle_before = time.monotonic() - _state["last_read"] > _IDLE_AFTER
+        idle_before = _idle()
         _state["last_read"] = time.monotonic()
     _ensure_thread()
-    if idle_before:
-        _wake.set()                              # wake an idle poller now
-    if not _ready.is_set():
+    cold = not _ready.is_set()
+    if idle_before or cold:
+        _wake.set()                              # poll now, don't sleep out the interval
+    if cold:
         _ready.wait(_FIRST_WAIT)
     with _lock:
         age = None if _state["mono"] is None else round(time.monotonic() - _state["mono"], 1)
@@ -129,5 +135,5 @@ def refresh_soon() -> None:
 
 def _reset_for_tests() -> None:
     with _lock:
-        _state.update(items=[], ok=None, error=None, ts=None, mono=None, last_read=0.0)
+        _state.update(items=[], ok=None, error=None, ts=None, mono=None, last_read=None)
     _ready.clear()

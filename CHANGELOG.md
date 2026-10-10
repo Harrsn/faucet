@@ -12,7 +12,9 @@
   poller (every `TRANSFERS_POLL_SECONDS`, 5; at most a 10s wait per poll;
   idle after a minute without readers): pages read the last good list
   instantly and say so when the client is slow. Grabs and pause / resume /
-  remove trigger an immediate refresh.
+  remove trigger an immediate refresh. A cold cache (just after a restart)
+  wakes the poller at once instead of letting the first page wait out its
+  interval.
 
 ## 2.0.0 — 2026-10-10
 

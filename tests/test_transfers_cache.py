@@ -77,3 +77,16 @@ def test_cold_cache_with_dead_client(tr, monkeypatch):
     _client(monkeypatch, tr, fn)
     s = tr.snapshot()
     assert s["ok"] is False and s["items"] == [] and s["stale"] is True
+
+
+def test_cold_cache_wakes_a_sleeping_poller(tr, monkeypatch):
+    """CI caught this: after a reset the poller could sleep out its interval
+    while the first reader gave up after 3s and showed an empty list."""
+    monkeypatch.setenv("TRANSFERS_POLL_SECONDS", "30")
+    _client(monkeypatch, tr, lambda: [T(1, "A")])
+    assert [t.name for t in tr.snapshot()["items"]] == ["A"]   # thread now sleeping 30s
+    tr.configure(tr._factory)                                  # cold again (a reload, a restart)
+    _client(monkeypatch, tr, lambda: [T(2, "B")])
+    t0 = time.monotonic()
+    assert [t.name for t in tr.snapshot()["items"]] == ["B"]
+    assert time.monotonic() - t0 < 1.5
