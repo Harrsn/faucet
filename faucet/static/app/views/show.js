@@ -72,6 +72,11 @@ export async function render(el, ctx) {
                 <option value="0">Use the default</option>
                 ${d.profiles.map((pr) => html`<option value="${pr.id}"${s.profile_id === pr.id ? raw(" selected") : ""}>${pr.name}</option>`)}
               </select></label>
+            ${d.save_to && d.save_to.options.length > 1 ? html`<label class="selbox">Save to
+              <select data-saveto aria-label="Library new episodes are filed into">
+                <option value="">${d.save_to.options.find((o) => o.default)?.name || "Default"} (default)</option>
+                ${d.save_to.options.filter((o) => !o.default).map((o) => html`<option value="${o.id}"${s.library_id === o.id ? raw(" selected") : ""}>${o.name}</option>`)}
+              </select></label>` : ""}
             <details class="menu"><summary aria-label="More actions">${raw('<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>')}</summary>
               <div class="items">
                 <button type="button" data-act="log">Hunt log</button>
@@ -250,6 +255,13 @@ export async function render(el, ctx) {
       try {
         await api.post(`/api/series/${sid}/profile?${qs({ profile_id: e.target.value })}`);
         toast("Quality profile updated.");
+      } catch (err) { toast(err.message, "err"); }
+    });
+    const st = el.querySelector("[data-saveto]");
+    if (st) st.addEventListener("change", async (e) => {
+      try {
+        const r = await api.post(`/api/series/${sid}/library`, { library_id: e.target.value ? Number(e.target.value) : null });
+        toast(`New episodes go to ${r.current}.`);
       } catch (err) { toast(err.message, "err"); }
     });
     const menu = el.querySelector(".menu");
