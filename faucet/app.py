@@ -973,8 +973,12 @@ def api_series_list():
     # one pass over shared tables instead of re-reading ALL library episodes
     # per show (the old loop was O(shows × library) on every page load)
     with db.connect() as c:
+        # aired, non-special episodes: the same "total" the show page shows
+        from datetime import date as _date
+        today = _date.today().isoformat()
         canon_by_series = defaultdict(set)
-        for r in c.execute("SELECT series_id, season, episode FROM series_episodes"):
+        for r in c.execute("SELECT series_id, season, episode FROM series_episodes "
+                           "WHERE season > 0 AND air_date != '' AND air_date <= ?", (today,)):
             canon_by_series[r["series_id"]].add((r["season"], r["episode"]))
         from .library import owned_index, owned_for
         idx = owned_index(c)
@@ -987,8 +991,11 @@ def api_series_list():
         owned = owned_for(idx, s["id"], s["title"])
         # "have" = canonical episodes we actually own (so it can't exceed total)
         have = len(owned & canon_set) if canon_set else len(owned)
+        meta = tmdbmod.cached_details(s["tmdb_id"], "tv") if s.get("tmdb_id") else {}
         s.update(have=have, total=len(canon_set),
-                 wanted=wanted_by_series.get(s["id"], 0))
+                 wanted=wanted_by_series.get(s["id"], 0),
+                 tv_status=meta.get("status"),
+                 ended=meta.get("status") in ("Ended", "Canceled"))
         out.append(s)
     return {"series": out}
 
@@ -1189,6 +1196,166 @@ def api_episode_grab(sid: int, season: int, episode: int, req: AddRequest):
                   "search_count=0, next_search=NULL "
                   "WHERE kind='episode' AND series_id=? AND season=? AND episode=?",
                   (_dt.now().isoformat(timespec="seconds"), sid, season, episode))
+    return {"status": "ok", "id": res.id, "name": res.name, "duplicate": res.duplicate}
+
+
+# ---------------------------------------------------------------------------
+# Detail pages (new UI): one call each
+# ---------------------------------------------------------------------------
+_still_fetching: set = set()
+
+
+def _fill_stills_async(tmdb_id: int, seasons: list[int]) -> None:
+    """Fetch seasons whose stills aren't cached yet, in the background, so
+    the page renders now and has them on the next visit."""
+    import threading
+    todo = [n for n in seasons if (tmdb_id, n) not in _still_fetching]
+    if not todo or not tmdbmod.enabled():
+        return
+    for n in todo:
+        _still_fetching.add((tmdb_id, n))
+
+    def run():
+        try:
+            for n in todo:
+                try:
+                    tmdbmod.season_episodes(tmdb_id, n)
+                except Exception:                # noqa: BLE001 - art is optional
+                    pass
+        finally:
+            for n in todo:
+                _still_fetching.discard((tmdb_id, n))
+    threading.Thread(target=run, name="tmdb-stills", daemon=True).start()
+
+
+def _profiles_for(user: dict) -> list:
+    if user.get("role") != "admin":
+        return []
+    with db.connect() as c:
+        return [{"id": r["id"], "name": r["name"]}
+                for r in c.execute("SELECT id, name FROM profiles ORDER BY name")]
+
+
+@app.get("/api/series/{sid}/detail")
+def api_series_detail(sid: int, request: _Request):
+    """Everything the show page needs: the series, TMDb metadata, every
+    season with episode status (on disk / downloading / wanted / unaired /
+    not monitored), stills, and — admins — profiles and folder links."""
+    from . import series as series_mod
+    user = getattr(request.state, "user", None) or {}
+    bd = series_mod.episode_breakdown(sid)
+    s = bd.get("series")
+    if not s:
+        raise HTTPException(404, "Series not found")
+    meta = tmdbmod.details(s["tmdb_id"], "tv") if s.get("tmdb_id") else {}
+    with db.connect() as c:
+        wants = {(r["season"], r["episode"]): dict(r) for r in c.execute(
+            "SELECT season, episode, status, reason, next_search, search_count, last_search "
+            "FROM wanted WHERE kind='episode' AND series_id=?", (sid,))}
+    mode = s.get("monitor_mode") or "all"
+    missing_stills = []
+    seasons = []
+    for sn in bd["seasons"]:
+        cached = tmdbmod.cached_season(s["tmdb_id"], sn["season"]) if s.get("tmdb_id") else None
+        if cached is None and s.get("tmdb_id"):
+            missing_stills.append(sn["season"])
+        stills = {e["episode"]: e.get("still") for e in (cached or [])}
+        eps, counts = [], {"have": 0, "downloading": 0, "wanted": 0, "unaired": 0}
+        for e in sn["episodes"]:
+            w = wants.get((sn["season"], e["episode"]))
+            if e["have"] and not (w and w["reason"] == "upgrade" and w["status"] == "grabbed"):
+                status = "have"
+            elif w and w["status"] == "grabbed":
+                status = "downloading"
+            elif not e["aired"]:
+                status = "unaired"
+            elif w:
+                status = "wanted"
+            else:
+                status = "skipped" if (not s.get("monitored") or mode == "none") else "missing"
+            if status in counts:
+                counts[status] += 1
+            eps.append({**e, "status": status, "still": stills.get(e["episode"]),
+                        "upgrade": bool(w and w["reason"] == "upgrade"),
+                        "next_search": w["next_search"] if w else None,
+                        "searches": w["search_count"] if w else 0})
+        seasons.append({"season": sn["season"], "have": sn["have"], "total": sn["total"],
+                        "episodes": eps, **{k: v for k, v in counts.items() if k != "have"}})
+    if missing_stills:
+        _fill_stills_async(s["tmdb_id"], missing_stills)
+    out = {"series": s, "meta": meta, "seasons": seasons,
+           "have": bd["have"], "total": bd["total"],
+           "wanted": sum(x["wanted"] for x in seasons),
+           "downloading": sum(x["downloading"] for x in seasons),
+           "profiles": _profiles_for(user)}
+    if user.get("role") == "admin":
+        from . import libraries
+        out["folders"] = [{"library": x["library"], "library_id": x["library_id"],
+                           "folder": x["folder"], "path": x["library_path"].rstrip("/") + "/" + x["folder"],
+                           "manual": not x["auto"]} for x in libraries.links(sid)]
+    return out
+
+
+@app.get("/api/movies/{mid}/releases")
+def api_movie_releases(mid: int):
+    """Interactive search for one movie: title-verified, ranked by its profile,
+    with releases that fail the profile listed (and why) for a deliberate
+    override."""
+    from . import movies as movies_mod, releasematch
+    from . import profiles as prof
+    from . import scheduler as sched
+    from . import finder
+    m = movies_mod.get_movie(mid)
+    if not m:
+        raise HTTPException(404, "Movie not found")
+    try:
+        results = finder.find("movie", title=m["title"], year=m.get("year"),
+                              ids=finder.ids_for("movie", mid))
+    except searchmod.SearchError as e:
+        raise HTTPException(502, str(e))
+    matched = [r for r in results
+               if releasematch.matches_movie(r["title"], m["title"], m.get("year"))]
+    profile = sched._load_profile_for_movie(mid)
+    out = []
+    for r in matched:
+        rr = dict(r)
+        if profile:
+            ok, why = prof.passes(r, profile)
+            rr["_passes"], rr["_why"] = ok, why
+            rr["_score"] = prof.score(r, profile) if ok else 0
+        else:
+            rr["_passes"], rr["_why"], rr["_score"] = True, "", r.get("seeders", 0)
+        out.append(rr)
+    out.sort(key=lambda x: (not x["_passes"], -x["_score"], -x.get("seeders", 0)))
+    return {"query": f"{m['title']} {m.get('year') or ''}".strip(),
+            "profile": profile["name"] if profile else None,
+            "considered": len(results), "releases": out,
+            "hidden": getattr(results, "hidden", 0), **_search_meta(results)}
+
+
+@app.post("/api/movies/{mid}/grab")
+def api_movie_grab(mid: int, req: AddRequest):
+    """Grab a release for this movie: adds it, records it, and flips the
+    movie's want to 'grabbed' so the hunter stands down."""
+    from . import movies as movies_mod
+    from datetime import datetime as _dt
+    m = movies_mod.get_movie(mid)
+    if not m:
+        raise HTTPException(404, "Movie not found")
+    if not req.magnet:
+        raise HTTPException(400, "No magnet/href provided.")
+    try:
+        res = client().add(req.magnet, cfg().download_dir or None)
+    except DownloadClientError as e:
+        raise HTTPException(502, str(e))
+    title = req.title or res.name or ""
+    if title:
+        db.mark_grabbed(title, None)
+    db.add_history("added", title, f"manual grab: {m['title']} ({m.get('year') or '?'})")
+    with db.connect() as c:
+        c.execute("UPDATE wanted SET status='grabbed', last_search=?, search_count=0, "
+                  "next_search=NULL WHERE kind='movie' AND series_id=?",
+                  (_dt.now().isoformat(timespec="seconds"), mid))
     return {"status": "ok", "id": res.id, "name": res.name, "duplicate": res.duplicate}
 
 
@@ -1461,10 +1628,17 @@ def api_movies_add(m: MovieAdd):
 def api_movie_detail(mid: int, request: _Request):
     from . import movies as movies_mod
     out = movies_mod.movie_detail(mid)
+    if not out.get("movie"):
+        raise HTTPException(404, "Movie not found")
     user = getattr(request.state, "user", None) or {}
     if user.get("role") != "admin" and out.get("file"):
         # members see that it's on disk and at what quality, not where
         out["file"] = {k: v for k, v in out["file"].items() if k != "path"}
+    with db.connect() as c:
+        w = c.execute("SELECT status, reason, next_search, search_count, last_search "
+                      "FROM wanted WHERE kind='movie' AND series_id=?", (mid,)).fetchone()
+    out["want"] = dict(w) if w else None
+    out["profiles"] = _profiles_for(user)
     return out
 
 
@@ -1596,11 +1770,13 @@ def classic():
 # Home: one call for the new UI's landing page
 # ---------------------------------------------------------------------------
 def _stills(tmdb_id, season) -> dict:
-    try:
-        return {e["episode"]: e.get("still") for e in
-                (tmdbmod.season_episodes(tmdb_id, season) or [])}
-    except Exception:                            # noqa: BLE001 - art is optional
+    """Cached stills only; seasons not cached yet are fetched in the
+    background so Home never waits on TMDb."""
+    cached = tmdbmod.cached_season(tmdb_id, season)
+    if cached is None:
+        _fill_stills_async(tmdb_id, [season])
         return {}
+    return {e["episode"]: e.get("still") for e in cached}
 
 
 @app.get("/api/home")
@@ -1620,7 +1796,7 @@ def api_home(request: _Request):
             "FROM library_episodes le JOIN series s ON s.id = le.series_id "
             "LEFT JOIN series_episodes se ON se.series_id = le.series_id "
             "AND se.season = le.season AND se.episode = le.episode "
-            "ORDER BY le.mtime DESC LIMIT 24")]
+            "ORDER BY le.mtime DESC LIMIT 80")]
         lib_movies = [dict(r) for r in c.execute(
             "SELECT title, year, quality, source, mtime FROM library_movies "
             "ORDER BY mtime DESC LIMIT 60")]
@@ -1632,8 +1808,9 @@ def api_home(request: _Request):
         if admin:
             idx = owned_index(c)
             canon: dict = {}
+            today = _dt.now().date().isoformat()
             for r in c.execute("SELECT series_id, season, episode FROM series_episodes "
-                               "WHERE season > 0"):
+                               "WHERE season > 0 AND air_date != '' AND air_date <= ?", (today,)):
                 canon.setdefault(r["series_id"], set()).add((r["season"], r["episode"]))
             for r in c.execute(
                     "SELECT s.id, s.title, s.poster, COUNT(w.id) AS n FROM wanted w "
@@ -1641,9 +1818,10 @@ def api_home(request: _Request):
                     "AND w.status='wanted' GROUP BY s.id ORDER BY n DESC LIMIT 20"):
                 tot = canon.get(r["id"], set())
                 have = len(owned_for(idx, r["id"], r["title"]) & tot)
+                # floor, and never "100%" while something is still wanted
+                pct = (100 * have // len(tot)) if tot else 0
                 hunting.append({"id": r["id"], "title": r["title"], "poster": r["poster"],
-                                "wanted": r["n"],
-                                "pct": round(100 * have / len(tot)) if tot else 0})
+                                "wanted": r["n"], "pct": min(pct, 99)})
     stills: dict = {}
     episodes = []
     for r in rows:
