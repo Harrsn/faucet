@@ -184,7 +184,6 @@ All via environment / `.env`:
 | `REQUEST_TIMEOUT` | `30` | Outbound HTTP timeout (seconds). |
 | `NOTIFY_URLS` | — | Comma-separated notification targets. |
 | `NOTIFY_ON` | `completed,sorted,failed` | Which events notify. |
-| `APP_TITLE` | `Faucet` | Title shown in the UI. |
 | `UI_THEME` | `dark` | Default theme (`dark` \| `light`); users can toggle. |
 
 ### Authentication

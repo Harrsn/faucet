@@ -702,7 +702,7 @@ def api_settings_get():
         "BIG_DOWNLOAD_GB": str(c.big_download_gb),
         "NOTIFY_URLS": ",".join(c.notify_urls), "NOTIFY_ON": ",".join(c.notify_on),
         # metadata / ui
-        "UI_THEME": c.ui_theme, "APP_TITLE": c.app_title,
+        "UI_THEME": c.ui_theme,
     }
     env_view["AIR_DELAY_DAYS"] = os.environ.get("AIR_DELAY_DAYS", "1")
     # secrets are editable but never returned; show only whether one is set.

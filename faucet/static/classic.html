@@ -1791,7 +1791,6 @@ $("settingsBtn").addEventListener("click",async()=>{
     <div class="set-sec" data-sec="meta">
       <label class="fld">TMDb API key ${s.tmdb_enabled?'<span class="pchip ok">● enabled</span>':'<span class="pchip muted">○ disabled</span>'}</label>
       <input type="password" id="st_tmdb" value="" autocomplete="off" placeholder="${env.TMDB_KEY_SET?'•••••••• saved — type a new key to replace it':'paste TMDb key for title search + posters'}" style="width:100%">
-      <label class="fld">App title</label><input type="text" id="st_title" value="${esc(env.APP_TITLE||'Faucet')}" style="width:100%">
       <label class="fld">Default preferred language <span class="muted">(when a title has no profile)</span></label>
       <select id="st_lang" style="width:100%">${langOpts.map(([v,n])=>`<option value="${v}" ${(s.db&&s.db.default_language||'en')===v?'selected':''}>${n}</option>`).join('')}</select>
       <label class="fld">Default quality profile <span class="muted">(for titles with no profile of their own)</span></label>
@@ -1865,7 +1864,6 @@ $("settingsBtn").addEventListener("click",async()=>{
       JACKETT_URL:$("st_jurl").value.trim(), JACKETT_INDEXER:$("st_jidx").value.trim(),
       DOWNLOAD_CLIENT:$("st_client").value, CLIENT_URL:$("st_curl").value.trim(),
       CLIENT_USER:$("st_cuser").value.trim(),
-      APP_TITLE:$("st_title").value.trim(),
       REMOVE_ON_COMPLETE:$("st_rem").value, SEARCH_LIMIT:$("st_slimit").value,
       REQUEST_TIMEOUT:$("st_timeout").value, BIG_DOWNLOAD_GB:$("st_bigdl").value,
       NOTIFY_URLS:$("st_notify").value.trim(), NOTIFY_ON:$("st_notifyon").value.trim(),

@@ -219,17 +219,17 @@ def test_config_save_reload(tmp_path, monkeypatch):
     monkeypatch.setenv("FAUCET_CONFIG_FILE", str(tmp_path / "faucet.env"))
     monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "events.jsonl"))
     # other tests may have set these in the process env; clear for isolation
-    for k in ("JACKETT_API_KEY", "CLIENT_URL", "DOWNLOAD_CLIENT", "APP_TITLE"):
+    for k in ("JACKETT_API_KEY", "CLIENT_URL", "DOWNLOAD_CLIENT", "UI_THEME"):
         monkeypatch.delenv(k, raising=False)
     import importlib
     from faucet import config as cfgmod
     importlib.reload(cfgmod)
     assert not cfgmod.config.configured()
     cfgmod.save({"JACKETT_API_KEY": "k", "CLIENT_URL": "http://c",
-                 "DOWNLOAD_CLIENT": "deluge", "APP_TITLE": "MyFaucet"})
+                 "DOWNLOAD_CLIENT": "deluge", "UI_THEME": "light"})
     assert cfgmod.config.configured()
     assert cfgmod.config.client_kind == "deluge"
-    assert cfgmod.config.app_title == "MyFaucet"
+    assert cfgmod.config.ui_theme == "light"
 
 
 def test_config_save_whitelist(tmp_path, monkeypatch):

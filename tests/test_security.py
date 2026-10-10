@@ -267,17 +267,17 @@ def test_https_detection(monkeypatch):
 def test_config_save_rejects_newlines_and_db_is_0600(app):
     cfg = app.m["config"]
     with pytest.raises(ValueError):
-        cfg.save({"APP_TITLE": "x\nSESSION_SECRET=owned"})
+        cfg.save({"UI_THEME": "x\nSESSION_SECRET=owned"})
     assert "SESSION_SECRET" not in cfg.stored()
-    cfg.save({"APP_TITLE": "Faucet Test"})
-    assert cfg.stored()["APP_TITLE"] == "Faucet Test"
+    cfg.save({"UI_THEME": "light"})
+    assert cfg.stored()["UI_THEME"] == "light"
     cfg.harden_permissions()
     assert stat.S_IMODE(cfg._db_path().stat().st_mode) == 0o600
 
 
 def test_existing_world_readable_config_is_tightened(app):
     p = app.tmp / "faucet.env"
-    p.write_text("APP_TITLE=x\n")
+    p.write_text("UI_THEME=x\n")
     os.chmod(p, 0o644)
     app.m["config"].harden_permissions()
     assert stat.S_IMODE(p.stat().st_mode) == 0o600
@@ -285,7 +285,7 @@ def test_existing_world_readable_config_is_tightened(app):
 
 def test_settings_patch_newline_is_a_400(app):
     admin = app.client("admin", "adminpass123")
-    r = admin.patch("/api/settings", json={"values": {"APP_TITLE": "a\nb"}})
+    r = admin.patch("/api/settings", json={"values": {"UI_THEME": "a\nb"}})
     assert r.status_code == 400
 
 
