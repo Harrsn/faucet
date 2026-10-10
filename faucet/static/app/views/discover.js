@@ -66,7 +66,7 @@ export async function render(el, ctx) {
       } else {
         const r = await api.post("/api/requests", { media_type: x.media_type, ...body });
         toast(r.status === "auto_approved" ? `${x.title} requested and approved.` : r.status === "already_requested"
-          ? `${x.title} was already requested.` : `Requested ${x.title}.`);
+          ? `${x.title} was already requested.` : r.status === "already_elsewhere" ? r.error : `Requested ${x.title}.`);
         b.textContent = "Requested";
       }
     } catch (e) { toast(e.message, "err"); b.disabled = false; }

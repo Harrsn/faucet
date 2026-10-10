@@ -4,8 +4,15 @@ import { ago, html, mount, raw } from "../../dom.js";
 import { confirmDialog, openModal } from "../../ui/modal.js";
 import { toast } from "../../ui/toast.js";
 
+const access = (u) => {
+  try { const a = JSON.parse(u.library_access || "null"); return Array.isArray(a) && a.length ? a : null; }
+  catch { return null; }
+};
+let libs = [];
+
 export async function render(el, ctx) {
-  const d = await api.get("/api/admin/users");
+  const [d, l] = await Promise.all([api.get("/api/admin/users"), api.get("/api/libraries")]);
+  libs = l.libraries;
   const me = ctx.me.id;
   const pending = d.users.filter((u) => u.status === "pending");
   const row = (u) => html`<div class="urow">
@@ -14,7 +21,8 @@ export async function render(el, ctx) {
       <span class="muted">${u.email || "no email"} · ${u.last_login ? `last seen ${ago(u.last_login)}` : "never signed in"}</span></span>
     <span class="ubadges"><span class="status ${u.status === "active" ? "have" : u.status === "pending" ? "upgrade" : "skipped"}">${u.status}</span>
       <span class="tagpill">${u.role === "admin" ? "Admin" : "Member"}</span>
-      ${u.role !== "admin" && u.can_autoapprove ? html`<span class="tagpill good">requests auto-approved</span>` : ""}</span>
+      ${u.role !== "admin" && u.can_autoapprove ? html`<span class="tagpill good">requests auto-approved</span>` : ""}
+      ${u.role !== "admin" && access(u) ? html`<span class="tagpill">sees ${access(u).map((id) => (libs.find((l) => l.id === id) || {}).name || "?").join(", ")}</span>` : ""}</span>
     <details class="menu"><summary aria-label="Actions for ${u.username}">${raw('<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>')}</summary>
       <div class="items">
         ${u.status === "pending" ? html`<button type="button" data-a="approve" data-u="${u.id}">Approve</button>` : ""}
@@ -22,6 +30,7 @@ export async function render(el, ctx) {
         ${u.status === "disabled" ? html`<button type="button" data-a="enable" data-u="${u.id}">Enable</button>` : ""}
         ${u.id !== me ? html`<button type="button" data-a="role" data-u="${u.id}">${u.role === "admin" ? "Make member" : "Make admin"}</button>` : ""}
         ${u.role !== "admin" ? html`<button type="button" data-a="trust" data-u="${u.id}">${u.can_autoapprove ? "Review their requests" : "Auto-approve their requests"}</button>` : ""}
+        ${u.role !== "admin" ? html`<button type="button" data-a="libs" data-u="${u.id}">Library access…</button>` : ""}
         <button type="button" data-a="reset" data-u="${u.id}">Password reset link…</button>
         ${u.id !== me ? html`<button type="button" class="danger" data-a="delete" data-u="${u.id}">Delete…</button>` : ""}
       </div></details></div>`;
@@ -59,6 +68,9 @@ export async function render(el, ctx) {
       else if (a === "delete") {
         if (!await confirmDialog(`Delete ${u.username}?`, "Their account and sessions are removed. Requests they made stay.", "Delete", true)) return;
         await api.del(`/api/admin/users/${u.id}`);
+      } else if (a === "libs") {
+        libraryAccess(u, () => render(el, ctx));
+        return;
       } else if (a === "reset") {
         const r = await api.post(`/api/admin/users/${u.id}/reset`);
         const link = `${location.origin}${r.reset_path}`;
@@ -83,6 +95,43 @@ export async function render(el, ctx) {
         email: f("email") || null, role: f("role"), status: "active" });
       toast(`Created ${f("username")}.`);
       render(el, ctx);
+    } catch (err) { toast(err.message, "err"); }
+  });
+}
+
+function libraryAccess(u, done) {
+  const cur = access(u);
+  const opt = (kind, chosen) => html`<option value="">The default ${kind === "tv" ? "TV" : "Movies"} library</option>
+    ${libs.filter((l) => l.kind === kind).map((l) => html`<option value="${l.id}"${chosen === l.id ? raw(" selected") : ""}>${l.name}</option>`)}`;
+  const m = openModal({ title: `Library access · ${u.username}`, body: html`<div class="stack">
+    <p class="muted" style="margin:0">What ${u.username} sees in Faucet — the sidebar, Home, Calendar, search and every show and movie page. Admins always see everything.</p>
+    <label class="check"><input type="checkbox" data-all${cur ? "" : raw(" checked")}><span>Every library</span></label>
+    <fieldset class="fset" data-list><legend>Only these</legend>
+      ${libs.map((l) => html`<label class="check"><input type="checkbox" data-lib="${l.id}"${!cur || cur.includes(l.id) ? raw(" checked") : ""}><span>${l.name} <span class="muted">· ${l.kind === "tv" ? "TV" : "Movies"}</span></span></label>`)}
+    </fieldset>
+    <div class="form2">
+      <label class="fld">TV requests go to<select class="field" data-rtv>${opt("tv", u.request_tv_library)}</select></label>
+      <label class="fld">Movie requests go to<select class="field" data-rmv>${opt("movie", u.request_movie_library)}</select></label>
+    </div>
+    <p class="muted" style="margin:0;font-size:12.5px">When they can only see one library of a kind, their requests go there even if this is left on the default.</p>
+    <div class="acts" style="justify-content:flex-end"><button class="btn line" type="button" data-cancel>Cancel</button>
+      <button class="btn" type="button" data-save>Save</button></div></div>` });
+  const b = m.body;
+  const all = b.querySelector("[data-all]");
+  const sync = () => { b.querySelector("[data-list]").disabled = all.checked; };
+  all.addEventListener("change", sync);
+  sync();
+  b.querySelector("[data-cancel]").addEventListener("click", () => m.close());
+  b.querySelector("[data-save]").addEventListener("click", async () => {
+    const ids = all.checked ? null : [...b.querySelectorAll("[data-lib]:checked")].map((x) => Number(x.dataset.lib));
+    if (ids && !ids.length) { toast("Pick at least one library, or tick Every library.", "err"); return; }
+    const num = (x) => (x.value ? Number(x.value) : null);
+    try {
+      await api.put(`/api/admin/users/${u.id}/libraries`, { libraries: ids,
+        request_tv_library: num(b.querySelector("[data-rtv]")), request_movie_library: num(b.querySelector("[data-rmv]")) });
+      toast(`Saved ${u.username}'s library access.`);
+      m.close();
+      done();
     } catch (err) { toast(err.message, "err"); }
   });
 }

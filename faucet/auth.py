@@ -133,7 +133,8 @@ def list_users() -> list[dict]:
     with db.connect() as c:
         rows = c.execute(
             "SELECT id, username, email, role, status, created_ts, last_login, "
-            "can_autoapprove FROM users ORDER BY id").fetchall()
+            "can_autoapprove, library_access, request_tv_library, request_movie_library "
+            "FROM users ORDER BY id").fetchall()
     return [dict(r) for r in rows]
 
 
