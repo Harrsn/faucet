@@ -761,8 +761,14 @@ function hiddenNote(n){return n?` · ${n} unsafe result${n===1?'':'s'} hidden (e
 async function jsend(u,m,b){const r=await fetch(u,{method:m,headers:{"Content-Type":"application/json","X-CSRF-Token":csrfToken()},body:b?JSON.stringify(b):undefined});if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||r.status);return r.json();}
 // deterministic hue for gradient placeholder art (no poster available)
 function hueOf(s){let h=0;for(const c of String(s||""))h=(h*31+c.charCodeAt(0))>>>0;return h%360;}
+// Only TMDb image URLs ever reach a style attribute or <img>. esc() alone is
+// not enough inside url('...'): the HTML parser decodes &#39; back to a quote
+// before the CSS parser runs, so a crafted "poster" could break out of url().
+const TMDB_IMG=/^https:\/\/image\.tmdb\.org\/t\/p\/[a-z0-9]+\/[A-Za-z0-9_\-]+\.(?:jpg|jpeg|png|webp)$/;
+function safeImg(u){return (typeof u==="string"&&TMDB_IMG.test(u))?u:"";}
+function bgImg(u){const s=safeImg(u);return s?`background-image:url('${s}')`:"";}
 function artStyle(poster,title){
-  if(poster)return `background-image:url('${esc(poster)}')`;
+  if(safeImg(poster))return bgImg(poster);
   const h=hueOf(title);
   return `background:linear-gradient(150deg,hsl(${h} 38% 38% / .55),hsl(${h} 30% 18% / .5) 60%,var(--panel2))`;
 }
@@ -1058,7 +1064,7 @@ async function openShowDetail(sid){
   const pct=d.total?Math.round(d.have/d.total*100):0;
   $("sdHero").innerHTML=`
   <div class="hero">
-    <div class="bg" style="${meta.backdrop?`background-image:url('${esc(meta.backdrop)}')`:artStyle(null,s.title)}"></div>
+    <div class="bg" style="${safeImg(meta.backdrop)?bgImg(meta.backdrop):artStyle(null,s.title)}"></div>
     <div class="veil"></div>
     <div class="hero-in">
       <div class="bigposter" style="${artStyle(s.poster||meta.poster,s.title)}">${(s.poster||meta.poster)?'':esc(s.title)}</div>
@@ -1249,7 +1255,7 @@ async function runFixSearch(){
     if(!rows.length){$("fixResults").innerHTML="<div class='muted'>No matches.</div>";return;}
     $("fixResults").innerHTML=rows.map(r=>`
       <div class="fix-row" data-tmdb="${r.tmdb_id}">
-        <img src="${r.poster?esc(r.poster):''}" onerror="this.style.visibility='hidden'">
+        <img src="${safeImg(r.poster)}" onerror="this.style.visibility='hidden'">
         <div><div class="fr-t">${esc(r.title)} ${r.year?`<span class="muted">(${r.year})</span>`:''}</div>
           <div class="fr-o">${esc(r.overview||'')}</div></div>
       </div>`).join("");
@@ -1406,7 +1412,7 @@ async function openMovieDetail(mid){
   const have=!!f||m.lib_status==='in_library';
   $("mdHero").innerHTML=`
   <div class="hero">
-    <div class="bg" style="${meta.backdrop?`background-image:url('${esc(meta.backdrop)}')`:artStyle(null,m.title)}"></div>
+    <div class="bg" style="${safeImg(meta.backdrop)?bgImg(meta.backdrop):artStyle(null,m.title)}"></div>
     <div class="veil"></div>
     <div class="hero-in">
       <div class="bigposter" style="${artStyle(m.poster||meta.poster,m.title)}">${(m.poster||meta.poster)?'':esc(m.title)}</div>
@@ -1768,7 +1774,7 @@ $("settingsBtn").addEventListener("click",async()=>{
 
     <div class="set-sec" data-sec="meta">
       <label class="fld">TMDb API key ${s.tmdb_enabled?'<span class="pchip ok">● enabled</span>':'<span class="pchip muted">○ disabled</span>'}</label>
-      <input type="text" id="st_tmdb" value="${esc(s.db&&s.db.tmdb_key||'')}" placeholder="paste TMDb key for title search + posters" style="width:100%">
+      <input type="password" id="st_tmdb" value="" autocomplete="off" placeholder="${env.TMDB_KEY_SET?'•••••••• saved — type a new key to replace it':'paste TMDb key for title search + posters'}" style="width:100%">
       <label class="fld">App title</label><input type="text" id="st_title" value="${esc(env.APP_TITLE||'Faucet')}" style="width:100%">
       <label class="fld">Default preferred language <span class="muted">(when a title has no profile)</span></label>
       <select id="st_lang" style="width:100%">${langOpts.map(([v,n])=>`<option value="${v}" ${(s.db&&s.db.default_language||'en')===v?'selected':''}>${n}</option>`).join('')}</select>
@@ -1833,7 +1839,6 @@ $("settingsBtn").addEventListener("click",async()=>{
   });
   $("st_save").addEventListener("click",async()=>{
     const vals={
-      tmdb_key:$("st_tmdb").value.trim(),
       default_language:$("st_lang").value, default_profile_id:$("st_defprof").value||"",
       JACKETT_URL:$("st_jurl").value.trim(), JACKETT_INDEXER:$("st_jidx").value.trim(),
       DOWNLOAD_CLIENT:$("st_client").value, CLIENT_URL:$("st_curl").value.trim(),
@@ -1849,6 +1854,7 @@ $("settingsBtn").addEventListener("click",async()=>{
     // only send password if the admin actually typed a new one
     const pw=$("st_cpass").value; if(pw)vals.CLIENT_PASS=pw;
     const jk=$("st_jkey").value.trim(); if(jk)vals.JACKETT_API_KEY=jk;
+    const tk=$("st_tmdb").value.trim(); if(tk)vals.tmdb_key=tk;
     try{
       const r=await jsend("/api/settings","PATCH",{values:vals});
       if(r.warnings&&r.warnings.length){
@@ -1939,7 +1945,7 @@ async function navRequests(){
   const resolved=reqs.filter(r=>r.status!=="pending");
   const statusPill=s=>`<span class="pill ${s==='approved'?'have':(s==='pending'?'want':'')}" ${s==='declined'?'style="color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,transparent)"':''}>${esc(s)}</span>`;
   const card=r=>`<div class="reqcard">
-    <div class="reqart" style="${r.poster?`background-image:url('${esc(r.poster)}')`:''}">${r.poster?'':(r.media_type==='tv'?'TV':'★')}</div>
+    <div class="reqart" style="${bgImg(r.poster)}">${safeImg(r.poster)?'':(r.media_type==='tv'?'TV':'★')}</div>
     <div class="reqbody">
       <div class="reqtitle">${esc(r.title)} ${r.year?`<span class="muted">(${r.year})</span>`:""}</div>
       <div class="reqsub">${statusPill(r.status)}<span class="muted">${esc(r.media_type==='tv'?'series':'movie')} · requested by ${esc(r.user||'?')}</span></div>

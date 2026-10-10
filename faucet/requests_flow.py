@@ -47,6 +47,22 @@ def create_request(user: dict, media_type: str, tmdb_id: int, title: str,
     """Create a request for a user. Auto-approves if the user is trusted.
     Returns {status, request_id, auto_approved, already_*}."""
     media_type = "tv" if media_type in ("tv", "series") else "movie"
+    # Title, year and poster come from TMDb, never from the client. They used
+    # to be stored exactly as the browser sent them and shown to admins in
+    # the request queue, so any member could put arbitrary text and image
+    # URLs in front of an admin, or request one title disguised as another.
+    # The passed-in values are only a fallback for installs without TMDb.
+    from . import tmdb
+    if tmdb.enabled():
+        meta = tmdb.details(int(tmdb_id), media_type)
+        if not meta or not meta.get("title"):
+            return {"status": "unknown_title",
+                    "error": "That title couldn't be verified with TMDb."}
+        title, year, poster = meta["title"], meta.get("year"), meta.get("poster")
+    else:
+        title = (title or "").strip()[:200]
+        year = year if isinstance(year, int) and 1870 <= year <= 2100 else None
+        poster = None
 
     # already in the library?
     match = _existing_library_match(media_type, tmdb_id)
