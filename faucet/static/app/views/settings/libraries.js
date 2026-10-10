@@ -37,7 +37,8 @@ export async function render(el) {
         ${lib.moves === "rename" ? html`<span class="istatus ok"><span class="dot"></span>Finished downloads move in instantly (same mount)</span>`
           : lib.moves === "copy" ? html`<span class="istatus bad"><span class="dot"></span>Finished downloads are copied in over the network — they arrive on a different mount (${dlMount}). See Settings → Path mappings.</span>` : ""}
       </div>
-      <div class="acts"><button class="btn line" type="button" data-edit="${lib.id}">Edit</button>
+      <div class="acts"><button class="btn line" type="button" data-import="${lib.id}">Import titles</button>
+        <button class="btn line" type="button" data-edit="${lib.id}">Edit</button>
         <button class="btn line" type="button" data-rm="${lib.id}">Remove</button></div>
     </article>`;
   }
@@ -97,6 +98,8 @@ export async function render(el) {
       try { await api.del(`/api/libraries/${lib.id}`); toast(`Removed ${lib.name}.`); load(); }
       catch (err) { toast(err.message, "err"); }
     }));
+    el.querySelectorAll("[data-import]").forEach((b) => b.addEventListener("click", () =>
+      importTitles(libs.find((l) => l.id === Number(b.dataset.import)))));
     el.querySelectorAll("[data-only]").forEach((b) => b.addEventListener("click", () => {
       onlyUnlinked = b.dataset.only === "1";
       draw();
@@ -163,6 +166,40 @@ export async function render(el) {
         toast(err.message, "err");
         e.target.disabled = false;
       }
+    });
+  }
+
+  function importTitles(lib) {
+    const m = openModal({ title: `Import ${lib.name}`, sub: lib.path, body: html`<div class="stack">
+      <p class="muted" style="margin:0">Every ${lib.kind === "tv" ? "show" : "movie"} in this library that Faucet doesn't track yet is matched against TMDb and added. They're filed into ${lib.name} from now on — other libraries are left alone.</p>
+      <fieldset class="fset"><legend>Then</legend>
+        <label class="check"><input type="radio" name="imon" value="none" checked><span>Just track what's there — don't download anything for these</span></label>
+        ${lib.kind === "tv" ? html`<label class="check"><input type="radio" name="imon" value="future"><span>Get new episodes as they air</span></label>` : ""}
+        <label class="check"><input type="radio" name="imon" value="all"><span>Hunt everything missing${lib.kind === "movie" ? " and better copies" : " (whole back catalogue)"}</span></label>
+      </fieldset>
+      <div class="acts" style="justify-content:flex-end"><button class="btn line" type="button" data-cancel>Cancel</button>
+        <button class="btn" type="button" data-go>Import</button></div>
+      <p class="muted" data-status style="margin:0"></p></div>` });
+    m.body.querySelector("[data-cancel]").addEventListener("click", () => m.close());
+    m.body.querySelector("[data-go]").addEventListener("click", async (e) => {
+      const monitor = m.body.querySelector('input[name="imon"]:checked').value;
+      e.target.disabled = true;
+      const status = m.body.querySelector("[data-status]");
+      try {
+        const r = await api.post(`/api/libraries/${lib.id}/import`, { monitor });
+        status.textContent = r.started ? "Scanning and matching against TMDb…" : "An import is already running…";
+        const poll = async () => {
+          const j = await api.get("/api/libraries/import");
+          if (j.running) { setTimeout(poll, 2500); return; }
+          const x = j.result || {};
+          if (x.error) { status.textContent = x.error; e.target.disabled = false; return; }
+          toast(`Imported ${x.shows_imported || 0} shows and ${x.movies_imported || 0} movies into ${lib.name}.`);
+          status.textContent = (x.unmatched || []).length
+            ? `Couldn't match: ${x.unmatched.map((u) => u.name).join(", ")} — add those by hand.` : "Done.";
+          load();
+        };
+        setTimeout(poll, 2000);
+      } catch (err) { toast(err.message, "err"); e.target.disabled = false; }
     });
   }
 

@@ -23,16 +23,30 @@ from . import movies as movies_mod
 log = logging.getLogger("faucet.import")
 
 
-def _distinct_shows() -> list[str]:
-    with db.connect() as c:
-        rows = c.execute("SELECT DISTINCT show_name FROM library_episodes").fetchall()
-    return [r["show_name"] for r in rows if r["show_name"]]
+def _in(path: str, prefixes) -> bool:
+    return prefixes is None or any(path.startswith(p) for p in prefixes)
 
 
-def _distinct_movies() -> list[dict]:
+def _distinct_shows(prefixes=None) -> list[str]:
     with db.connect() as c:
-        rows = c.execute("SELECT DISTINCT title, year FROM library_movies").fetchall()
-    return [{"title": r["title"], "year": r["year"]} for r in rows if r["title"]]
+        rows = c.execute("SELECT show_name, path FROM library_episodes").fetchall()
+    seen: list[str] = []
+    for r in rows:
+        if r["show_name"] and _in(r["path"] or "", prefixes) and r["show_name"] not in seen:
+            seen.append(r["show_name"])
+    return seen
+
+
+def _distinct_movies(prefixes=None) -> list[dict]:
+    with db.connect() as c:
+        rows = c.execute("SELECT title, year, path FROM library_movies").fetchall()
+    out, seen = [], set()
+    for r in rows:
+        key = (r["title"], r["year"])
+        if r["title"] and _in(r["path"] or "", prefixes) and key not in seen:
+            seen.add(key)
+            out.append({"title": r["title"], "year": r["year"]})
+    return out
 
 
 def _already_have_series(show_name: str) -> bool:
@@ -108,13 +122,26 @@ def _best_tmdb_match(name: str, kind: str, year=None) -> dict | None:
     return None
 
 
-def import_library(profile_id: int | None = None, default_monitor: bool = True) -> dict:
+def import_library(profile_id: int | None = None, default_monitor: bool = True,
+                   library_ids: list[int] | None = None, monitor: str = "all") -> dict:
     """Discover shows + movies on disk and auto-create monitored entries.
     Requires a TMDb key (for matching). Returns a summary with imported and
-    unmatched lists."""
+    unmatched lists.
+
+    `library_ids` limits it to those libraries (import Mamaw's folder without
+    adopting everything else on disk). `monitor`: 'all' hunts what's missing
+    and better copies, 'future' only new episodes, 'none' just tracks what's
+    there. Imported titles are filed into the library their files are in."""
+    from . import libraries as libs_mod
     db.init()
     if not tmdb.enabled():
         return {"error": "TMDb key required for auto-import (set it in Settings)."}
+    if monitor not in ("all", "future", "none"):
+        monitor = "all"
+    prefixes = None
+    if library_ids:
+        prefixes = [lib["path"].rstrip("/") + "/" for lib in libs_mod.all_libraries()
+                    if lib["id"] in set(library_ids)]
 
     # make sure the on-disk inventory is current
     library.scan()
@@ -123,7 +150,7 @@ def import_library(profile_id: int | None = None, default_monitor: bool = True) 
               "movies_skipped": 0, "unmatched": []}
 
     # shows
-    for name in _distinct_shows():
+    for name in _distinct_shows(prefixes):
         if _already_have_series(name):
             result["shows_skipped"] += 1
             continue
@@ -134,7 +161,10 @@ def import_library(profile_id: int | None = None, default_monitor: bool = True) 
         try:
             sid = series_mod.add_series(match["tmdb_id"], match["title"], match.get("year"),
                                   match.get("poster"), profile_id)
-            series_mod.reconcile(sid)
+            if monitor != "all":
+                series_mod.set_monitor_mode(sid, monitor)    # reconciles
+            else:
+                series_mod.reconcile(sid)
             result["shows_imported"] += 1
             log.info("Auto-imported show: %s (tmdb %s)", match["title"], match["tmdb_id"])
         except Exception as e:                       # noqa: BLE001
@@ -142,7 +172,7 @@ def import_library(profile_id: int | None = None, default_monitor: bool = True) 
             result["unmatched"].append({"name": name, "kind": "show"})
 
     # movies
-    for mv in _distinct_movies():
+    for mv in _distinct_movies(prefixes):
         if _already_have_movie(mv["title"], mv["year"]):
             result["movies_skipped"] += 1
             continue
@@ -151,12 +181,23 @@ def import_library(profile_id: int | None = None, default_monitor: bool = True) 
             result["unmatched"].append({"name": mv["title"], "kind": "movie"})
             continue
         try:
-            movies_mod.add_movie(match["tmdb_id"], match["title"], match.get("year"),
-                                 match.get("poster"), profile_id)
+            mid = movies_mod.add_movie(match["tmdb_id"], match["title"], match.get("year"),
+                                       match.get("poster"), profile_id)
+            if monitor == "none" and mid:
+                with db.connect() as c:          # track it, don't hunt it (not even upgrades)
+                    c.execute("UPDATE movies SET monitored=0 WHERE id=?", (mid,))
+                    c.execute("DELETE FROM wanted WHERE kind='movie' AND series_id=?", (mid,))
             result["movies_imported"] += 1
             log.info("Auto-imported movie: %s (tmdb %s)", match["title"], match["tmdb_id"])
         except Exception as e:                       # noqa: BLE001
             log.warning("Import failed for movie %s: %s", mv["title"], e)
             result["unmatched"].append({"name": mv["title"], "kind": "movie"})
 
+    # link the new shows to their folders and file every new title into the
+    # library its files are in
+    try:
+        libs_mod.auto_link()
+        result["assigned"] = libs_mod.assign_from_files()
+    except Exception as e:                       # noqa: BLE001
+        log.warning("post-import linking failed: %s", e)
     return result

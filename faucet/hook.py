@@ -131,7 +131,8 @@ def main():
     env = dict(os.environ, FAUCET_PATH=path, CASCADE_PATH=path)
     try:
         from . import libraries
-        env.update(libraries.sorter_env())       # file into the default libraries
+        # the default libraries, or this title's own (Mamaw's Shows, say)
+        env.update(libraries.sorter_env(name or os.path.basename(path.rstrip("/"))))
     except Exception as e:                       # noqa: BLE001 - fall back to the fixed layout
         print(f"library lookup failed ({e}); using LIBRARY_ROOT layout", file=sys.stderr)
     res = subprocess.run([sys.executable, str(sorter)], env=env)

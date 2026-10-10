@@ -290,6 +290,10 @@ def _migrate(c) -> None:
         # three-state library status (Sonarr-like): monitored | in_library | ignored
         ("series", "lib_status", "TEXT DEFAULT 'monitored'"),
         ("movies", "lib_status", "TEXT DEFAULT 'monitored'"),
+        # where this title's downloads are filed (libraries.id); NULL = the
+        # default library of its kind
+        ("series", "library_id", "INTEGER"),
+        ("movies", "library_id", "INTEGER"),
         # per-profile preferred release language (ISO-639-1, e.g. 'en'); 'any'
         # disables the filter. Falls back to the global default when blank.
         ("profiles", "language", "TEXT DEFAULT 'en'"),

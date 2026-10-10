@@ -108,7 +108,7 @@ def _sort_one(item: Path, dry: bool) -> int:
     env = dict(os.environ, FAUCET_PATH=str(item), CASCADE_PATH=str(item))
     try:
         from . import libraries
-        env.update(libraries.sorter_env())
+        env.update(libraries.sorter_env(item.name))
     except Exception:                            # noqa: BLE001 - fall back to the fixed layout
         pass
     cmd = [sys.executable, str(sorter)]

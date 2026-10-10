@@ -321,16 +321,21 @@ def mark_scanned(lib_ids) -> None:
             c.execute("UPDATE libraries SET last_scan=? WHERE id=?", (_now(), lid))
 
 
-def sorter_env() -> dict:
+def sorter_env(release_name: str = "") -> dict:
     """Environment for the sorter subprocess: where to file TV and movies.
     The sorter stays free of the database; the hook and sweep resolve the
-    default libraries and hand them over."""
+    default libraries — or, for a title filed elsewhere, its library — and
+    hand them over."""
     env = {}
     tv, mv = default_path("tv"), default_path("movie")
     if tv:
         env["FAUCET_TV_DIR"] = tv
     if mv:
         env["FAUCET_MOVIES_DIR"] = mv
+    try:
+        env.update(route(release_name))
+    except Exception as e:                       # noqa: BLE001 - routing never blocks a sort
+        log.warning("routing %r failed (%s); using the default libraries", release_name, e)
     return env
 
 
@@ -353,6 +358,7 @@ def link_folder(library_id: int, folder: str, series_id: int, auto: bool = False
         lib = c.execute("SELECT path FROM libraries WHERE id=?", (library_id,)).fetchone()
         if lib:
             _stamp(c, lib["path"], folder, series_id)
+        _claim(c, "series", series_id, library_id)
 
 
 def unlink_folder(library_id: int, folder: str) -> None:
@@ -426,6 +432,100 @@ def links(series_id: int | None = None) -> list[dict]:
             q += " WHERE l.series_id=?"
             args = (series_id,)
         return [dict(r) for r in c.execute(q + " ORDER BY b.name, l.folder", args)]
+
+
+# ── where each title's downloads go ─────────────────────────────────────────
+
+def _claim(c, table: str, title_id: int, library_id: int) -> None:
+    """A title whose files live in a non-default library is filed there from
+    now on — unless someone already chose its library."""
+    lib = c.execute("SELECT kind, is_default FROM libraries WHERE id=?", (library_id,)).fetchone()
+    if lib is None or lib["is_default"]:
+        return
+    if (table == "series") != (lib["kind"] == "tv"):
+        return
+    c.execute(f"UPDATE {table} SET library_id=? WHERE id=? AND library_id IS NULL",
+              (library_id, title_id))
+
+
+def assign_from_files() -> dict:
+    """Give unassigned titles the library their files are in, when that's a
+    non-default one (Mamaw's Shows, say). Shows go by their linked folders,
+    movies by the file that satisfies them. Never overrides a choice."""
+    from . import movies as movies_mod
+    out = {"series": 0, "movies": 0}
+    with db.connect() as c:
+        for r in c.execute("SELECT l.series_id, GROUP_CONCAT(DISTINCT l.library_id) AS libs "
+                           "FROM library_links l JOIN series s ON s.id=l.series_id "
+                           "WHERE s.library_id IS NULL GROUP BY l.series_id").fetchall():
+            libs = {int(x) for x in (r["libs"] or "").split(",") if x}
+            if len(libs) == 1:
+                before = c.total_changes
+                _claim(c, "series", r["series_id"], libs.pop())
+                out["series"] += c.total_changes - before
+        unassigned = [dict(m) for m in c.execute(
+            "SELECT id, title, year FROM movies WHERE library_id IS NULL").fetchall()]
+    for m in unassigned:
+        row = movies_mod._owned_row(m)
+        lib = containing(row["path"]) if row and row["path"] else None
+        if lib:
+            with db.connect() as c:
+                before = c.total_changes
+                _claim(c, "movies", m["id"], lib["id"])
+                out["movies"] += c.total_changes - before
+    return out
+
+
+def title_library(kind: str, title_id: int) -> dict | None:
+    """The library a show ('tv') or movie ('movie') is filed into."""
+    table = "series" if kind == "tv" else "movies"
+    with db.connect() as c:
+        r = c.execute(f"SELECT b.* FROM {table} t JOIN libraries b ON b.id=t.library_id "
+                      f"WHERE t.id=? AND b.enabled=1 AND b.kind=?", (title_id, kind)).fetchone()
+    if r:
+        return dict(r)
+    for lib in of_kind(kind):
+        if lib["is_default"]:
+            return lib
+    libs = of_kind(kind)
+    return libs[0] if libs else None
+
+
+def set_title_library(kind: str, title_id: int, library_id: int | None) -> None:
+    """Choose where a title is filed; None = follow the default library."""
+    table = "series" if kind == "tv" else "movies"
+    if library_id is not None:
+        lib = get(library_id)
+        if lib is None or lib["kind"] != kind:
+            raise ValueError(f"not a {'TV' if kind == 'tv' else 'Movies'} library")
+    with db.connect() as c:
+        if not c.execute(f"SELECT 1 FROM {table} WHERE id=?", (title_id,)).fetchone():
+            raise LookupError("no such title")
+        c.execute(f"UPDATE {table} SET library_id=? WHERE id=?", (library_id, title_id))
+
+
+def route(release_name: str) -> dict:
+    """Destination overrides for one finished download: if the release is a
+    monitored title filed in a non-default library, point the sorter there.
+    Only unambiguous matches route; anything else uses the defaults."""
+    from . import releasematch
+    name = (release_name or "").strip()
+    if not name:
+        return {}
+    out = {}
+    with db.connect() as c:
+        shows = c.execute("SELECT s.title, s.library_id, b.path FROM series s JOIN libraries b "
+                          "ON b.id=s.library_id WHERE b.enabled=1 AND b.kind='tv'").fetchall()
+        films = c.execute("SELECT m.title, m.year, m.library_id, b.path FROM movies m JOIN libraries b "
+                          "ON b.id=m.library_id WHERE b.enabled=1 AND b.kind='movie'").fetchall()
+    tv = {r["path"] for r in shows if releasematch.matches_series(name, r["title"])}
+    if len(tv) == 1:
+        out["FAUCET_TV_DIR"] = tv.pop()
+    if releasematch.title_before_episode_marker(name) is None:      # not an episode
+        mv = {r["path"] for r in films if releasematch.matches_movie(name, r["title"], r["year"])}
+        if len(mv) == 1:
+            out["FAUCET_MOVIES_DIR"] = mv.pop()
+    return out
 
 
 # ── path mappings ───────────────────────────────────────────────────────────
