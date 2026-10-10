@@ -4,6 +4,20 @@
 
 ### Added
 
+- **New UI, step 1 (Direction A).** A sidebar shell (Library · Browse ·
+  Manage — members see only the first two), a ⌘K / `/` search palette
+  (your library instantly, TMDb with one-click Monitor or Request, and for
+  admins releases across every indexer on demand), and a new Home: the
+  newest arrival as a hero with its backdrop, then rails — recently added
+  episodes with TMDb stills, downloads (live), movies, and shows still
+  being hunted — with arrow buttons instead of a bare scrollbar. Native
+  ES modules, no build step, no dependencies; every value is escaped by the
+  one template helper that touches the DOM. Works on phones (drawer menu).
+  `GET /api/home`.
+- **The previous UI stays at `/classic`** while the rest is rebuilt; pages
+  the new UI doesn't have yet open there (deep links such as
+  `/classic#show/12`).
+
 - **Libraries.** Folders Faucet scans and files into are records
   (`name`, TV or Movies, folder, which one new downloads go to) instead of
   the fixed `LIBRARY_ROOT/tvshows` + `LIBRARY_ROOT/movies`. An existing
