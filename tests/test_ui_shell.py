@@ -73,7 +73,7 @@ def app(tmp_path, monkeypatch):
 
 def test_routes_and_caching(app):
     r = app.admin.get("/")
-    assert r.status_code == 200 and "/static/app/main.js" in r.text
+    assert r.status_code == 200 and "/main.js" in r.text
     assert "no-store" in r.headers["cache-control"]
     c = app.admin.get("/classic")
     assert c.status_code == 200 and "classicDeepLink" in c.text
@@ -137,3 +137,33 @@ def test_home_empty_library(app, monkeypatch):
     monkeypatch.setattr(app.m["app"], "client", lambda: _NoClient())
     d = app.admin.get("/api/home").json()
     assert d["episodes"] == [] and d["hero"] is None and d["movies"] == []
+
+
+def test_shell_loads_content_hashed_modules(app):
+    """Cloudflare rewrote no-cache to max-age=14400, so browsers kept 6.1's
+    modules after 6.2 deployed. Modules now load from /app/<hash>/."""
+    v = app.m["app"].ASSET_VERSION
+    shell = app.admin.get("/").text
+    assert f'src="/app/{v}/main.js"' in shell and f'href="/app/{v}/styles/app.css"' in shell
+    assert "/static/app/" not in shell
+    cur = app.anon.get(f"/app/{v}/links.js")                     # public, like /static
+    assert cur.status_code == 200 and "immutable" in cur.headers["cache-control"]
+    assert cur.headers["content-type"].startswith("text/javascript")
+    old = app.anon.get("/app/0123456789ab/links.js")              # a page open across a deploy
+    assert old.status_code == 200 and old.headers["cache-control"] == "no-cache"
+    for bad in ("/app/x/../../app.py", "/app/x/%2e%2e/%2e%2e/app.py", "/app/x/package.json.bak",
+                "/app/x/nope.js"):
+        r = app.anon.get(bad)                     # never the file; a normalised
+        assert r.status_code in (302, 404) and "import" not in r.text, bad   # path is just auth-gated
+
+
+def test_asset_version_changes_with_content(app, tmp_path, monkeypatch):
+    m = app.m["app"]
+    before = m._asset_version()
+    d = tmp_path / "appdir"
+    (d / "ui").mkdir(parents=True)
+    (d / "main.js").write_text("a")
+    monkeypatch.setattr(m, "APP_DIR", d)
+    v1 = m._asset_version()
+    (d / "ui" / "x.js").write_text("b")
+    assert v1 != m._asset_version() and before != v1
