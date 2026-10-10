@@ -4,6 +4,29 @@
 
 ### Added
 
+- **New UI, step 2: TV Shows and Movies.** Poster grids with filters
+  (missing, complete, continuing, ended, not monitored / on disk, wanted,
+  upgrading), sort and a title filter. Show pages: backdrop header, genres
+  and status, completion, Hunt missing, monitor mode and quality profile,
+  Fix match and Remove in a ⋯ menu; season cards; episode rows with TMDb
+  stills, air dates and a status each (on disk / downloading / missing with
+  the next search time / unaired / not monitored); per-episode and
+  season-pack release search; Hunt log and Files tabs. Movie pages: what's
+  on disk (quality, source, size, path), what the hunter is doing, release
+  search, hunt log. `GET /api/series/{id}/detail`,
+  `GET /api/movies/{id}/releases`, `POST /api/movies/{id}/grab`.
+- Home groups a season pack into one card ("S02 · 7 episodes") that opens
+  the show at that season; chips on posters are opaque; "still hunting"
+  never shows 100% while something is wanted.
+
+### Fixed
+
+- Episode stills: seasons cached before stills were kept are re-fetched,
+  and pages read stills from the cache only (missing ones are fetched in
+  the background) so Home and show pages never wait on TMDb.
+- The Shows list counts aired, non-special episodes — the same total the
+  show page shows.
+
 - **New UI, step 1 (Direction A).** A sidebar shell (Library · Browse ·
   Manage — members see only the first two), a ⌘K / `/` search palette
   (your library instantly, TMDb with one-click Monitor or Request, and for
