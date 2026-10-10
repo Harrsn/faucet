@@ -1229,6 +1229,58 @@ def api_wanted():
     return {"wanted": series_mod.list_wanted()}
 
 
+@app.get("/api/wanted/log")
+def api_wanted_log(kind: str = Query(..., pattern="^(episode|movie)$"),
+                   series_id: int = Query(...), season: int | None = None,
+                   episode: int | None = None,
+                   limit: int = Query(100, ge=1, le=500)):
+    """Hunt history for a show (kind=episode, optionally one season/episode)
+    or a movie (kind=movie, series_id = movie id), newest first, plus the
+    current want row(s) with their backoff state."""
+    from . import huntlog
+    entries = huntlog.entries(kind=kind, series_id=series_id, season=season,
+                              episode=episode, limit=limit)
+    q = "SELECT * FROM wanted WHERE kind=? AND series_id=?"
+    args: list = [kind, series_id]
+    if season is not None:
+        q += " AND season=?"
+        args.append(season)
+    if episode is not None:
+        q += " AND episode=?"
+        args.append(episode)
+    with db.connect() as c:
+        wants = [dict(r) for r in c.execute(q + " ORDER BY season, episode", args)]
+    return {"entries": entries, "wants": wants}
+
+
+@app.get("/api/indexers/health")
+def api_indexer_health():
+    from . import indexerhealth
+    return indexerhealth.report()
+
+
+@app.post("/api/indexers/probe")
+def api_indexer_probe():
+    from . import indexerhealth
+    return indexerhealth.probe()
+
+
+@app.get("/api/library/duplicates")
+def api_library_duplicates():
+    from . import library
+    return library.duplicates()
+
+
+class RetireBody(BaseModel):
+    paths: list[str] | None = None      # None = every recorded duplicate
+
+
+@app.post("/api/library/duplicates/retire")
+def api_library_duplicates_retire(body: RetireBody):
+    from . import library
+    return library.retire_duplicates(body.paths)
+
+
 # --- monitored movies (Radarr-side) ---
 class MovieAdd(BaseModel):
     tmdb_id: int

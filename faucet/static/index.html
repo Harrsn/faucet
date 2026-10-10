@@ -355,6 +355,13 @@
   .pchip.warn{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent);}
   .pchip.bad{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,transparent);}
   .pchip.muted{color:var(--muted);}
+  .hl-row{display:grid;grid-template-columns:86px 70px 108px 1fr;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12px;align-items:baseline;}
+  .hl-row .t{color:var(--muted);font-size:10.5px;font-family:var(--mono);white-space:nowrap;}
+  .hl-row .k{font-family:var(--mono);font-size:11px;}
+  .hl-row .why{color:var(--muted);font-size:11px;margin-top:3px;}
+  .hl-row .rel{word-break:break-word;}
+  .ih-row{display:grid;grid-template-columns:1fr 70px 70px 1.3fr;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:12px;align-items:baseline;}
+  .ih-row.h{color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;}
   .set-warn{background:color-mix(in srgb,var(--accent) 10%,transparent);
     border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);border-radius:9px;
     padding:11px 13px;font-size:12px;color:var(--txt);margin-bottom:14px;line-height:1.5;}
@@ -911,7 +918,7 @@ async function loadDashboard(withRails){
       <div class="v" style="font-size:14px;flex-direction:column;align-items:flex-start;gap:6px">
         <span class="spill ${(d.indexer&&d.indexer.configured)?'ok':'err'}"><i></i>${(d.indexer&&d.indexer.configured)?'Indexer':'Indexer not configured'}</span>
         <span class="spill ${tr.client_ok?'ok':'err'}"><i></i>${tr.client_ok?'Client':'Client offline'}</span>
-      </div></div>
+      </div><div class="foot"><span class="dlink" data-go="indexers">indexer health →</span></div></div>
     ${tile("Throughput",`${esc(tr.down_h||'0 B/s')} <small>↓</small>`,`<b>${esc(tr.up_h||'0 B/s')}</b> ↑ · ${tr.downloading||0} active · ${tr.seeding||0} seeding`)}
     ${tile("Library",`${lib.shows||0} <small>shows</small>`,`<b>${lib.movies||0}</b> movies · <b>${lib.episodes_have||0}</b>/${lib.episodes_total||0} eps (${epPct}%)`)}
     ${tile("Wanted",lib.wanted||0,rq.pending?`<span class="dlink" data-go="requests"><b>${rq.pending}</b> pending request${rq.pending===1?'':'s'} →</span>`:'requests all clear',lib.wanted?'warn':'good')}
@@ -947,6 +954,7 @@ async function loadDashboard(withRails){
     if(g==="requests")navRequests();
     else if(g==="users"&&$("usersBtn"))$("usersBtn").click();
     else if(g==="activity")$("activityBtn").click();
+    else if(g==="indexers")openIndexerHealth();
   }));
   if($("dashClock"))$("dashClock").textContent=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
   if(withRails)loadDashRails();
@@ -1091,6 +1099,7 @@ async function openShowDetail(sid){
             <option value="ignored">status: ignored</option>
           </select>
           <select class="hsel admin-only" id="sdProfile"></select>
+          <button class="btn ghost admin-only" id="sdLog">hunt log</button>
           <button class="btn ghost admin-only" id="sdFixMatch">fix match</button>
           <button class="btn ghost admin-only" id="sdFixLoc">fix location</button>
           <button class="btn danger admin-only" id="sdRemove">remove</button>
@@ -1162,6 +1171,7 @@ async function openShowDetail(sid){
     catch(_){toast("Couldn't update profile","err");}
   });
   $("sdFixMatch")&&$("sdFixMatch").addEventListener("click",()=>openFixMatch("show",sid,s.title));
+  $("sdLog")&&$("sdLog").addEventListener("click",()=>openHuntLog("episode",sid,s.title));
   $("sdFixLoc")&&$("sdFixLoc").addEventListener("click",()=>openFileBrowser(""));
   $("sdRemove")&&$("sdRemove").addEventListener("click",async()=>{
     if(!confirm(`Stop monitoring ${s.title}? Files on disk are not touched.`))return;
@@ -1176,7 +1186,9 @@ async function openEpisodeSearch(sid,showTitle,season,episode,epTitle){
   const tag=`S${String(season).padStart(2,'0')}E${String(episode).padStart(2,'0')}`;
   openModal(`${showTitle} · ${tag}`,`
     <div class="muted" style="margin-top:0;font-size:12.5px">${esc(epTitle||'')}</div>
+    <div id="epsum"></div>
     <div id="epsr" style="margin-top:12px"><div class="muted">searching the indexer…</div></div>`);
+  episodeHuntSummary(sid,season,episode).then(h=>{if($("epsum"))$("epsum").innerHTML=h;});
   let d;
   try{ d=await jget(`/api/series/${sid}/episodes/${season}/${episode}/releases`); }
   catch(e){ $("epsr").innerHTML=`<div class='empty'>Search failed: ${esc(e.message)}</div>`; return; }
@@ -1434,6 +1446,7 @@ async function openMovieDetail(mid){
             <option value="ignored">status: ignored</option>
           </select>
           <select class="hsel admin-only" id="mdProfile"></select>
+          <button class="btn ghost admin-only" id="mdLog">hunt log</button>
           <button class="btn ghost admin-only" id="mdFixMatch">fix match</button>
           <button class="btn ghost admin-only" id="mdFixLoc">fix location</button>
           <button class="btn danger admin-only" id="mdRemove">remove</button>
@@ -1465,6 +1478,7 @@ async function openMovieDetail(mid){
     catch(_){toast("Couldn't update profile","err");}
   });
   $("mdFixMatch")&&$("mdFixMatch").addEventListener("click",()=>openFixMatch("movie",mid,m.title));
+  $("mdLog")&&$("mdLog").addEventListener("click",()=>openHuntLog("movie",mid,m.title));
   $("mdFixLoc")&&$("mdFixLoc").addEventListener("click",()=>openFilePicker(mid,""));
   $("mdRemove")&&$("mdRemove").addEventListener("click",async()=>{
     if(!confirm(`Stop monitoring ${m.title}? Files on disk are not touched.`))return;
@@ -1869,17 +1883,107 @@ $("settingsBtn").addEventListener("click",async()=>{
   });
 });
 
+// ============ hunt log / indexer health / duplicates (ops visibility) ============
+const REASON_LABEL={blocklisted:"already tried",wrong_title:"wrong title",pack:"pack / not this item",
+  not_upgrade:"not better than owned",seeders:"too few seeders",size:"size limits",resolution:"resolution",
+  cam:"cam/telesync",language:"language",profile:"profile"};
+function reasonsText(r){const e=Object.entries(r||{}).sort((a,b)=>b[1]-a[1]);
+  return e.map(([k,n])=>`${n} ${REASON_LABEL[k]||k}`).join(" · ");}
+function shortTs(ts){return ts?esc(ts.replace("T"," ").slice(5,16)):"";}
+function outcomePill(o){const m={grabbed:["ok","grabbed"],miss:["muted","nothing usable"],
+  error:["bad","search failed"],add_failed:["bad","client refused"]};const [c,l]=m[o]||["muted",o];
+  return `<span class="pchip ${c}" style="margin-left:0;white-space:nowrap">${l}</span>`;}
+function itemTag(e){return e.kind==="movie"?"":e.kind==="pack"?`S${String(e.season).padStart(2,'0')} pack`
+  :`S${String(e.season).padStart(2,'0')}E${String(e.episode).padStart(2,'0')}`;}
+function huntRows(entries){
+  if(!entries.length)return "<div class='empty'>No hunt attempts recorded yet. They appear after the next scheduler tick searches for this.</div>";
+  return entries.map(e=>`<div class="hl-row">
+    <span class="t">${shortTs(e.ts)}</span><span class="k">${itemTag(e)}</span><span>${outcomePill(e.outcome)}</span>
+    <div><div class="rel">${e.release?esc(e.release):e.outcome==="error"?'':`<span class="muted">${e.results||0} result${e.results===1?'':'s'}</span>`}
+      ${e.release?`<span class="muted"> · ${esc(e.tracker||'?')} · ${e.seeders??'?'} seeders</span>`:''}</div>
+      ${reasonsText(e.reasons)?`<div class="why">rejected: ${esc(reasonsText(e.reasons))}</div>`:''}
+      ${e.detail?`<div class="why">${esc(e.detail)}</div>`:''}
+      ${e.outcome==="miss"&&e.next_search?`<div class="why">next search ${shortTs(e.next_search)}</div>`:''}</div>
+  </div>`).join("");}
+async function openHuntLog(kind,id,title){
+  openModal(`Hunt log · ${title}`,`<div class="muted">loading…</div>`);
+  let d;try{d=await jget(`/api/wanted/log?kind=${kind}&series_id=${id}&limit=200`);}
+  catch(e){$("modalBody").innerHTML=`<div class='empty'>Couldn't load: ${esc(e.message)}</div>`;return;}
+  const w=d.wants||[];const backed=w.filter(x=>x.status==="wanted"&&x.next_search);
+  $("modalBody").innerHTML=`<div class="hint" style="margin-bottom:8px">${w.length} open want${w.length===1?'':'s'}
+    ${w.length?` · ${w.filter(x=>x.status==='grabbed').length} grabbed · ${backed.length} waiting on backoff`:''}.
+    Every search the hunter ran in the last two weeks, newest first.</div>${huntRows(d.entries||[])}`;
+}
+async function episodeHuntSummary(sid,season,episode){
+  try{const d=await jget(`/api/wanted/log?kind=episode&series_id=${sid}&season=${season}&episode=${episode}&limit=3`);
+    const w=(d.wants||[])[0];const last=(d.entries||[])[0];
+    if(!w&&!last)return "";
+    let s=w?`want: <b>${esc(w.status)}</b> (${esc(w.reason||'')})${w.search_count?` · ${w.search_count} fruitless search${w.search_count===1?'':'es'}`:''}${w.status==='wanted'&&w.next_search?` · next ${shortTs(w.next_search)}`:''}`:"no open want";
+    if(last)s+=` · last hunt ${shortTs(last.ts)}: ${last.release?esc(last.release):`${last.results||0} results`}${reasonsText(last.reasons)?` — ${esc(reasonsText(last.reasons))}`:''}`;
+    return `<div class="hint" style="margin:6px 0 0">${s}</div>`;
+  }catch(_){return "";}
+}
+async function openIndexerHealth(){
+  openModal("Indexer health",`<div class="muted">loading…</div>`);
+  const render=d=>{
+    const s=d.search||{},p=d.probe,g=d.grabs||{};
+    const errs=Object.entries(s.errors||{}).map(([k,n])=>`${n}× ${esc(k)}`).join(" · ")||"none";
+    const trk=Object.entries(s.trackers||{}).slice(0,12);
+    const probeRows=p&&p.indexers&&p.indexers.length?p.indexers.map(x=>`<div class="ih-row">
+      <span>${esc(x.name)}</span><span>${x.ok?'<span class="pchip ok" style="margin-left:0">ok</span>':'<span class="pchip bad" style="margin-left:0">fail</span>'}</span>
+      <span class="muted">${x.ms} ms</span><span class="muted">${x.ok?`${x.results} result${x.results===1?'':'s'}`:esc(x.error||'')}</span></div>`).join("")
+      :`<div class='empty'>${p&&p.error?esc(p.error):'Not probed yet.'}</div>`;
+    const grabRows=Object.entries(g).sort((a,b)=>b[1].grabs-a[1].grabs).map(([t,x])=>`<div class="ih-row">
+      <span>${esc(t)}</span><span>${x.grabs} grab${x.grabs===1?'':'s'}</span><span class="muted">${x.completed} done</span>
+      <span>${x.stalled?`<span class="pchip ${x.stall_rate>=.5?'bad':'warn'}" style="margin-left:0">${x.stalled} stalled</span>`:'<span class="muted">no stalls</span>'}
+      ${x.stall_rate!=null?`<span class="muted"> · ${Math.round(x.stall_rate*100)}% stall rate</span>`:''}</span></div>`).join("")
+      ||"<div class='empty'>No hunter grabs in the last 14 days.</div>";
+    $("modalBody").innerHTML=`
+      <label class="fld" style="margin-top:0">Searches · last 24h</label>
+      <div class="hint">${s.searches||0} searches · ${s.failed||0} failed · ${s.empty||0} returned nothing
+        ${s.p50_ms!=null?` · median ${s.p50_ms} ms · p95 ${s.p95_ms} ms`:''}<br>errors: ${errs}</div>
+      ${trk.length?`<div class="hint" style="margin-top:6px">results by tracker: ${trk.map(([t,n])=>`${esc(t)} ${n}`).join(" · ")}</div>`:''}
+      <label class="fld">Per-indexer probe ${p&&p.ts?`<span class="muted">· ${shortTs(p.ts)}</span>`:''}</label>
+      <div class="hint" style="margin-bottom:4px">Each Jackett indexer queried on its own. The 'all' endpoint waits for the slowest one, so a single failing tracker shows up as timeouts on every search.</div>
+      <div class="ih-row h"><span>indexer</span><span>status</span><span>latency</span><span>result</span></div>${probeRows}
+      <button class="btn ghost" id="ihProbe" style="margin-top:10px">probe now</button>
+      <label class="fld">Hunter grabs by tracker · last 14 days</label>
+      <div class="hint" style="margin-bottom:4px">Trackers whose grabs mostly stall are ranked lower automatically.</div>${grabRows}`;
+    $("ihProbe").addEventListener("click",async()=>{$("ihProbe").disabled=true;$("ihProbe").textContent="probing…";
+      try{await jsend("/api/indexers/probe","POST");render(await jget("/api/indexers/health"));}
+      catch(e){toast(e.message||"Probe failed","err");$("ihProbe").disabled=false;$("ihProbe").textContent="probe now";}});
+  };
+  try{render(await jget("/api/indexers/health"));}
+  catch(e){$("modalBody").innerHTML=`<div class='empty'>Couldn't load: ${esc(e.message)}</div>`;}
+}
+function dupesSection(dd){
+  if(!dd||!dd.count)return "";
+  return `<label class="fld">Duplicate copies (${dd.count} · ${human(dd.bytes)})</label>
+    <div class="hint" style="margin-bottom:6px">Files whose episode or movie is already held by a copy at least as good. Retiring moves them (and their subtitles) to <code>_superseded/</code> under the library root, keeping the same folder layout, so it's reversible.</div>
+    <div style="max-height:240px;overflow-y:auto;border:1px solid var(--line);border-radius:7px;padding:8px">
+    ${dd.items.map(x=>`<div class="hist-row"><span class="hn">${esc(x.label)}<div class="muted" style="font-size:10.5px">${esc(x.name)} → keeps ${esc(x.winner_name)}</div></span><span class="he">${esc(x.quality||'?')}</span><span class="ht">${human(x.size)}</span></div>`).join("")}</div>
+    <button class="btn" id="dupRetire" style="margin-top:10px">retire all ${dd.count} to _superseded</button>`;
+}
+
 // ============ scan report (diagnostic) ============
 async function openScanReport(){
   openModal("Scan report",`<div class="muted">loading…</div>`);
   try{
     const r=await jget("/api/library/report");
-    if(!r.total){$("modalBody").innerHTML="<div class='empty'>Everything in your library parsed cleanly — nothing unmatched.</div>";return;}
+    const dd=r.duplicates;
+    if(!r.total&&!(dd&&dd.count)){$("modalBody").innerHTML="<div class='empty'>Everything in your library parsed cleanly — nothing unmatched, no duplicate copies.</div>";return;}
     const sect=(label,items)=>items.length?`<label class="fld">${label} (${items.length})</label>
       <div style="max-height:200px;overflow-y:auto;border:1px solid var(--line);border-radius:7px;padding:8px">
       ${items.map(x=>`<div class="hist-row"><span class="hn">${esc(x.name)}</span><span class="he">${esc(x.reason)}</span></div>`).join("")}</div>`:"";
-    $("modalBody").innerHTML=`<div class="hint" style="margin-bottom:10px">${r.total} file(s) couldn't be matched to a show or movie. These are usually oddly-named files, extras, or featurettes. Rename them to a standard pattern (e.g. <code>Show - S01E02.mkv</code>) and re-scan, or ignore them.</div>
-      ${sect("Unparsed TV files",r.unparsed_tv)}${sect("Unparsed movie files",r.unparsed_movies)}`;
+    $("modalBody").innerHTML=`${r.total?`<div class="hint" style="margin-bottom:10px">${r.total} file(s) couldn't be matched to a show or movie. These are usually oddly-named files, extras, or featurettes. Rename them to a standard pattern (e.g. <code>Show - S01E02.mkv</code>) and re-scan, or ignore them.</div>`:''}
+      ${sect("Unparsed TV files",r.unparsed_tv)}${sect("Unparsed movie files",r.unparsed_movies)}${dupesSection(dd)}`;
+    $("dupRetire")&&$("dupRetire").addEventListener("click",async()=>{
+      if(!confirm(`Move ${dd.count} duplicate file(s) (${human(dd.bytes)}) to _superseded/? The library keeps the better copy of each.`))return;
+      $("dupRetire").disabled=true;$("dupRetire").textContent="moving…";
+      try{const x=await jsend("/api/library/duplicates/retire","POST",{});
+        toast(`Retired ${x.moved} file(s), ${human(x.bytes)}${x.skipped.length?` · ${x.skipped.length} skipped`:''}.`);openScanReport();}
+      catch(e){toast(e.message||"Retire failed","err");$("dupRetire").disabled=false;}
+    });
   }catch(_){$("modalBody").innerHTML="<div class='empty'>Couldn't load report.</div>";}
 }
 // ============ auth: account menu + admin users ============
