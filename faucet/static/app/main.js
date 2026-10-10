@@ -9,9 +9,11 @@ import { toast } from "./ui/toast.js";
 const ROUTES = [
   [/^\/?$/, "home", () => import("./views/home.js")],
   [/^\/shows\/?$/, "shows", () => import("./views/shows.js")],
-  [/^\/shows\/(\d+)(?:\/(\d+))?\/?$/, "shows", () => import("./views/show.js")],
+  [/^\/shows\/in\/(\d+)\/?$/, (p) => `lib-${p[0]}`, () => import("./views/shows.js")],
+  [/^\/shows\/(\d+)(?:\/(\d+))?\/?$/, null, () => import("./views/show.js")],
   [/^\/movies\/?$/, "movies", () => import("./views/movies.js")],
-  [/^\/movies\/(\d+)\/?$/, "movies", () => import("./views/movie.js")],
+  [/^\/movies\/in\/(\d+)\/?$/, (p) => `lib-${p[0]}`, () => import("./views/movies.js")],
+  [/^\/movies\/(\d+)\/?$/, null, () => import("./views/movie.js")],
   [/^\/settings(?:\/([a-z]+))?\/?$/, "settings", () => import("./views/settings.js")],
   [/^\/discover\/?$/, "discover", () => import("./views/discover.js")],
   [/^\/calendar\/?$/, "calendar", () => import("./views/calendar.js")],
@@ -22,12 +24,16 @@ const ROUTES = [
 ];
 
 let me = null;
+let sections = [];
 let current = { stop() {} };
 
 function match(path) {
   for (const [re, nav, load] of ROUTES) {
     const m = path.match(re);
-    if (m) return { nav, load, params: m.slice(1) };
+    if (m) {
+      const params = m.slice(1);
+      return { nav: typeof nav === "function" ? nav(params) : nav, load, params };
+    }
   }
   return null;
 }
@@ -39,7 +45,7 @@ async function route() {
   setActive(r.nav);
   const view = $("#view");
   mount(view, html`<div class="boot">Loading…</div>`);
-  const ctx = { me, params: r.params, status: updateStatus };
+  const ctx = { me, params: r.params, status: updateStatus, sections, setNav: setActive, refreshNav };
   let timer = null;
   let alive = true;
   current = { stop() { alive = false; clearInterval(timer); } };
@@ -61,6 +67,15 @@ async function route() {
   window.scrollTo(0, 0);
 }
 
+// library sections changed (a library added, a title moved): redraw the sidebar
+async function refreshNav() {
+  try {
+    sections = (await api.get("/api/nav")).sections || [];
+  } catch { return; }
+  const active = document.querySelector("#side .nav-a[aria-current]");
+  renderShell(me, active ? active.dataset.nav : null, sections);
+}
+
 async function boot() {
   try {
     const d = await api.get("/api/auth/me");
@@ -70,7 +85,10 @@ async function boot() {
     toast(e.message, "err");
     return;
   }
-  renderShell(me, "home");
+  try {
+    sections = (await api.get("/api/nav")).sections || [];
+  } catch { sections = []; }
+  renderShell(me, "home", sections);
   initPalette(me);
   window.addEventListener("hashchange", route);
   if (me.role === "admin" && !location.hash.startsWith("#/setup")

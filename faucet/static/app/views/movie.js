@@ -28,6 +28,7 @@ export async function render(el, ctx) {
   const admin = ctx.me.role === "admin";
   let d = await api.get(`/api/movies/${mid}/detail`);
   document.title = `${d.movie.title} · Faucet`;
+  if (d.library && ctx.setNav) ctx.setNav(`lib-${d.library.id}`);
   const reload = async () => { d = await api.get(`/api/movies/${mid}/detail`); draw(); };
 
   function draw() {
@@ -39,7 +40,7 @@ export async function render(el, ctx) {
         <div class="scrim">
           <span class="poster" style="${m.poster || meta.poster ? bg(m.poster || meta.poster) : tint(m.title)}" role="img" aria-label="${m.title} poster"></span>
           <div class="info">
-            <a class="crumb" href="${links.movies}">Movies</a>
+            <a class="crumb" href="${d.library ? links.section("movie", d.library.id) : links.movies}">${d.library ? d.library.name : "Movies"}</a>
             <h1>${m.title}</h1>
             <div class="metarow">
               ${m.year ? html`<span>${m.year}</span>` : ""}
@@ -120,6 +121,7 @@ export async function render(el, ctx) {
       try {
         const r = await api.post(`/api/movies/${mid}/library`, { library_id: e.target.value ? Number(e.target.value) : null });
         toast(`Downloads go to ${r.current}.`);
+        if (ctx.refreshNav) ctx.refreshNav().then(() => d.library && ctx.setNav(`lib-${e.target.value || (d.save_to.options.find((o) => o.default) || {}).id}`));
       } catch (err) { toast(err.message, "err"); }
     });
     const menu = el.querySelector(".menu");

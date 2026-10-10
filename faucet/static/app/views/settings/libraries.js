@@ -8,7 +8,7 @@ import { toast } from "../../ui/toast.js";
 
 const KIND = { tv: "TV", movie: "Movies" };
 
-export async function render(el) {
+export async function render(el, ctx = {}) {
   let libs = [], folders = [], series = [], onlyUnlinked = true;
 
   let dlMount = "";
@@ -16,6 +16,7 @@ export async function render(el) {
     const [l, f, s] = await Promise.all([api.get("/api/libraries"),
       api.get("/api/libraries/folders"), api.get("/api/series")]);
     libs = l.libraries;
+    if (ctx.refreshNav) ctx.refreshNav();
     dlMount = (l.downloads && (l.downloads.mount || l.downloads.path)) || "";
     folders = f.folders;
     series = s.series;

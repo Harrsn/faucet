@@ -25,16 +25,26 @@ const NAV = [
   ], "admin"],
 ];
 
-export function renderShell(me, active) {
+function libraryGroup(sections) {
+  // one entry per library (Plex-style); without sections, the two classics
+  if (!sections || !sections.length) return NAV[0];
+  const items = [["home", "Home", icons.home, links.home]];
+  for (const s of sections) {
+    items.push([`lib-${s.id}`, s.name, s.kind === "tv" ? icons.tv : icons.film, links.section(s.kind, s.id), s.count]);
+  }
+  return ["Library", items];
+}
+
+export function renderShell(me, active, sections = []) {
   const admin = me.role === "admin";
-  const groups = NAV.filter(([, , who]) => !who || admin);
+  const groups = [libraryGroup(sections), ...NAV.slice(1)].filter(([, , who]) => !who || admin);
   mount($("#side"), html`
     <a class="brand" href="#/">${icons.drop}<b>Faucet</b></a>
     ${groups.map(([label, items]) => html`
       <h2>${label}</h2>
-      <nav aria-label="${label}">${items.map(([id, name, icon, href]) => html`
+      <nav aria-label="${label}">${items.map(([id, name, icon, href, count]) => html`
         <a class="nav-a" href="${href}" data-nav="${id}"${id === active ? html` aria-current="page"` : ""}>
-          ${icon}${name}<span class="slot" data-slot="${id}"></span>
+          ${icon}<span class="nav-name">${name}</span><span class="slot" data-slot="${id}">${count != null ? html`<span class="count">${count}</span>` : ""}</span>
         </a>`)}</nav>`)}
     <div class="me">
       <span class="avatar" aria-hidden="true">${(me.username || "?").slice(0, 1).toUpperCase()}</span>
