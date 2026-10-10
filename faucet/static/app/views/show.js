@@ -34,6 +34,7 @@ export async function render(el, ctx) {
   if (!d.seasons.some((s) => s.season === season)) season = defaultSeason(d.seasons);
   let tab = "episodes";
   document.title = `${d.series.title} · Faucet`;
+  if (d.library && ctx.setNav) ctx.setNav(`lib-${d.library.id}`);
 
   const reload = async () => {
     d = await api.get(`/api/series/${sid}/detail`);
@@ -49,7 +50,7 @@ export async function render(el, ctx) {
       <div class="scrim">
         <span class="poster" style="${s.poster || m.poster ? bg(s.poster || m.poster) : tint(s.title)}" role="img" aria-label="${s.title} poster"></span>
         <div class="info">
-          <a class="crumb" href="${links.shows}">TV Shows</a>
+          <a class="crumb" href="${d.library ? links.section("tv", d.library.id) : links.shows}">${d.library ? d.library.name : "TV Shows"}</a>
           <h1>${s.title}</h1>
           <div class="metarow">
             ${m.year || s.year ? html`<span>${m.year || s.year}</span>` : ""}
@@ -262,6 +263,7 @@ export async function render(el, ctx) {
       try {
         const r = await api.post(`/api/series/${sid}/library`, { library_id: e.target.value ? Number(e.target.value) : null });
         toast(`New episodes go to ${r.current}.`);
+        if (ctx.refreshNav) ctx.refreshNav().then(() => d.library && ctx.setNav(`lib-${e.target.value || (d.save_to.options.find((o) => o.default) || {}).id}`));
       } catch (err) { toast(err.message, "err"); }
     });
     const menu = el.querySelector(".menu");

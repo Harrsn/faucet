@@ -476,6 +476,36 @@ def assign_from_files() -> dict:
     return out
 
 
+def effective_map(kind: str) -> tuple[int | None, set]:
+    """(default library id, enabled library ids) for resolving many titles'
+    libraries at once: a title's library is its library_id when that's an
+    enabled library of the kind, else the default."""
+    libs = of_kind(kind)
+    default = next((lib["id"] for lib in libs if lib["is_default"]), libs[0]["id"] if libs else None)
+    return default, {lib["id"] for lib in libs}
+
+
+def resolve(library_id, default: int | None, enabled: set) -> int | None:
+    return library_id if library_id in enabled else default
+
+
+def sections() -> list[dict]:
+    """The sidebar's library sections: every enabled library with how many
+    titles it holds, TV first, defaults first within a kind."""
+    out = []
+    with db.connect() as c:
+        for kind, table in (("tv", "series"), ("movie", "movies")):
+            default, enabled = effective_map(kind)
+            counts: dict = {}
+            for r in c.execute(f"SELECT library_id FROM {table}"):
+                lid = resolve(r["library_id"], default, enabled)
+                counts[lid] = counts.get(lid, 0) + 1
+            for lib in sorted(of_kind(kind), key=lambda x: (not x["is_default"], x["name"].lower())):
+                out.append({"id": lib["id"], "name": lib["name"], "kind": kind,
+                            "default": bool(lib["is_default"]), "count": counts.get(lib["id"], 0)})
+    return out
+
+
 def title_library(kind: str, title_id: int) -> dict | None:
     """The library a show ('tv') or movie ('movie') is filed into."""
     table = "series" if kind == "tv" else "movies"

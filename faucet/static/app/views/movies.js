@@ -6,7 +6,8 @@ import { open as openPalette } from "../ui/palette.js";
 
 export const title = "Movies";
 
-const view = { filter: "all", sort: "title", q: "" };
+// per section, remembered for the session
+const views = {};
 
 const onDisk = (m) => m.status === "have";
 const FILTERS = [
@@ -35,8 +36,14 @@ function card(m) {
 }
 
 export async function render(el, ctx) {
+  const view = (views[ctx.params[0] ?? "all"] ||= { filter: "all", sort: "title", q: "" });
   const d = await api.get("/api/movies");
-  const all = d.movies;
+  // a library section (#/movies/in/<id>) shows only that library's titles
+  const libId = ctx.params[0] != null ? Number(ctx.params[0]) : null;
+  const section = libId != null ? (ctx.sections || []).find((x) => x.id === libId) : null;
+  const all = libId != null ? d.movies.filter((x) => x.lib === libId) : d.movies;
+  const heading = section ? section.name : "Movies";
+  document.title = `${heading} · Faucet`;
   const draw = () => {
     const f = FILTERS.find((x) => x[0] === view.filter) || FILTERS[0];
     const q = view.q.trim().toLowerCase();
@@ -49,7 +56,7 @@ export async function render(el, ctx) {
   };
   mount(el, html`<div class="page">
     <div class="stack">
-      <div class="page-h"><h1>Movies</h1><span class="count" data-count></span>
+      <div class="page-h"><h1>${heading}</h1><span class="count" data-count></span>
         <button class="btn" type="button" data-add>${ctx.me.role === "admin" ? "Add a movie" : "Request a movie"}</button></div>
       <div class="toolbar">
         <div class="seg" role="group" aria-label="Filter">${FILTERS.map(([id, label, fn]) => html`
