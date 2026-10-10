@@ -127,3 +127,38 @@ def test_save_to_api(env, monkeypatch):
     assert c.post(f"/api/series/{k}/library", json={"library_id": None}).json()["current"] == "TV Shows"
     assert c.post("/api/series/999/library", json={"library_id": None}).status_code == 404
     assert c.post(f"/api/libraries/{env.ms}/import", json={"monitor": "everything"}).status_code == 400
+
+
+def test_library_sections_for_the_sidebar(env, monkeypatch):
+    k = _show(env.db, "The Kardashians", 1)
+    _show(env.db, "Family Guy", 2)
+    env.LB.set_title_library("tv", k, env.ms)
+    with env.db.connect() as c:
+        c.execute("INSERT INTO movies (tmdb_id,title,year) VALUES (3,'Speedway',1968)")
+    secs = env.LB.sections()
+    assert [(s["name"], s["kind"], s["count"], s["default"]) for s in secs] == [
+        ("TV Shows", "tv", 1, True), ("Mamaw's Shows", "tv", 1, False),
+        ("Movies", "movie", 1, True), ("Mamaw's Movies", "movie", 0, False)]
+    # a title pointed at a disabled library falls back to the default section
+    env.LB.update(env.ms, enabled=False)
+    assert [s["count"] for s in env.LB.sections() if s["kind"] == "tv"] == [2]
+
+    monkeypatch.setenv("SESSION_SECRET", "t")
+    for m in ("auth", "auth_routes", "app"):
+        importlib.reload(importlib.import_module("faucet." + m))
+    from fastapi.testclient import TestClient
+
+    from faucet import app as appmod
+    c = TestClient(appmod.app, follow_redirects=False)
+    c.post("/api/auth/register", json={"username": "admin", "password": "adminpass123"})
+    c.post("/api/auth/login", json={"username": "admin", "password": "adminpass123"})
+    c.headers.update({"X-CSRF-Token": c.cookies.get("faucet_csrf")})
+    c.post("/api/admin/users", json={"username": "bob", "password": "bobpass1234",
+                                     "role": "user", "status": "active"})
+    env.LB.update(env.ms, enabled=True)
+    bob = TestClient(appmod.app, follow_redirects=False)
+    bob.post("/api/auth/login", json={"username": "bob", "password": "bobpass1234"})
+    assert [s["name"] for s in bob.get("/api/nav").json()["sections"]][:2] == ["TV Shows", "Mamaw's Shows"]
+    libs = {s["title"]: s["lib"] for s in bob.get("/api/series").json()["series"]}
+    tv_default = [s for s in env.LB.sections() if s["kind"] == "tv" and s["default"]][0]["id"]
+    assert libs == {"The Kardashians": env.ms, "Family Guy": tv_default}
