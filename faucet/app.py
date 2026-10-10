@@ -73,7 +73,7 @@ app.include_router(_auth_routes.router)
 # Paths reachable without a session. Everything else requires login. This is
 # fail-closed: any new route is protected by default unless added here.
 _PUBLIC_PREFIXES = ("/static/", "/app/", "/favicon", "/login", "/register", "/reset",
-                    "/api/auth/", "/health")
+                    "/api/auth/", "/health", "/cal/")
 
 
 def _is_public(path: str) -> bool:
@@ -194,8 +194,9 @@ _ADMIN_ALWAYS = (
 
 
 def _admin_only(path: str, method: str) -> bool:
-    # /api/requests is user-level (router enforces per-action perms).
-    if path.startswith("/api/requests"):
+    # /api/requests is user-level (router enforces per-action perms); /api/me/
+    # is the signed-in user's own things (calendar link).
+    if path.startswith(("/api/requests", "/api/me/")):
         return False
     if any(path.startswith(p) for p in _ADMIN_ALWAYS):
         return True
@@ -2097,6 +2098,59 @@ def api_library_import_state():
 def api_setup_complete():
     db.set_setting("setup_complete", "1")
     return {"complete": True}
+
+
+def _public_base(request) -> str:
+    """The URL people reach Faucet at: https when the browser connection is
+    (directly or per a trusted proxy — Cloudflare → Caddy → here is plain
+    http on the last hop)."""
+    from . import netutil
+    host = request.headers.get("host") or request.url.netloc
+    return f"{'https' if netutil.is_https(request) else 'http'}://{host}"
+
+
+# --- personal calendar feed ---
+@app.get("/api/me/calendar")
+def api_my_calendar(request: _Request):
+    from . import icalfeed
+    u = _user(request)
+    return {"feed": icalfeed.status(u["id"]) if u.get("id") else None}
+
+
+@app.post("/api/me/calendar")
+def api_my_calendar_create(request: _Request):
+    """A new private calendar link (replaces the old one). Shown once."""
+    from . import icalfeed
+    u = _user(request)
+    if not u.get("id"):
+        raise HTTPException(401, "Sign in")
+    token = icalfeed.create(u["id"])
+    base = _public_base(request)
+    return {"url": f"{base}/cal/{token}.ics", "feed": icalfeed.status(u["id"])}
+
+
+@app.delete("/api/me/calendar")
+def api_my_calendar_revoke(request: _Request):
+    from . import icalfeed
+    u = _user(request)
+    if u.get("id"):
+        icalfeed.revoke(u["id"])
+    return {"feed": None}
+
+
+@app.get("/cal/{token}.ics")
+def calendar_feed(token: str, request: _Request):
+    """The subscription itself — no session (calendar apps can't sign in);
+    the unguessable token is the credential. Unknown or revoked: 404."""
+    from fastapi.responses import Response as _Resp
+    from . import icalfeed
+    user = icalfeed.user_for(token)
+    if not user:
+        raise HTTPException(404, "Not found")
+    body = icalfeed.render(user, _public_base(request), request.url.hostname or "faucet")
+    return _Resp(body, media_type="text/calendar; charset=utf-8",
+                 headers={"Cache-Control": "private, max-age=900",
+                          "Content-Disposition": 'inline; filename="faucet.ics"'})
 
 
 class MappingsBody(BaseModel):
