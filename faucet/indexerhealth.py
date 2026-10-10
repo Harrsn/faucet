@@ -129,6 +129,11 @@ def probe(timeout: int | None = None) -> dict:
         out["error"] = "indexer not configured"
         return out
     items = searchmod.indexers(c.jackett_url, c.jackett_api_key, timeout)
+    if items:
+        # a probe is also how indexers added or removed in Jackett reach the
+        # parallel search: refresh its cached list and drop stale caps
+        from . import finder
+        finder.forget_indexers()
     if not items:
         out["error"] = "couldn't list indexers from Jackett"
         db.set_setting(PROBE_KEY, out)
