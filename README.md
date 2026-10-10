@@ -177,8 +177,14 @@ All via environment / `.env`:
 |---|---|---|
 | `SESSION_SECRET` | auto-generated | **Set this.** Signing key for session cookies; a fixed value keeps logins valid across restarts. |
 | `SESSION_DAYS` | `30` | Session lifetime in days. |
-| `LOGIN_MAX_FAILED` | `5` | Failed attempts before lockout. |
-| `LOGIN_LOCK_MINUTES` | `15` | Lockout duration after too many failures. |
+| `LOGIN_MAX_FAILED` | `5` | Failed logins per (client IP, username) before that pair is throttled. |
+| `LOGIN_IP_MAX_FAILED` | `20` | Failed logins per client IP, any username, before the IP is throttled. |
+| `LOGIN_ACCOUNT_MAX_FAILED` | `50` | Failed logins from anywhere before the account itself is locked (backstop against distributed guessing). |
+| `LOGIN_LOCK_MINUTES` | `15` | Throttle window and lock duration. |
+| `REGISTER_IP_MAX` | `5` | Self-registrations per client IP per hour. |
+| `TRUSTED_PROXIES` | — | IPs/CIDRs whose forwarding headers (`CF-Connecting-IP`, `X-Real-IP`, `X-Forwarded-For`, `CF-Visitor`, `X-Forwarded-Proto`) are believed, or `auto` = the container's default gateway (where Docker's port proxy connects from). Unset = trust nobody; every request is attributed to its TCP peer. |
+| `CLIENT_IP_HEADERS` | `cf-connecting-ip,x-real-ip,x-forwarded-for` | Which headers carry the client IP, in order (X-Forwarded-For: right-most entry). |
+| `COOKIE_SECURE` | `auto` | `auto` sets the cookie `Secure` flag when the browser connection is HTTPS (directly or per a trusted proxy); `1`/`0` force it. |
 
 Most connection, path, behavior, and metadata settings can also be edited live from the in-app **Settings** panel (they persist to a config file that overrides the environment and survives restarts). The **TMDb API key**, default language, and default profile are stored in the database and set in-app. Full list and notification URL formats are in [.env.example](.env.example).
 

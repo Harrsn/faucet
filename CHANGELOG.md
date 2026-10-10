@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Security
+
+- **Credentials are redacted** from error messages, history, the Settings
+  connection test and logs. `requests` errors embed the full URL, so a
+  Jackett timeout used to surface `apikey=<key>`; client errors could carry
+  `user:password@`. A logging filter masks anything that slips through.
+- **Requests take title, year and poster from TMDb**, not from the browser.
+  Members could previously put arbitrary text and image URLs in front of an
+  admin. The UI only renders `image.tmdb.org` image URLs (an escaped
+  `&#39;` inside `url('…')` is decoded back to a quote before CSS parses it).
+- **Login throttling is per IP and per (IP, username).** The old per-account
+  lock let anyone lock the admin out with 5 wrong passwords, and its
+  distinct message confirmed which usernames exist. Throttled attempts get a
+  generic 429 with `Retry-After`; the account-wide lock remains only as a
+  backstop at 50 failures. Self-registration is limited per IP.
+- **Real client IPs behind a proxy.** Forwarding headers are honoured only
+  from `TRUSTED_PROXIES` (`auto` = the container's gateway). Sessions record
+  the real address, and cookies get `Secure` behind Cloudflare Tunnel —
+  before, Caddy's `X-Forwarded-Proto: http` left them without it.
+- **`faucet.env` is written atomically with mode 0600** (existing files are
+  tightened on start) and values containing a newline are rejected — one
+  used to inject arbitrary variables, `SESSION_SECRET` included.
+- **`PATCH /api/settings` only writes known keys**, validated; the TMDb key
+  is write-only like the other secrets.
+- **Security headers** on every response: CSP pinning all origins,
+  `frame-ancestors 'none'`, `nosniff`, `Referrer-Policy`.
+- **First-run race closed**: concurrent registrations on an empty database
+  can no longer all become admin.
+- **The connection test no longer sends saved credentials to a new URL**;
+  testing a different Jackett/client URL requires re-entering the secret.
+- **Members no longer see library file paths** in movie details.
+
 ### Fixed
 
 - **Episode lists now refresh.** A show's episodes were read from TMDb once,
