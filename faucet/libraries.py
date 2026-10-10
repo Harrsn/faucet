@@ -196,6 +196,7 @@ def update(lib_id: int, **fields) -> list[str]:
         sets["auto_root"] = 0                    # hand-set: stops following LIBRARY_ROOT
     if "enabled" in fields and fields["enabled"] is not None:
         sets["enabled"] = 1 if fields["enabled"] else 0
+    moved = None
     with db.connect() as c:
         if fields.get("is_default"):
             c.execute("UPDATE libraries SET is_default=0 WHERE kind=?", (lib["kind"],))
@@ -204,9 +205,93 @@ def update(lib_id: int, **fields) -> list[str]:
             cols = ", ".join(f"{k}=?" for k in sets)
             c.execute(f"UPDATE libraries SET {cols} WHERE id=?", (*sets.values(), lib_id))
         if "path" in sets:
-            # files under the old path are no longer this library's
-            c.execute("DELETE FROM library_links WHERE library_id=?", (lib_id,))
+            if same_folder(lib["path"], sets["path"]):
+                # the same folder seen through another mount (/library/tvshows
+                # -> /nas/media/tvshows): carry every record over, links
+                # included, so nothing is rescanned or re-hunted
+                n = _rewrite_prefix(c, lib["path"], sets["path"])
+                moved = "carried"
+                warnings.append(f"Same folder through another mount — {n} file records carried over.")
+            else:
+                # a different folder: what Faucet knew about the old one goes
+                _forget_prefix(c, lib["path"], lib["kind"])
+                c.execute("DELETE FROM library_links WHERE library_id=?", (lib_id,))
+                moved = "forgotten"
+                warnings.append("Different folder — the old folder's records were dropped; "
+                                "it's scanned fresh on the next scan.")
+    if moved:
+        log.info("Library %s moved %s -> %s (records %s)", lib["name"], lib["path"],
+                 sets["path"], moved)
     return warnings
+
+
+# tables holding absolute library paths: (table, column)
+_PATH_COLUMNS = (("library_episodes", "path"), ("library_movies", "path"),
+                 ("library_files", "path"), ("library_dupes", "path"),
+                 ("library_dupes", "winner_path"))
+
+
+def same_folder(old: str, new: str) -> bool:
+    """Is `new` the same directory as `old`, reached another way? Both must
+    be reachable and agree on their entries and on a sample of file sizes
+    and times (enough to tell a bind mount from a different folder)."""
+    try:
+        a = sorted(e for e in os.listdir(old) if not e.startswith("."))
+        b = sorted(e for e in os.listdir(new) if not e.startswith("."))
+    except OSError:
+        return False
+    if not a or a != b:
+        return False
+    samples = []
+    for name in a[:6]:
+        sub = os.path.join(old, name)
+        if os.path.isdir(sub):
+            try:
+                samples += [os.path.join(name, e) for e in sorted(os.listdir(sub))[:2]]
+            except OSError:
+                return False
+        else:
+            samples.append(name)
+    for rel in samples:
+        try:
+            sa, sb = os.stat(os.path.join(old, rel)), os.stat(os.path.join(new, rel))
+        except OSError:
+            return False
+        if (sa.st_size, int(sa.st_mtime)) != (sb.st_size, int(sb.st_mtime)):
+            return False
+    return bool(samples)
+
+
+def _prefix(p: str) -> str:
+    return p.rstrip("/") + "/"
+
+
+def _rewrite_prefix(c, old: str, new: str) -> int:
+    o, n = _prefix(old), _prefix(new)
+    total = 0
+    for table, col in _PATH_COLUMNS:
+        try:
+            cur = c.execute(f"UPDATE OR IGNORE {table} SET {col} = ? || substr({col}, ?) "
+                            f"WHERE substr({col}, 1, ?) = ?", (n, len(o) + 1, len(o), o))
+            total += cur.rowcount if col == "path" and table in ("library_episodes",
+                                                                  "library_movies") else 0
+            # rows that collided with an existing new-path row are stale twins
+            c.execute(f"DELETE FROM {table} WHERE substr({col}, 1, ?) = ?", (len(o), o))
+        except Exception as e:                   # noqa: BLE001 - a table may not exist yet
+            if "no such table" not in str(e):
+                raise
+    return total
+
+
+def _forget_prefix(c, old: str, kind: str) -> None:
+    o = _prefix(old)
+    table = "library_episodes" if kind == "tv" else "library_movies"
+    c.execute(f"DELETE FROM {table} WHERE substr(path, 1, ?) = ?", (len(o), o))
+    try:
+        c.execute("DELETE FROM library_dupes WHERE substr(path, 1, ?) = ?", (len(o), o))
+    except Exception as e:                       # noqa: BLE001
+        if "no such table" not in str(e):
+            raise
 
 
 def remove(lib_id: int) -> None:
