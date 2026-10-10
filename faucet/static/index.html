@@ -1951,6 +1951,13 @@ async function openIndexerHealth(){
       <div class="hint">${s.searches||0} searches · ${s.failed||0} failed · ${s.empty||0} returned nothing
         ${s.p50_ms!=null?` · median ${s.p50_ms} ms · p95 ${s.p95_ms} ms`:''}<br>errors: ${errs}</div>
       ${trk.length?`<div class="hint" style="margin-top:6px">results by tracker: ${trk.map(([t,n])=>`${esc(t)} ${n}`).join(" · ")}</div>`:''}
+      ${(s.indexers||[]).length?`<label class="fld">Per indexer · last 24h</label>
+      <div class="ih-row h"><span>indexer</span><span>searches</span><span>avg</span><span>results · empty · failed</span></div>
+      ${s.indexers.map(x=>{const per=x.searches?x.results/x.searches:0;const dead=x.searches>=5&&!x.results;
+        return `<div class="ih-row"><span>${esc(x.indexer)}</span><span>${x.searches}</span>
+        <span class="muted">${x.avg_ms!=null?(x.avg_ms>=1000?(x.avg_ms/1000).toFixed(1)+' s':x.avg_ms+' ms'):'—'}</span>
+        <span>${dead?'<span class="pchip warn" style="margin-left:0">never returns anything</span>':`${x.results} <span class="muted">(${per.toFixed(1)}/search)</span>`}
+        <span class="muted"> · ${x.empty} empty${x.failed?` · <span style="color:var(--bad)">${x.failed} failed</span>`:''}</span></span></div>`;}).join("")}`:''}
       <label class="fld">Per-indexer probe ${p&&p.ts?`<span class="muted">· ${shortTs(p.ts)}</span>`:''}</label>
       <div class="hint" style="margin-bottom:4px">Each Jackett indexer queried on its own. The 'all' endpoint waits for the slowest one, so a single failing tracker shows up as timeouts on every search.</div>
       <div class="ih-row h"><span>indexer</span><span>status</span><span>latency</span><span>result</span></div>${probeRows}

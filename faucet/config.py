@@ -1,18 +1,31 @@
-"""Central configuration, loaded once from the environment.
+"""Central configuration.
 
-Everything tunable lives here so the rest of the app imports `config` rather
-than reading os.environ ad hoc. A .env file (see .env.example) is the intended
-way to set these in both bare-metal and Docker deployments.
+Settings live in the database (the `settings` table, keys prefixed `cfg.`):
+the Settings pages and the setup wizard write them, and they are loaded into
+the process environment at import so every module keeps reading one place.
 
-A second, runtime layer is the persisted file at CASCADE_CONFIG_FILE (default
-/config/cascade.env). Faucet's Settings panel writes there, and it is loaded *over*
-process env so first-run config survives restarts without editing .env by hand.
+The environment is for bootstrap only — where the data lives (EVENTS_FILE),
+SESSION_SECRET, and the tunables that have no UI yet. On the first start of a
+version with this store, every setting found in the old persisted file
+(faucet.env / cascade.env) or in the environment is IMPORTED ONCE into the
+database; from then on the database wins and an environment value for a
+setting is ignored, with a warning at startup naming it. That removes the
+three-layer precedence (stack env < secrets file < faucet.env) that made a
+changed compose value silently do nothing.
+
+This module must not import faucet.db (db imports config for the data
+path), so it talks to SQLite directly.
 """
 from __future__ import annotations
 
+import json
+import logging
 import os
+import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
+
+log = logging.getLogger("faucet.config")
 
 _explicit_cfg = os.environ.get("FAUCET_CONFIG_FILE") or os.environ.get("CASCADE_CONFIG_FILE")
 CONFIG_FILE = _explicit_cfg or "/config/faucet.env"
@@ -20,31 +33,112 @@ CONFIG_FILE = _explicit_cfg or "/config/faucet.env"
 if not _explicit_cfg and not os.path.exists(CONFIG_FILE) and os.path.exists("/config/cascade.env"):
     CONFIG_FILE = "/config/cascade.env"
 
+PREFIX = "cfg."
+IMPORTED_KEY = "cfg._imported"
+_warned: set = set()
 
-def _load_persisted(into_env: bool = True) -> dict:
-    """Read the wizard-written env file. Persisted values win over process env
-    for the keys it defines (the wizard is the most recent intent)."""
-    p = Path(CONFIG_FILE)
-    data = {}
-    if not p.exists():
-        return data
+
+def _db_path() -> Path:
+    # the same file faucet.db uses (next to the events file)
+    return Path(os.environ.get("EVENTS_FILE", "/config/events.jsonl")).parent / "cascade.db"
+
+
+def _connect() -> sqlite3.Connection:
+    p = _db_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(p), timeout=10)
+    conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
+    return conn
+
+
+def _db_read() -> dict:
+    """{KEY: value} for every stored setting, plus IMPORTED_KEY if set."""
     try:
-        for line in p.read_text().splitlines():
+        conn = _connect()
+        try:
+            rows = conn.execute("SELECT key, value FROM settings WHERE key LIKE 'cfg.%'").fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        log.error("settings store unreadable (%s); using the environment", e)
+        return {}
+    out = {}
+    for k, v in rows:
+        try:
+            out[k] = json.loads(v)
+        except (TypeError, ValueError):
+            out[k] = v
+    return out
+
+
+def _db_write(values: dict) -> None:
+    conn = _connect()
+    try:
+        with conn:
+            for k, v in values.items():
+                conn.execute("INSERT INTO settings (key, value) VALUES (?,?) "
+                             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                             (k, json.dumps(v)))
+    finally:
+        conn.close()
+
+
+def _read_env_file(path: str) -> dict:
+    data = {}
+    try:
+        for line in Path(path).read_text().splitlines():
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
             k, _, v = line.partition("=")
-            k, v = k.strip(), v.strip()
-            data[k] = v
-            if into_env:
-                os.environ[k] = v
+            data[k.strip()] = v.strip()
     except OSError:
         pass
     return data
 
 
-# Load persisted config into the environment before the dataclass reads it.
-_load_persisted(into_env=True)
+def _import_once(stored: dict) -> dict:
+    """First start with the database store: adopt the old settings."""
+    found = {k: os.environ[k] for k in WIZARD_KEYS if os.environ.get(k)}
+    legacy = Path(CONFIG_FILE)
+    from_file = _read_env_file(CONFIG_FILE) if legacy.exists() else {}
+    found.update({k: v for k, v in from_file.items() if k in WIZARD_KEYS})   # file won before
+    values = {PREFIX + k: v for k, v in found.items()}
+    values[IMPORTED_KEY] = {"keys": sorted(found), "from_file": bool(from_file)}
+    _db_write(values)
+    if from_file:
+        try:
+            legacy.replace(legacy.with_name(legacy.name + ".imported"))
+        except OSError as e:
+            log.warning("imported %s but could not rename it: %s", legacy, e)
+    if found:
+        log.info("Settings imported into the database: %s", ", ".join(sorted(found)))
+    stored.update(values)
+    return stored
+
+
+def _load_persisted(into_env: bool = True) -> dict:
+    """{KEY: value} of stored settings (bare keys), imported once from the old
+    file/environment, and — with into_env — pushed into os.environ so they
+    win over anything the container was started with."""
+    if not _db_path().exists() and not Path(CONFIG_FILE).exists() \
+            and not any(os.environ.get(k) for k in WIZARD_KEYS):
+        return {}                     # nothing stored, nothing to import: don't create files
+    stored = _db_read()
+    if IMPORTED_KEY not in stored:
+        stored = _import_once(stored)
+    data = {k[len(PREFIX):]: str(v) for k, v in stored.items()
+            if k.startswith(PREFIX) and k != IMPORTED_KEY and k[len(PREFIX):] in WIZARD_KEYS}
+    if into_env:
+        for k, v in data.items():
+            env = os.environ.get(k)
+            if env is not None and env != v and k not in _warned:
+                _warned.add(k)
+                log.warning("%s is set in the environment but Faucet reads it from its "
+                            "database now; the environment value is ignored. Change it "
+                            "in Settings.", k)
+            os.environ[k] = v
+    return data
 
 
 def _bool(key: str, default: bool = False) -> bool:
@@ -100,16 +194,15 @@ class Config:
 
 
 def reload() -> "Config":
-    """Re-read persisted file + env and rebuild the module-level config."""
+    """Re-read the settings store and rebuild the module-level config."""
     global config
     _load_persisted(into_env=True)
     config = Config()
     return config
 
 
-# Keys the settings editor / wizard may persist (whitelist — no arbitrary
-# writes, and SESSION_SECRET / DB path / bind port are deliberately excluded as
-# structural/secret and must stay in the stack).
+# Settings the store holds (whitelist — no arbitrary writes; SESSION_SECRET,
+# the data path and the bind port are bootstrap and stay in the stack).
 WIZARD_KEYS = {
     # connections
     "JACKETT_URL", "JACKETT_API_KEY", "JACKETT_INDEXER",
@@ -129,9 +222,9 @@ PATH_KEYS = {"LIBRARY_ROOT", "DOWNLOAD_DIR", "DISK_PATH", "BROWSE_ROOT"}
 
 
 def _check_value(key: str, value: str) -> str:
-    """A value that can be written as one KEY=VALUE line. A newline in a value
-    used to start a new line in faucet.env, i.e. set an arbitrary variable —
-    SESSION_SECRET included — on the next load."""
+    """A single-line, bounded value. Settings are pushed into the process
+    environment and handed to the sorter subprocess; a newline in one used to
+    inject arbitrary variables (SESSION_SECRET included) via faucet.env."""
     if any(ch in value for ch in ("\n", "\r", "\x00")):
         raise ValueError(f"{key}: value must be a single line")
     if len(value) > 4096:
@@ -140,50 +233,34 @@ def _check_value(key: str, value: str) -> str:
 
 
 def save(values: dict) -> None:
-    """Persist whitelisted key/values to CONFIG_FILE, then reload config.
-    Merges with anything already persisted so partial saves are fine.
-
-    The file holds CLIENT_PASS and JACKETT_API_KEY, so it is written 0600 and
-    atomically (temp file + rename): a crash mid-write can't leave a
-    truncated config behind. Raises ValueError for an unwritable value
-    before touching the file."""
-    import tempfile
+    """Store whitelisted settings and reload. Partial saves are fine. Raises
+    ValueError for an unstorable value before anything is written."""
     updates = {k: _check_value(k, str(v)) for k, v in values.items()
                if k in WIZARD_KEYS and v is not None}
-    existing = _load_persisted(into_env=False)
-    existing.update(updates)
-    p = Path(CONFIG_FILE)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    lines = ["# Written by Faucet (Settings). Safe to edit by hand.",
-             "# Values here override process environment.", ""]
-    for k in sorted(existing):
-        lines.append(f"{k}={existing[k]}")
-    fd, tmp = tempfile.mkstemp(prefix=".faucet-env-", dir=str(p.parent))
-    try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write("\n".join(lines) + "\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, p)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    if not updates:
+        return
+    _db_write({PREFIX + k: v for k, v in updates.items()})
+    for k, v in updates.items():
+        os.environ[k] = v
     reload()
 
 
+def stored() -> dict:
+    """The stored settings (bare keys) — what the Settings UI edits."""
+    return _load_persisted(into_env=False)
+
+
 def harden_permissions() -> None:
-    """Tighten an existing config file written by an older version (0644)."""
-    try:
-        p = Path(CONFIG_FILE)
-        if p.exists() and (p.stat().st_mode & 0o077):
-            os.chmod(p, 0o600)
-    except OSError:
-        pass
+    """The database now holds the client password and API keys: 0600, as the
+    old settings file was (and tighten that file too if it still exists)."""
+    for p in (_db_path(), Path(CONFIG_FILE)):
+        try:
+            if p.exists() and (p.stat().st_mode & 0o077):
+                os.chmod(p, 0o600)
+        except OSError:
+            pass
 
 
+_load_persisted(into_env=True)
 config = Config()
 harden_permissions()

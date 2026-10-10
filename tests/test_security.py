@@ -263,17 +263,15 @@ def test_https_detection(monkeypatch):
 
 # ── S4: config file + settings API ───────────────────────────────────────────
 
-def test_config_save_rejects_newlines_and_writes_0600(app):
+def test_config_save_rejects_newlines_and_db_is_0600(app):
     cfg = app.m["config"]
     with pytest.raises(ValueError):
         cfg.save({"APP_TITLE": "x\nSESSION_SECRET=owned"})
-    assert "SESSION_SECRET" not in (app.tmp / "faucet.env").read_text() \
-        if (app.tmp / "faucet.env").exists() else True
+    assert "SESSION_SECRET" not in cfg.stored()
     cfg.save({"APP_TITLE": "Faucet Test"})
-    p = app.tmp / "faucet.env"
-    assert stat.S_IMODE(p.stat().st_mode) == 0o600
-    assert "APP_TITLE=Faucet Test" in p.read_text()
-    assert [x.name for x in app.tmp.iterdir() if x.name.startswith(".faucet-env-")] == []
+    assert cfg.stored()["APP_TITLE"] == "Faucet Test"
+    cfg.harden_permissions()
+    assert stat.S_IMODE(cfg._db_path().stat().st_mode) == 0o600
 
 
 def test_existing_world_readable_config_is_tightened(app):

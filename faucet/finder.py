@@ -12,10 +12,15 @@ Queries are structured where the indexer allows it (its Torznab caps):
 IMDb id. Indexers that only do free text get the classic "Title S01E02" /
 "Title Year" query. Results are merged and de-duplicated by info-hash.
 
+Indexers whose caps say they don't carry the content are skipped (no TV
+searches to a movies-only indexer). Once most indexers have answered, the
+rest get SEARCH_STRAGGLER_SECONDS more and are then left behind.
+
 Env:
-  SEARCH_TIMEOUT       seconds per indexer (default 60: a cold Cloudflare
-                       solve takes 10-15s and FlareSolverr solves serially)
-  SEARCH_CONCURRENCY   indexers queried at once (default 8)
+  SEARCH_TIMEOUT            seconds per indexer (default 60: a cold Cloudflare
+                            solve takes 10-15s and FlareSolverr solves serially)
+  SEARCH_CONCURRENCY        indexers queried at once (default 8)
+  SEARCH_STRAGGLER_SECONDS  grace for the rest once a majority answered (10)
 """
 from __future__ import annotations
 
@@ -23,7 +28,7 @@ import logging
 import os
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 from . import config as cfgmod
 from . import db
@@ -84,9 +89,23 @@ def indexer_caps(ix: str) -> dict:
         caps = searchmod.caps(c.jackett_url, c.jackett_api_key, ix, min(20, c.request_timeout))
     except searchmod.SearchError as e:
         log.info("caps for %s unavailable (%s); free-text search only", ix, e)
-        return {"search": {"q"}}
+        fallback = {"search": {"q"}}
+        _store(_CAPS_KEY + ix, {k: sorted(v) for k, v in fallback.items()}, 3600)
+        return fallback
     _store(_CAPS_KEY + ix, {k: sorted(v) for k, v in caps.items()}, _CAPS_TTL)
     return caps
+
+
+_KIND_CAT = {"episode": 5000, "season": 5000, "movie": 2000}
+
+
+def carries(caps: dict, kind: str) -> bool:
+    """Does this indexer carry the content being searched? Unknown = yes.
+    YTS (movies) answered every TV search with nothing; SubsPlease (anime)
+    likewise for movies."""
+    want = _KIND_CAT.get(kind)
+    cats = caps.get("_cats")
+    return want is None or not cats or want in cats
 
 
 def forget_indexers() -> None:
@@ -172,12 +191,20 @@ def find(kind: str, *, title: str = "", season=None, episode=None, year=None,
         return out
 
     timeout = _int_env("SEARCH_TIMEOUT", 60)
+    grace = float(_int_env("SEARCH_STRAGGLER_SECONDS", 10))
+    capsmap: dict = {}
+    if kind != "free":
+        # cached a day; the first search after that fetches them all at once
+        with ThreadPoolExecutor(max_workers=min(len(ixs), 8)) as cp:
+            capsmap = dict(zip(ixs, cp.map(indexer_caps, ixs), strict=True))
+    skipped = [ix for ix in ixs if kind != "free" and not carries(capsmap[ix], kind)]
+    targets = [ix for ix in ixs if ix not in skipped] or ixs
 
     def one(ix):
         if kind == "free":
             mode, q, params, cat = "search", query, {}, category
         else:
-            mode, q, params, cat = plan(indexer_caps(ix), kind, title, season, episode,
+            mode, q, params, cat = plan(capsmap[ix], kind, title, season, episode,
                                         year, query, ids)
         try:
             if mode == "search" and not params:
@@ -191,26 +218,51 @@ def find(kind: str, *, title: str = "", season=None, episode=None, year=None,
             return ix, None, str(e)
 
     merged: dict = {}
-    errors, hidden = [], 0
-    with ThreadPoolExecutor(max_workers=min(len(ixs), _int_env("SEARCH_CONCURRENCY", 8))) as pool:
-        for ix, res, err in pool.map(one, ixs):
-            if err:
-                errors.append((ix, err))
-                continue
-            hidden += getattr(res, "hidden", 0)
-            for r in res:
-                k = _key(r)
-                if k not in merged or (r.get("seeders") or 0) > (merged[k].get("seeders") or 0):
-                    merged[k] = r
-    if errors and len(errors) == len(ixs):
+    errors, hidden, slow = [], 0, []
+    # Not a `with` block: leaving one waits for every thread. Stragglers are
+    # left to finish (and record their telemetry) in the background.
+    pool = ThreadPoolExecutor(max_workers=min(len(targets), _int_env("SEARCH_CONCURRENCY", 8)),
+                              thread_name_prefix="search")
+    futures = {pool.submit(one, ix): ix for ix in targets}
+    pending = set(futures)
+    majority = len(targets) // 2 + 1
+    deadline = None
+    try:
+        while pending:
+            wait_for = timeout + 5 if deadline is None else max(0.0, deadline - time.monotonic())
+            done, pending = wait(pending, timeout=wait_for, return_when=FIRST_COMPLETED)
+            for fut in done:
+                ix, res, err = fut.result()
+                if err:
+                    errors.append((ix, err))
+                    continue
+                hidden += getattr(res, "hidden", 0)
+                for r in res:
+                    k = _key(r)
+                    if k not in merged or (r.get("seeders") or 0) > (merged[k].get("seeders") or 0):
+                        merged[k] = r
+            answered = len(futures) - len(pending)
+            if deadline is None and answered >= majority:
+                # most indexers have answered: the rest get a short grace,
+                # not the full timeout (one cold Cloudflare solve used to
+                # stretch every search to 12s for zero results)
+                deadline = time.monotonic() + grace
+            if pending and deadline is not None and time.monotonic() >= deadline:
+                slow = [futures[f] for f in pending]
+                break
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+    if errors and len(errors) == len(targets):
         raise searchmod.SearchError(
-            f"all {len(ixs)} indexers failed (first: {errors[0][0]}: {errors[0][1]})")
+            f"all {len(targets)} indexers failed (first: {errors[0][0]}: {errors[0][1]})")
     out = searchmod.Results(sorted(merged.values(), key=lambda r: r.get("seeders") or 0,
                                    reverse=True)[:limit])
-    out.hidden, out.errors, out.searched = hidden, errors, len(ixs)
-    if errors:
-        log.info("search %r: %d/%d indexers failed (%s)", title or query, len(errors), len(ixs),
-                 "; ".join(f"{i}: {m[:80]}" for i, m in errors[:3]))
+    out.hidden, out.errors, out.searched = hidden, errors, len(targets)
+    out.skipped, out.slow = skipped, slow
+    if errors or slow:
+        log.info("search %r: %d/%d indexers failed, %d too slow (%s)", title or query,
+                 len(errors), len(targets), len(slow),
+                 "; ".join([f"{i}: {m[:80]}" for i, m in errors[:3]] + [f"{i}: slow" for i in slow]))
     return out
 
 

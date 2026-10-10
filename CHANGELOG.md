@@ -4,6 +4,24 @@
 
 ### Changed
 
+- **Settings live in the database.** Connections, paths, behavior and
+  notifications are stored in `cascade.db` (now mode 0600) instead of
+  `faucet.env`. On first start every value from the old file — or from the
+  environment — is imported once and the file is renamed
+  `faucet.env.imported`; after that the database is the only source and an
+  environment value for a setting is ignored with a startup warning. This
+  ends the "changed it in compose, nothing happened" layering, and is the
+  base for the setup wizard.
+- **TV searches skip movie-only indexers and vice versa**, from the
+  categories in each indexer's caps.
+- **Stragglers don't hold a search.** Once most indexers have answered, the
+  rest get `SEARCH_STRAGGLER_SECONDS` (10) more and are then left behind
+  (they finish in the background). A cold Cloudflare solve used to make
+  every search take 12s for no results.
+- **Indexer health shows each indexer over 24h**: searches, average and
+  p95 latency, results per search, empty and failed counts, and flags an
+  indexer that never returns anything.
+
 - **Every indexer is searched on its own, in parallel.** Jackett's aggregate
   `all` endpoint made each search as slow as the slowest indexer (a
   Cloudflare challenge being solved held up every result) and failed the

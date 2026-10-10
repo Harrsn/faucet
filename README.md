@@ -170,6 +170,7 @@ All via environment / `.env`:
 | `INDEXER_STATS_DAYS` | `7` | How long per-search telemetry is kept. |
 | `SEARCH_TIMEOUT` | `60` | Seconds each indexer gets per search (indexers are searched in parallel). |
 | `SEARCH_CONCURRENCY` | `8` | Indexers searched at once. |
+| `SEARCH_STRAGGLER_SECONDS` | `10` | Once most indexers have answered, how long the rest get before the search moves on without them. |
 | `INDEXER_PROBE_TIMEOUT` | `60` | Seconds each indexer gets in the probe (Cloudflare challenges through FlareSolverr take 10–15s each). |
 | `INDEXER_PROBE_CONCURRENCY` | `2` | Indexers probed at once (one FlareSolverr solves challenges serially). |
 | `METRICS_TOKEN` | — | Enables `/metrics` (Prometheus text format) for `Authorization: Bearer <token>`. Admin sessions can always read it; with neither, `/metrics` is 404. |
@@ -201,7 +202,7 @@ All via environment / `.env`:
 | `CLIENT_IP_HEADERS` | `cf-connecting-ip,x-real-ip,x-forwarded-for` | Which headers carry the client IP, in order (X-Forwarded-For: right-most entry). |
 | `COOKIE_SECURE` | `auto` | `auto` sets the cookie `Secure` flag when the browser connection is HTTPS (directly or per a trusted proxy); `1`/`0` force it. |
 
-Most connection, path, behavior, and metadata settings can also be edited live from the in-app **Settings** panel (they persist to a config file that overrides the environment and survives restarts). The **TMDb API key**, default language, and default profile are stored in the database and set in-app. Full list and notification URL formats are in [.env.example](.env.example).
+Connection, path, behavior, and metadata settings are edited in the in-app **Settings** panel and stored in Faucet's database. Environment variables for them are only read once — on the first start, to import an existing setup — and ignored after that (a startup warning names any such variable). Full list and notification URL formats are in [.env.example](.env.example).
 
 ## Library tidy
 

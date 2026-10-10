@@ -5,20 +5,10 @@
 #
 # There are deliberately no secrets in this file.
 #
-# Config reaches the app in three layers, highest priority last:
-#
-#   1. this file's `environment:`  — structural settings the app reads
-#                                    directly from os.environ
-#   2. env_file                    — SESSION_SECRET, which config.py excludes
-#                                    from the wizard on purpose
-#   3. /config/faucet.env          — everything in config.py's WIZARD_KEYS.
-#                                    _load_persisted() writes these INTO the
-#                                    environment at import, so they override
-#                                    anything set above. Faucet's Settings
-#                                    panel owns this file.
-#
-# That last point is the one that bites: putting JACKETT_URL or CLIENT_PASS
-# here does nothing if faucet.env defines them. Change those in Settings.
+# Settings (Jackett, download client, paths, notifications) live in Faucet's
+# database and are edited in Settings; since 1.7 a value for one of them here
+# is ignored (and logged). This file only carries bootstrap and tunables that
+# have no UI yet, plus SESSION_SECRET via env_file.
 
 services:
   faucet:

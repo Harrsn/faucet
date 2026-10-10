@@ -38,6 +38,8 @@ class Results(list):
     hidden: int = 0
     errors: list = []
     searched: int = 1
+    skipped: list = []
+    slow: list = []
 
 
 def human_size(n: int) -> str:
@@ -159,6 +161,17 @@ def caps(jackett_url: str, api_key: str, indexer: str, timeout: int = 15) -> dic
     except ET.ParseError as e:
         raise SearchError(f"Bad caps XML: {e}", api_key) from None
     out: dict = {}
+    # top-level categories the indexer carries (5030 'TV/SD' -> 5000), so
+    # a TV search can skip a movies-only indexer and vice versa
+    cats = set()
+    for cat in root.iter("category"):
+        try:
+            cats.add(int(cat.get("id", "0")) // 1000 * 1000)
+        except ValueError:
+            pass
+    cats.discard(0)
+    if cats:
+        out["_cats"] = cats
     searching = root.find("searching")
     for el in (list(searching) if searching is not None else []):
         if el.tag not in ("search", "tv-search", "movie-search"):

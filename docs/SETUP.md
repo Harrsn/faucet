@@ -42,11 +42,13 @@ reconciles against TMDb, and starts hunting what's missing.
 
 ## Where settings are stored
 
-UI-edited connection/path/behavior settings persist to `FAUCET_CONFIG_FILE`
-(default `/config/faucet.env`). These values override process environment and
-survive restarts, so you can configure entirely through the UI. The TMDb key,
-default language, and default profile are stored in the database. Secrets that
-should stay out of the app (the session key, DB path, listen port) live only in
-your environment / stack.
+Everything you set in the UI — connections, paths, behavior, the TMDb key,
+default language and profile — is stored in Faucet's database
+(`cascade.db` in the config volume, owner-only). Upgrading from a version that
+used `faucet.env`, its values are imported once on first start and the file
+is renamed `faucet.env.imported`; after that, environment values for those
+settings are ignored (a startup warning names them). The environment keeps
+only bootstrap: the session key, the data path, the listen port, and tunables
+that have no UI yet.
 
 The `/health` endpoint reports live reachability of the indexer and client.
