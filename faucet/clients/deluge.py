@@ -5,7 +5,7 @@ from typing import Optional
 
 import requests
 
-from .base import (AddResult, DownloadClient, DownloadClientError, Transfer,
+from .base import (fetch_torrent, AddResult, DownloadClient, DownloadClientError, Transfer,
                    TransferFile)
 
 # Deluge state strings -> normalized labels
@@ -68,6 +68,14 @@ class DelugeClient(DownloadClient):
         before = set(self._hashes())
         if magnet_or_url.startswith("magnet:"):
             self._call("core.add_torrent_magnet", [magnet_or_url, options])
+        elif magnet_or_url.startswith("http"):
+            # resolve indexer links ourselves: Deluge's add_torrent_url can't
+            # follow a redirect that ends at a magnet URI
+            kind, value = fetch_torrent(magnet_or_url, self.timeout)
+            if kind == "magnet":
+                self._call("core.add_torrent_magnet", [value, options])
+            else:
+                self._call("core.add_torrent_file", ["faucet.torrent", value, options])
         else:
             self._call("core.add_torrent_url", [magnet_or_url, options])
         after = self._hashes()

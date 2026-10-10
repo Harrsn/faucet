@@ -5,6 +5,8 @@ Env:
                        one previous generation kept as events.jsonl.1)
   DB_VACUUM_FREE_PCT   VACUUM when free pages exceed this share of the file
                        (default 25), at most once a day
+  HISTORY_DAYS         history retention (default 365)
+  HISTORY_FAILED_DAYS  retention for grab_failed / remove_failed (default 14)
 """
 from __future__ import annotations
 
@@ -79,6 +81,29 @@ def prune_tmdb_cache() -> int:
             if exp < now:
                 c.execute("DELETE FROM settings WHERE key=?", (r["key"],))
                 n += 1
+    return n
+
+
+def prune_history() -> int:
+    """History retention. Ordinary events are kept HISTORY_DAYS (365);
+    failure noise (grab_failed, remove_failed) HISTORY_FAILED_DAYS (14) —
+    one bug once wrote 38k grab_failed rows, 50 MB, in a month."""
+    from datetime import timedelta
+    try:
+        keep = max(1, int(os.environ.get("HISTORY_DAYS", "365")))
+        keep_failed = max(1, int(os.environ.get("HISTORY_FAILED_DAYS", "14")))
+    except ValueError:
+        keep, keep_failed = 365, 14
+    now = datetime.now()
+    with db.connect() as c:
+        n = c.execute("DELETE FROM history WHERE ts < ?",
+                      ((now - timedelta(days=keep)).isoformat(timespec="seconds"),)).rowcount
+        n += c.execute("DELETE FROM history WHERE event IN ('grab_failed','remove_failed') "
+                       "AND ts < ?",
+                       ((now - timedelta(days=keep_failed)).isoformat(timespec="seconds"),)
+                       ).rowcount
+    if n:
+        log.info("History retention: removed %d row(s)", n)
     return n
 
 
@@ -182,8 +207,8 @@ def tail_events(limit: int) -> list[dict]:
 def run() -> dict:
     """Scheduler housekeeping. Never raises."""
     out = {}
-    for name, fn in (("tmdb_pruned", prune_tmdb_cache), ("events_rotated", rotate_events),
-                     ("vacuumed", maybe_vacuum)):
+    for name, fn in (("tmdb_pruned", prune_tmdb_cache), ("history_pruned", prune_history),
+                     ("events_rotated", rotate_events), ("vacuumed", maybe_vacuum)):
         try:
             out[name] = fn()
         except Exception as e:                   # noqa: BLE001

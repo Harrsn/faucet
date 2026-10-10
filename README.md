@@ -172,6 +172,8 @@ All via environment / `.env`:
 | `INDEXER_PROBE_CONCURRENCY` | `2` | Indexers probed at once (one FlareSolverr solves challenges serially). |
 | `METRICS_TOKEN` | — | Enables `/metrics` (Prometheus text format) for `Authorization: Bearer <token>`. Admin sessions can always read it; with neither, `/metrics` is 404. |
 | `EVENTS_MAX_BYTES` | `5242880` | Rotate `events.jsonl` to `events.jsonl.1` past this size. |
+| `HISTORY_DAYS` | `365` | History retention. |
+| `HISTORY_FAILED_DAYS` | `14` | Retention for `grab_failed` / `remove_failed` history rows. |
 | `DB_VACUUM_FREE_PCT` | `25` | VACUUM the database (at most daily) when free pages exceed this percentage. |
 | `RSS_INTERVAL_SECONDS` | `1800` | How often the scheduler scans/reconciles/hunts. |
 | `SEARCH_LIMIT` | `150` | Max results per search. |

@@ -627,8 +627,13 @@ def _hunt_wanted(series_filter=None, max_override=None) -> dict:
             with db.connect() as c:
                 c.execute("DELETE FROM grabbed WHERE title=?", (pick["title"],))
             _grab_failed(pick["title"], query, e)
+            # back off like a miss: a release the client can't take used to be
+            # retried every tick (one history row each time, forever)
+            res["next_search"] = wants.record_miss(
+                w["id"], w.get("search_count") or 0, _is_recent(w.get("_air", "")))
             huntlog.record(**log_key, outcome="add_failed", results=len(results),
-                           kept=len(ranked), reasons=reasons, pick=pick, detail=str(e))
+                           kept=len(ranked), reasons=reasons, pick=pick, detail=str(e),
+                           next_search=res["next_search"])
         details.append(res)
     if search_errors:
         log.warning("Hunt: %d search(es) failed this pass (first: %s)",
