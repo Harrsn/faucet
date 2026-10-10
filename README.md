@@ -168,6 +168,8 @@ All via environment / `.env`:
 | `HUNT_LOG_DAYS` | `14` | How long hunt-log entries are kept. |
 | `INDEXER_PROBE_HOURS` | `24` | How often each Jackett indexer is probed individually. `0` = only on demand. |
 | `INDEXER_STATS_DAYS` | `7` | How long per-search telemetry is kept. |
+| `SEARCH_TIMEOUT` | `60` | Seconds each indexer gets per search (indexers are searched in parallel). |
+| `SEARCH_CONCURRENCY` | `8` | Indexers searched at once. |
 | `INDEXER_PROBE_TIMEOUT` | `60` | Seconds each indexer gets in the probe (Cloudflare challenges through FlareSolverr take 10–15s each). |
 | `INDEXER_PROBE_CONCURRENCY` | `2` | Indexers probed at once (one FlareSolverr solves challenges serially). |
 | `METRICS_TOKEN` | — | Enables `/metrics` (Prometheus text format) for `Authorization: Bearer <token>`. Admin sessions can always read it; with neither, `/metrics` is 404. |
