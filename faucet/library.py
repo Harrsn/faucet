@@ -141,6 +141,46 @@ def _unchanged(c, table: str, path: str, mtime: float) -> bool:
         (path,)).fetchone() is None
 
 
+def _ensure_dupes(c) -> None:
+    c.execute(
+        "CREATE TABLE IF NOT EXISTS library_dupes ("
+        "  path        TEXT PRIMARY KEY,"
+        "  kind        TEXT,"                 # tv | movie
+        "  label       TEXT,"                 # 'Show S01E02' / 'Title (Year)'
+        "  winner_path TEXT,"                 # the copy the library uses instead
+        "  quality     TEXT,"
+        "  size        INTEGER DEFAULT 0,"
+        "  mtime       REAL DEFAULT 0,"
+        "  seen_ts     TEXT"
+        ")")
+
+
+def _known_dupe(c, path: str, mtime: float) -> bool:
+    """A file already classified as a redundant copy, unchanged since. Such
+    files have no library row of their own, so the incremental skip never
+    matched them and every scan re-parsed them all."""
+    _ensure_dupes(c)
+    row = c.execute("SELECT mtime FROM library_dupes WHERE path=?", (path,)).fetchone()
+    return bool(row) and abs((row["mtime"] or 0) - mtime) < 1
+
+
+def _note_dupe(c, f: Path, st, kind: str, label: str, winner: str, quality) -> None:
+    from datetime import datetime
+    _ensure_dupes(c)
+    c.execute(
+        "INSERT INTO library_dupes (path, kind, label, winner_path, quality, size, mtime, seen_ts) "
+        "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET kind=excluded.kind, "
+        "label=excluded.label, winner_path=excluded.winner_path, quality=excluded.quality, "
+        "size=excluded.size, mtime=excluded.mtime, seen_ts=excluded.seen_ts",
+        (str(f), kind, label, winner, quality, st.st_size, st.st_mtime,
+         datetime.now().isoformat(timespec="seconds")))
+
+
+def _clear_dupe(c, path: str) -> None:
+    _ensure_dupes(c)
+    c.execute("DELETE FROM library_dupes WHERE path=?", (path,))
+
+
 SUPERSEDED_DIR = "_superseded"                   # under LIBRARY_ROOT, outside Plex sections
 
 
@@ -225,7 +265,8 @@ def _scan_tv(root: Path, stats: dict, force: bool = False,
             seen.add(str(f))
         # incremental: skip unchanged files already recorded
         with db.connect() as c:
-            unchanged = _unchanged(c, "library_episodes", str(f), st.st_mtime)
+            unchanged = (_unchanged(c, "library_episodes", str(f), st.st_mtime)
+                         or _known_dupe(c, str(f), st.st_mtime))
         if not force and unchanged:
             stats["skipped"] += 1
             continue
@@ -269,6 +310,7 @@ def _scan_tv(root: Path, stats: dict, force: bool = False,
         with db.connect() as c:
             rec = _recorded_quality(c, str(f), st.st_size)
             quality = rec[0] if rec else (_detect_quality(f.name) or _detect_quality(str(f)))
+            won_any, beaten_by = False, None
             for ep_no in eps:
                 # Keep the BEST file per episode. Last-walked used to win, so an
                 # old 720p copy and its 1080p upgrade flip-flopped between scans
@@ -288,6 +330,7 @@ def _scan_tv(root: Path, stats: dict, force: bool = False,
                     if old_rank >= new_rank:
                         if old_rank > new_rank and not multi:
                             _superseded(Path(row["path"]), f, stats)
+                        beaten_by = beaten_by or row["path"]
                         continue                  # existing file is at least as good
                     if not old_multi:
                         _superseded(f, Path(row["path"]), stats)
@@ -297,6 +340,14 @@ def _scan_tv(root: Path, stats: dict, force: bool = False,
                     "ON CONFLICT(season, episode, show_name) DO UPDATE SET "
                     "quality=excluded.quality, path=excluded.path, size=excluded.size, mtime=excluded.mtime",
                     (show, int(season), ep_no, quality, str(f), st.st_size, st.st_mtime))
+                won_any = True
+            if won_any or not beaten_by:
+                _clear_dupe(c, str(f))
+            else:
+                # loses for every episode it holds: a redundant copy
+                tag = "E".join(f"{e:02d}" for e in eps)
+                _note_dupe(c, f, st, "tv", f"{show} S{int(season):02d}E{tag}",
+                           beaten_by, quality)
             c.execute("DELETE FROM scan_unparsed WHERE path=?", (str(f),))
         stats["episodes"] += 1
 
@@ -318,7 +369,8 @@ def _scan_movies(root: Path, stats: dict, force: bool = False,
         if seen is not None:
             seen.add(str(f))
         with db.connect() as c:
-            unchanged = _unchanged(c, "library_movies", str(f), st.st_mtime)
+            unchanged = (_unchanged(c, "library_movies", str(f), st.st_mtime)
+                         or _known_dupe(c, str(f), st.st_mtime))
         if not force and unchanged:
             stats["skipped"] += 1
             continue
@@ -349,6 +401,8 @@ def _scan_movies(root: Path, stats: dict, force: bool = False,
                 if old_rank >= new_rank:
                     if old_rank > new_rank:
                         _superseded(Path(row["path"]), f, stats)
+                    _note_dupe(c, f, st, "movie",
+                               f"{title} ({year})" if year else title, row["path"], quality)
                     stats["movies"] += 1
                     continue                      # existing file is at least as good
                 _superseded(f, Path(row["path"]), stats)
@@ -360,6 +414,7 @@ def _scan_movies(root: Path, stats: dict, force: bool = False,
                 "path=excluded.path, size=excluded.size, mtime=excluded.mtime",
                 (title, year, quality, "CAM" if is_cam else None,
                  str(f), st.st_size, st.st_mtime))
+            _clear_dupe(c, str(f))
             c.execute("DELETE FROM scan_unparsed WHERE path=?", (str(f),))
         stats["movies"] += 1
 
@@ -435,6 +490,16 @@ def scan(force: bool = False) -> dict:
                         and p not in seen_tv and p not in seen_mv
                         and not os.path.exists(p)):
                     c.execute("DELETE FROM library_files WHERE path=?", (p,))
+    # Duplicate records are a cache: drop any whose file vanished or whose
+    # winner is no longer the library's copy, and the next scan re-judges it.
+    with db.connect() as c:
+        _ensure_dupes(c)
+        live = {r["path"] for r in c.execute(
+            "SELECT path FROM library_episodes UNION SELECT path FROM library_movies")}
+        for r in c.execute("SELECT path, winner_path FROM library_dupes").fetchall():
+            if (r["winner_path"] not in live or not os.path.exists(r["path"])
+                    or not os.path.exists(r["winner_path"] or "")):
+                c.execute("DELETE FROM library_dupes WHERE path=?", (r["path"],))
     pairs = stats.pop("_superseded", {})
     if pairs and healthy:
         stats["superseded_moved"] = _retire_superseded(root, pairs)
@@ -489,6 +554,82 @@ def have_movie(title: str, year: int | None = None) -> dict | None:
     return None
 
 
+def duplicates() -> dict:
+    """Redundant copies: files whose episode/movie is already held by a file
+    at least as good. {items: [...], count, bytes}."""
+    with db.connect() as c:
+        _ensure_dupes(c)
+        rows = [dict(r) for r in c.execute(
+            "SELECT path, kind, label, winner_path, quality, size FROM library_dupes "
+            "ORDER BY kind, label").fetchall()]
+    for r in rows:
+        r["name"] = os.path.basename(r["path"])
+        r["winner_name"] = os.path.basename(r["winner_path"] or "")
+    return {"items": rows, "count": len(rows), "bytes": sum(r["size"] or 0 for r in rows)}
+
+
+def retire_duplicates(paths: list[str] | None = None) -> dict:
+    """Move recorded duplicates (all, or the given subset) and their sidecar
+    subtitles to LIBRARY_ROOT/_superseded/<same relative path> — the same
+    reversible parking spot the automatic upgrade cleanup uses.
+
+    Only paths that are in the duplicates table, inside the library root,
+    and whose winner still exists are touched; anything else is reported
+    as skipped, never moved."""
+    root = _library_root().resolve()
+    base = root / SUPERSEDED_DIR
+    want = None if paths is None else set(paths)
+    moved, skipped, freed = [], [], 0
+    with db.connect() as c:
+        _ensure_dupes(c)
+        rows = [dict(r) for r in c.execute(
+            "SELECT path, winner_path, size FROM library_dupes").fetchall()]
+    for r in rows:
+        if want is not None and r["path"] not in want:
+            continue
+        loser, winner = Path(r["path"]), Path(r["winner_path"] or "")
+        try:
+            real = loser.resolve()
+            if root not in real.parents or base in real.parents:
+                skipped.append({"path": r["path"], "why": "outside the library root"})
+                continue
+            if not loser.is_file():
+                skipped.append({"path": r["path"], "why": "file is gone"})
+                continue
+            if not winner.is_file() or winner.resolve() == real:
+                skipped.append({"path": r["path"], "why": "the better copy is missing"})
+                continue
+            base.mkdir(parents=True, exist_ok=True)
+            for marker, body in ((".plexignore", "*\n"), (".ignore", "")):
+                if not (base / marker).exists():
+                    (base / marker).write_text(body)
+            rel = real.relative_to(root)
+            companions = [p for p in loser.parent.iterdir()
+                          if p != loser and p.is_file()
+                          and p.name.startswith(loser.stem + ".")
+                          and p.suffix.lower() not in VIDEO_EXTS]
+            for src in [loser, *companions]:
+                dest = base / rel.parent / src.name
+                n = 2
+                while dest.exists():
+                    dest = base / rel.parent / f"{src.stem} ({n}){src.suffix}"
+                    n += 1
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                os.rename(src, dest)
+            log.info("retired duplicate %s (library keeps %s)", loser, winner.name)
+            moved.append(r["path"])
+            freed += r["size"] or 0
+            with db.connect() as c:
+                c.execute("DELETE FROM library_dupes WHERE path=?", (r["path"],))
+        except OSError as e:
+            skipped.append({"path": r["path"], "why": str(e)})
+    if want:
+        for p in want - {r["path"] for r in rows}:
+            skipped.append({"path": p, "why": "not a recorded duplicate"})
+    return {"moved": len(moved), "bytes": freed, "skipped": skipped,
+            "to": str(base)}
+
+
 def scan_report() -> dict:
     """Diagnostic: what the scanner couldn't place. Lists unparsed files (with
     the reason and basename) grouped by kind, so the user can spot naming issues
@@ -501,4 +642,4 @@ def scan_report() -> dict:
         item = {"path": r["path"], "name": _os.path.basename(r["path"]), "reason": r["reason"]}
         (tv if r["kind"] == "tv" else movie).append(item)
     return {"unparsed_tv": tv, "unparsed_movies": movie,
-            "total": len(rows)}
+            "total": len(rows), "duplicates": duplicates()}
