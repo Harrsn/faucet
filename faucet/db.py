@@ -298,6 +298,10 @@ def _migrate(c) -> None:
         # movie quality upgrades: remember whether the on-disk file is a
         # cam-family rip (always upgrade-eligible)
         ("library_movies", "source", "TEXT"),
+        # hunt backoff: how many fruitless searches a want has had, and the
+        # earliest time it may be searched again (NULL = due now)
+        ("wanted", "search_count", "INTEGER DEFAULT 0"),
+        ("wanted", "next_search", "TEXT"),
     ]
     for table, col, decl in add:
         try:
@@ -306,6 +310,16 @@ def _migrate(c) -> None:
         except Exception:                        # noqa: BLE001 - table may not exist yet
             pass
     _migrate_wanted_key(c)
+    for ddl in (
+        "CREATE INDEX IF NOT EXISTS ix_wanted_status ON wanted (status)",
+        "CREATE INDEX IF NOT EXISTS ix_library_episodes_se ON library_episodes (season, episode)",
+        "CREATE INDEX IF NOT EXISTS ix_library_episodes_path ON library_episodes (path)",
+        "CREATE INDEX IF NOT EXISTS ix_library_movies_path ON library_movies (path)",
+    ):
+        try:
+            c.execute(ddl)
+        except sqlite3.Error as e:              # pragma: no cover - index is an optimisation
+            log.warning("index creation failed (%s): %s", ddl, e)
 
 
 def _migrate_wanted_key(c) -> None:

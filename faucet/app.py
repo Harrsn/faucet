@@ -1066,7 +1066,8 @@ def api_season_grab(sid: int, season: int, req: AddRequest):
     db.add_history("added", title,
                    f"manual season pack: {s['title']} S{season:02d}")
     with db.connect() as c:
-        c.execute("UPDATE wanted SET status='grabbed', last_search=? "
+        c.execute("UPDATE wanted SET status='grabbed', last_search=?, "
+                  "search_count=0, next_search=NULL "
                   "WHERE kind='episode' AND series_id=? AND season=? "
                   "AND status='wanted'",
                   (_dt.now().isoformat(timespec="seconds"), sid, season))
@@ -1096,7 +1097,8 @@ def api_episode_grab(sid: int, season: int, episode: int, req: AddRequest):
     db.add_history("added", title,
                    f"manual grab: {s['title']} S{season:02d}E{episode:02d}")
     with db.connect() as c:
-        c.execute("UPDATE wanted SET status='grabbed', last_search=? "
+        c.execute("UPDATE wanted SET status='grabbed', last_search=?, "
+                  "search_count=0, next_search=NULL "
                   "WHERE kind='episode' AND series_id=? AND season=? AND episode=?",
                   (_dt.now().isoformat(timespec="seconds"), sid, season, episode))
     return {"status": "ok", "id": res.id, "name": res.name, "duplicate": res.duplicate}
