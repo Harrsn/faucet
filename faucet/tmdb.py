@@ -172,6 +172,8 @@ def season_episodes(tmdb_id: int, season_no: int, fresh: bool = False) -> list[d
             "episode": ep.get("episode_number"),
             "title": ep.get("name", ""),
             "air_date": ep.get("air_date") or "",
+            "still": f"https://image.tmdb.org/t/p/w300{ep['still_path']}"
+                     if ep.get("still_path") else None,
         })
     _cache_put(ck, season_eps)
     return season_eps

@@ -168,13 +168,18 @@ async def _security_headers(request: _Request, call_next):
     response = await call_next(request)
     for k, v in _SECURITY_HEADERS.items():
         response.headers.setdefault(k, v)
+    if request.url.path.startswith("/static/app/"):
+        # ES modules import each other by bare path; after a deploy a cached
+        # old module next to a fresh one breaks the page. Revalidate every
+        # time (an ETag 304 is cheap).
+        response.headers["Cache-Control"] = "no-cache"
     return response
 
 
 # Endpoints regular users may READ: browse the monitored library, search
 # TMDb (to request), browse Discover, and see the calendar. Safe, non-indexer,
 # non-torrent reads.
-_USER_READABLE = ("/api/series", "/api/movies", "/api/meta/", "/api/calendar")
+_USER_READABLE = ("/api/series", "/api/movies", "/api/meta/", "/api/calendar", "/api/home")
 
 # Always admin-only regardless of method — raw indexer search, torrent client,
 # download management, settings, profiles, subscriptions, hunts, library ops.
@@ -1562,18 +1567,153 @@ def reset_page():
     raise HTTPException(404)
 
 
+_NO_STORE = {"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+             "Pragma": "no-cache"}
+
+
 @app.get("/")
 def index():
+    # never cache the app shell: a cached copy would render after logout and
+    # look like an auth bypass (the API calls behind it 401, but the frame
+    # still appears). No-store forces every load to hit the auth gate.
     f = STATIC / "index.html"
     if f.exists():
-        # never cache the app shell: a cached copy would render after logout and
-        # look like an auth bypass (the API calls behind it 401, but the frame
-        # still appears). No-store forces every load to hit the auth gate.
-        return FileResponse(f, headers={
-            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-            "Pragma": "no-cache",
-        })
+        return FileResponse(f, headers=_NO_STORE)
     raise HTTPException(404, "UI not installed.")
+
+
+@app.get("/classic")
+def classic():
+    """The previous single-file UI, kept reachable while the new one is
+    built out; pages the new UI doesn't have yet deep-link here."""
+    f = STATIC / "classic.html"
+    if f.exists():
+        return FileResponse(f, headers=_NO_STORE)
+    raise HTTPException(404, "Classic UI not installed.")
+
+
+# ---------------------------------------------------------------------------
+# Home: one call for the new UI's landing page
+# ---------------------------------------------------------------------------
+def _stills(tmdb_id, season) -> dict:
+    try:
+        return {e["episode"]: e.get("still") for e in
+                (tmdbmod.season_episodes(tmdb_id, season) or [])}
+    except Exception:                            # noqa: BLE001 - art is optional
+        return {}
+
+
+@app.get("/api/home")
+def api_home(request: _Request):
+    """Hero + rails. Members get the library rails; admins also get
+    downloads, what's still being hunted, and live throughput."""
+    from datetime import datetime as _dt, timedelta as _td
+    from . import movies as movies_mod
+    from .library import owned_index, owned_for
+    user = getattr(request.state, "user", None) or {}
+    admin = user.get("role") == "admin"
+    out: dict = {"admin": admin}
+    with db.connect() as c:
+        rows = [dict(r) for r in c.execute(
+            "SELECT le.series_id, le.season, le.episode, le.quality, le.mtime, "
+            "s.title, s.poster, s.tmdb_id, se.title AS ep_title "
+            "FROM library_episodes le JOIN series s ON s.id = le.series_id "
+            "LEFT JOIN series_episodes se ON se.series_id = le.series_id "
+            "AND se.season = le.season AND se.episode = le.episode "
+            "ORDER BY le.mtime DESC LIMIT 24")]
+        lib_movies = [dict(r) for r in c.execute(
+            "SELECT title, year, quality, source, mtime FROM library_movies "
+            "ORDER BY mtime DESC LIMIT 60")]
+        monitored = [dict(r) for r in c.execute("SELECT id, title, year, poster FROM movies")]
+        movie_wants = {r["series_id"]: r["reason"] for r in c.execute(
+            "SELECT series_id, reason FROM wanted WHERE kind='movie' "
+            "AND status IN ('wanted','grabbed')")}
+        hunting = []
+        if admin:
+            idx = owned_index(c)
+            canon: dict = {}
+            for r in c.execute("SELECT series_id, season, episode FROM series_episodes "
+                               "WHERE season > 0"):
+                canon.setdefault(r["series_id"], set()).add((r["season"], r["episode"]))
+            for r in c.execute(
+                    "SELECT s.id, s.title, s.poster, COUNT(w.id) AS n FROM wanted w "
+                    "JOIN series s ON s.id = w.series_id WHERE w.kind='episode' "
+                    "AND w.status='wanted' GROUP BY s.id ORDER BY n DESC LIMIT 20"):
+                tot = canon.get(r["id"], set())
+                have = len(owned_for(idx, r["id"], r["title"]) & tot)
+                hunting.append({"id": r["id"], "title": r["title"], "poster": r["poster"],
+                                "wanted": r["n"],
+                                "pct": round(100 * have / len(tot)) if tot else 0})
+    stills: dict = {}
+    episodes = []
+    for r in rows:
+        key = (r["tmdb_id"], r["season"])
+        if key not in stills:
+            stills[key] = _stills(*key) if r["tmdb_id"] else {}
+        episodes.append({
+            "series_id": r["series_id"], "title": r["title"], "poster": r["poster"],
+            "season": r["season"], "episode": r["episode"],
+            "ep_title": r["ep_title"] or "", "quality": r["quality"],
+            "added": _dt.fromtimestamp(r["mtime"] or 0).isoformat(timespec="seconds"),
+            "still": stills[key].get(r["episode"])})
+    out["episodes"] = episodes
+
+    hero = None
+    if episodes:
+        first = episodes[0]
+        cutoff = (_dt.fromisoformat(first["added"]) - _td(days=3)).isoformat()
+        fresh = [e for e in episodes if e["series_id"] == first["series_id"]
+                 and e["added"] >= cutoff]
+        with db.connect() as c:
+            srow = c.execute("SELECT tmdb_id FROM series WHERE id=?",
+                             (first["series_id"],)).fetchone()
+        meta = tmdbmod.details(srow["tmdb_id"], "tv") if srow and srow["tmdb_id"] else {}
+        hero = {"series_id": first["series_id"], "title": first["title"],
+                "poster": first["poster"], "backdrop": meta.get("backdrop"),
+                "overview": meta.get("overview", ""), "year": meta.get("year"),
+                "new": [{"season": e["season"], "episode": e["episode"],
+                         "ep_title": e["ep_title"], "quality": e["quality"]} for e in fresh]}
+    out["hero"] = hero
+
+    movies_out, seen = [], set()
+    for lm in lib_movies:
+        for m in monitored:
+            if m["id"] in seen:
+                continue
+            if movies_mod._movie_matches(lm["title"], lm["year"], m["title"], m["year"]):
+                seen.add(m["id"])
+                movies_out.append({"id": m["id"], "title": m["title"], "year": m["year"],
+                                   "poster": m["poster"], "quality": lm["quality"],
+                                   "cam": lm["source"] == "CAM",
+                                   "want": movie_wants.get(m["id"])})
+                break
+        if len(movies_out) >= 20:
+            break
+    out["movies"] = movies_out
+
+    if admin:
+        out["hunting"] = hunting
+        downloads, rate, active = [], 0, 0
+        try:
+            for t in client().list_transfers():
+                rate += t.down_rate
+                if t.status == "downloading":
+                    active += 1
+                if t.status in ("downloading", "checking", "queued") or 0 < t.percent < 100:
+                    downloads.append({"id": t.id, "name": t.name, "percent": round(t.percent, 1),
+                                      "status": t.status, "down_rate": t.down_rate,
+                                      "eta": t.eta, "size": t.size, "error": t.error})
+            client_ok = True
+        except DownloadClientError:
+            client_ok = False
+        downloads.sort(key=lambda d: d["down_rate"], reverse=True)
+        out["downloads"] = downloads
+        with db.connect() as c:
+            wanted_total = c.execute("SELECT COUNT(*) FROM wanted WHERE status='wanted'"
+                                     ).fetchone()[0]
+        out["stats"] = {"downloading": active, "down_rate": rate, "client_ok": client_ok,
+                        "wanted": wanted_total}
+    return out
 
 
 if STATIC.exists():
