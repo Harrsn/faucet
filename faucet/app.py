@@ -28,6 +28,9 @@ logging.basicConfig(level=logging.INFO,
 from .redact import install as _install_redaction, redact as _redact  # noqa: E402
 _install_redaction()
 log = logging.getLogger("faucet")
+for _lvl, _msg in _cfg.pending_messages:
+    logging.getLogger("faucet.config").log(_lvl, _msg)
+_cfg.pending_messages.clear()
 
 from contextlib import asynccontextmanager
 
@@ -453,14 +456,16 @@ def api_dashboard():
         # episodes "have" can't use a series_id join: library_episodes are matched
         # to series by normalized title (same as reconcile / the Shows page), not
         # by a stored series_id. Compute the same way so the count is real.
-        from .library import normalize_title
-        series_titles = {normalize_title(r["title"])
-                         for r in c.execute("SELECT title FROM series").fetchall()}
-        lib_eps = c.execute(
-            "SELECT show_name, season, episode FROM library_episodes").fetchall()
+        from .library import owned_index, owned_for
+        idx = owned_index(c)
+        canon: dict = {}
+        for r in c.execute("SELECT series_id, season, episode FROM series_episodes"):
+            canon.setdefault(r["series_id"], set()).add((r["season"], r["episode"]))
+        # "have" = canonical episodes owned, counted by folder link first,
+        # then by name for folders not linked to any series
         episodes_have = sum(
-            1 for r in lib_eps
-            if normalize_title(r["show_name"] or "") in series_titles)
+            len(owned_for(idx, r["id"], r["title"]) & canon.get(r["id"], set()))
+            for r in c.execute("SELECT id, title FROM series").fetchall())
         out["library"] = {
             "shows": scalar("SELECT COUNT(*) FROM series"),
             "movies": scalar("SELECT COUNT(*) FROM movies"),
@@ -631,7 +636,6 @@ def api_calendar(past: int = Query(7, ge=0, le=30), days: int = Query(14, ge=1, 
     from `past` days ago through `days` days ahead, with ownership + hunt
     status. Grouped client-side; this returns a flat, date-sorted list."""
     from datetime import date, timedelta as _td
-    from .library import normalize_title
     lo = (date.today() - _td(days=past)).isoformat()
     hi = (date.today() + _td(days=days)).isoformat()
     with db.connect() as c:
@@ -642,17 +646,15 @@ def api_calendar(past: int = Query(7, ge=0, le=30), days: int = Query(14, ge=1, 
             "WHERE s.monitored=1 AND e.air_date >= ? AND e.air_date <= ? "
             "ORDER BY e.air_date, s.title, e.season, e.episode",
             (lo, hi)).fetchall()
-        lib: dict = {}
-        for r in c.execute("SELECT show_name, season, episode FROM library_episodes"):
-            lib.setdefault(normalize_title(r["show_name"] or ""), set()).add(
-                (r["season"], r["episode"]))
+        from .library import owned_index, owned_for
+        idx = owned_index(c)
         grabbed = {(r["series_id"], r["season"], r["episode"]): r["status"]
                    for r in c.execute("SELECT series_id, season, episode, status "
                                       "FROM wanted WHERE kind='episode'")}
     today = date.today().isoformat()
     out = []
     for e in eps:
-        owned = (e["season"], e["episode"]) in lib.get(normalize_title(e["title"]), set())
+        owned = (e["season"], e["episode"]) in owned_for(idx, e["series_id"], e["title"])
         wstatus = grabbed.get((e["series_id"], e["season"], e["episode"]))
         if e["air_date"] > today:
             status = "upcoming"
@@ -962,7 +964,6 @@ class SeriesAdd(BaseModel):
 @app.get("/api/series")
 def api_series_list():
     from . import series as series_mod
-    from .library import normalize_title
     from collections import defaultdict
     # one pass over shared tables instead of re-reading ALL library episodes
     # per show (the old loop was O(shows × library) on every page load)
@@ -970,17 +971,15 @@ def api_series_list():
         canon_by_series = defaultdict(set)
         for r in c.execute("SELECT series_id, season, episode FROM series_episodes"):
             canon_by_series[r["series_id"]].add((r["season"], r["episode"]))
-        lib_by_key = defaultdict(set)
-        for r in c.execute("SELECT show_name, season, episode FROM library_episodes"):
-            lib_by_key[normalize_title(r["show_name"] or "")].add(
-                (r["season"], r["episode"]))
+        from .library import owned_index, owned_for
+        idx = owned_index(c)
         wanted_by_series = {r["series_id"]: r["n"] for r in c.execute(
             "SELECT series_id, COUNT(*) AS n FROM wanted "
             "WHERE status='wanted' GROUP BY series_id")}
     out = []
     for s in series_mod.list_series():
         canon_set = canon_by_series.get(s["id"], set())
-        owned = lib_by_key.get(normalize_title(s["title"]), set())
+        owned = owned_for(idx, s["id"], s["title"])
         # "have" = canonical episodes we actually own (so it can't exceed total)
         have = len(owned & canon_set) if canon_set else len(owned)
         s.update(have=have, total=len(canon_set),
@@ -1263,6 +1262,154 @@ def api_indexer_probe():
 def api_library_duplicates():
     from . import library
     return library.duplicates()
+
+
+# --- libraries, folder links, path mappings ---
+class LibraryBody(BaseModel):
+    name: str | None = None
+    kind: str | None = None
+    path: str | None = None
+    is_default: bool | None = None
+    enabled: bool | None = None
+
+
+def _library_view(lib: dict) -> dict:
+    p = lib["path"]
+    exists = os.path.isdir(p)
+    with db.connect() as c:
+        prefix = p.rstrip("/") + "/"
+        table = "library_episodes" if lib["kind"] == "tv" else "library_movies"
+        files = c.execute(f"SELECT COUNT(DISTINCT path) FROM {table} WHERE substr(path,1,?)=?",
+                          (len(prefix), prefix)).fetchone()[0]
+    return {**lib, "exists": exists,
+            "writable": exists and os.access(p, os.W_OK), "files": files}
+
+
+@app.get("/api/libraries")
+def api_libraries():
+    from . import libraries
+    return {"libraries": [_library_view(lib) for lib in libraries.all_libraries()],
+            "mappings": libraries.mappings()}
+
+
+@app.post("/api/libraries")
+def api_libraries_add(body: LibraryBody):
+    from . import libraries
+    try:
+        lid, warnings = libraries.add(body.name or "", body.kind or "", body.path or "",
+                                      bool(body.is_default))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"status": "ok", "id": lid, "warnings": warnings,
+            "library": _library_view(libraries.get(lid))}
+
+
+@app.patch("/api/libraries/{lib_id}")
+def api_libraries_update(lib_id: int, body: LibraryBody):
+    from . import libraries
+    try:
+        warnings = libraries.update(lib_id, **body.model_dump(exclude={"kind"}))
+    except LookupError:
+        raise HTTPException(404, "No such library")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"status": "ok", "warnings": warnings,
+            "library": _library_view(libraries.get(lib_id))}
+
+
+@app.delete("/api/libraries/{lib_id}")
+def api_libraries_delete(lib_id: int):
+    from . import libraries
+    if not libraries.get(lib_id):
+        raise HTTPException(404, "No such library")
+    libraries.remove(lib_id)
+    return {"status": "ok"}
+
+
+_scan_thread = None
+
+
+@app.post("/api/libraries/scan")
+def api_libraries_scan(force: bool = False):
+    """Scan every library in the background (a full scan over a network
+    share can outlast a reverse proxy's request timeout)."""
+    import threading
+    from . import library
+    global _scan_thread
+    if _scan_thread is not None and _scan_thread.is_alive():
+        return {"started": False, "running": True}
+    _scan_thread = threading.Thread(target=library.scan, kwargs={"force": force},
+                                    name="library-scan", daemon=True)
+    _scan_thread.start()
+    return {"started": True, "running": True}
+
+
+@app.get("/api/libraries/folders")
+def api_library_folders():
+    """Show folders in every TV library with the series each is linked to
+    (or the candidates when it couldn't be linked automatically)."""
+    from . import libraries
+    linked = {(x["library_id"], x["folder"]): x for x in libraries.links()}
+    out = []
+    for lib in libraries.of_kind("tv"):
+        for folder in libraries.folders(lib["path"]):
+            x = linked.get((lib["id"], folder))
+            out.append({"library_id": lib["id"], "library": lib["name"], "folder": folder,
+                        "series_id": x["series_id"] if x else None,
+                        "series": x["series"] if x else None,
+                        "manual": bool(x and not x["auto"])})
+    return {"folders": out}
+
+
+class LinkBody(BaseModel):
+    folder: str
+    series_id: int | None = None      # None = unlink
+
+
+@app.put("/api/libraries/{lib_id}/links")
+def api_library_link(lib_id: int, body: LinkBody):
+    """Link a show folder to a series by hand (or unlink it). A manual link
+    is never replaced by automatic matching."""
+    from . import libraries, series as series_mod
+    lib = libraries.get(lib_id)
+    if not lib or lib["kind"] != "tv":
+        raise HTTPException(404, "No such TV library")
+    if body.folder not in libraries.folders(lib["path"]):
+        raise HTTPException(404, "No such folder in that library")
+    if body.series_id is None:
+        libraries.unlink_folder(lib_id, body.folder)
+    else:
+        if not series_mod.get_series(body.series_id):
+            raise HTTPException(404, "No such series")
+        libraries.link_folder(lib_id, body.folder, body.series_id, auto=False)
+        series_mod.reconcile(body.series_id)
+    return {"status": "ok"}
+
+
+class MappingsBody(BaseModel):
+    mappings: list[dict]
+
+
+@app.get("/api/path-mappings")
+def api_path_mappings():
+    from . import libraries
+    return {"mappings": libraries.mappings()}
+
+
+@app.put("/api/path-mappings")
+def api_path_mappings_set(body: MappingsBody):
+    from . import libraries
+    try:
+        return {"mappings": libraries.set_mappings(body.mappings)}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/path-mappings/test")
+def api_path_mappings_test(path: str = Query(..., min_length=1)):
+    from . import libraries
+    local = libraries.to_local(path)
+    return {"client_path": path, "local_path": local, "exists": os.path.exists(local)}
 
 
 class RetireBody(BaseModel):
