@@ -96,8 +96,10 @@ except Exception:                                # noqa: BLE001 - standalone: ne
 # Config
 # ----------------------------------------------------------------------------
 MEDIA_ROOT = Path(os.environ.get("LIBRARY_ROOT", os.environ.get("MEDIA_ROOT", "/library")))
-MOVIES_DIR = MEDIA_ROOT / "movies"
-TV_DIR = MEDIA_ROOT / "tvshows"
+# The hook and sweep resolve the default TV and movie libraries
+# (faucet.libraries) and pass them in; run by hand, the old fixed layout.
+MOVIES_DIR = Path(os.environ.get("FAUCET_MOVIES_DIR") or MEDIA_ROOT / "movies")
+TV_DIR = Path(os.environ.get("FAUCET_TV_DIR") or MEDIA_ROOT / "tvshows")
 GAMES_DIR = MEDIA_ROOT / "games"
 OTHER_DIR = MEDIA_ROOT / "other"
 

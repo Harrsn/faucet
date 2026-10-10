@@ -106,6 +106,11 @@ def _sort_one(item: Path, dry: bool) -> int:
     """Invoke the existing sorter on one completed item (same path the hook uses)."""
     sorter = Path(__file__).resolve().parent / "sort.py"
     env = dict(os.environ, FAUCET_PATH=str(item), CASCADE_PATH=str(item))
+    try:
+        from . import libraries
+        env.update(libraries.sorter_env())
+    except Exception:                            # noqa: BLE001 - fall back to the fixed layout
+        pass
     cmd = [sys.executable, str(sorter)]
     if dry:
         cmd.append("--dry-run")

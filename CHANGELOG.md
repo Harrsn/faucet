@@ -2,7 +2,38 @@
 
 ## Unreleased
 
+### Added
+
+- **Libraries.** Folders Faucet scans and files into are records
+  (`name`, TV or Movies, folder, which one new downloads go to) instead of
+  the fixed `LIBRARY_ROOT/tvshows` + `LIBRARY_ROOT/movies`. An existing
+  install starts with exactly those two (they keep following
+  `LIBRARY_ROOT` until edited), so nothing moves. Add as many as you like,
+  anywhere the container can see; they can't nest. The scanner walks all of
+  them; a library whose folder is unreachable keeps its rows instead of
+  "losing" its files. The hook and sweep hand the sorter the default
+  libraries. Removing a library never touches files.
+  `GET/POST /api/libraries`, `PATCH/DELETE /api/libraries/{id}`,
+  `POST /api/libraries/scan` (background).
+- **Show folders are linked to series by id.** A folder is matched to a
+  series once — automatically when the names agree (year tags and
+  punctuation ignored; ambiguous names are left for you), or by hand — and
+  every file in it is stamped with the series. Ownership checks use the
+  link first and fall back to name matching only for unlinked folders, and
+  a folder linked to one series never counts for a similarly-named other.
+  A renamed TMDb title no longer un-owns a show. Manual links win and
+  survive rescans. `GET /api/libraries/folders`,
+  `PUT /api/libraries/{id}/links`.
+- **Path mappings** between the download client's paths and Faucet's
+  (`/mnt/nas/torrents` → `/nas/torrents`). The completion hook maps a path
+  it can't see, so the host wrapper no longer has to rewrite paths.
+  `GET/PUT /api/path-mappings`, `GET /api/path-mappings/test`.
+
 ### Changed
+
+- The dashboard's episode count is canonical episodes owned (as the Shows
+  page counts them), not every file whose folder resembles a monitored show.
+- "Settings imported…" is logged once logging is up (it was lost before).
 
 - **Settings live in the database.** Connections, paths, behavior and
   notifications are stored in `cascade.db` (now mode 0600) instead of

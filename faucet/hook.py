@@ -93,11 +93,28 @@ def write_event(kind: str, name: str, msg: str):
         pass
 
 
+def _to_local(path: str) -> str:
+    """The client's path as Faucet sees it, via Settings → path mappings.
+    Only applied when the path doesn't already exist here, so the old
+    wrapper (which rewrites paths itself) keeps working unchanged."""
+    if not path or os.path.exists(path):
+        return path
+    try:
+        from faucet import libraries
+        mapped = libraries.to_local(path)
+    except Exception:                            # noqa: BLE001 - the DB may be unreachable
+        return path
+    if mapped != path:
+        print(f"path mapped: {path} -> {mapped}", file=sys.stderr)
+    return mapped
+
+
 def main():
     path, name, tid = resolve_completion()
     if not path:
         print("No completion info in environment; nothing to do.", file=sys.stderr)
         return 0
+    path = _to_local(path)
 
     size = _path_size(path)
     record("completed", name, "download finished, sorting", size)
@@ -112,6 +129,11 @@ def main():
     # left inside it.
     sorter = Path(__file__).resolve().parent / "sort.py"
     env = dict(os.environ, FAUCET_PATH=path, CASCADE_PATH=path)
+    try:
+        from . import libraries
+        env.update(libraries.sorter_env())       # file into the default libraries
+    except Exception as e:                       # noqa: BLE001 - fall back to the fixed layout
+        print(f"library lookup failed ({e}); using LIBRARY_ROOT layout", file=sys.stderr)
     res = subprocess.run([sys.executable, str(sorter)], env=env)
     rc = res.returncode
     if rc not in (SORT_OK, SORT_QUARANTINED, SORT_SUSPICIOUS):

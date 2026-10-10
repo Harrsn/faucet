@@ -33,6 +33,11 @@ CONFIG_FILE = _explicit_cfg or "/config/faucet.env"
 if not _explicit_cfg and not os.path.exists(CONFIG_FILE) and os.path.exists("/config/cascade.env"):
     CONFIG_FILE = "/config/cascade.env"
 
+# Messages from import time, before the app has configured logging (they'd
+# otherwise vanish: Python only prints WARNING+ without a handler). The app
+# replays them once logging is up.
+pending_messages: list = []
+
 PREFIX = "cfg."
 IMPORTED_KEY = "cfg._imported"
 _warned: set = set()
@@ -112,7 +117,9 @@ def _import_once(stored: dict) -> dict:
         except OSError as e:
             log.warning("imported %s but could not rename it: %s", legacy, e)
     if found:
-        log.info("Settings imported into the database: %s", ", ".join(sorted(found)))
+        msg = "Settings imported into the database: " + ", ".join(sorted(found))
+        log.info(msg)
+        pending_messages.append((logging.INFO, msg))
     stored.update(values)
     return stored
 

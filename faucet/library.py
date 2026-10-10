@@ -192,10 +192,52 @@ def _superseded(winner: Path, loser: Path, stats: dict) -> None:
     stats["superseded"] = len(pending)
 
 
-def _retire_superseded(root: Path, pairs: dict) -> int:
+def _anchor(path: Path) -> Path:
+    """The folder _superseded/ lives in for a library file: the parent of
+    its library (so /media/tvshows/X -> /media/_superseded/tvshows/X, the
+    layout the fixed-root version used), else LIBRARY_ROOT."""
+    from . import libraries as libs_mod
+    lib = libs_mod.containing(path)
+    return Path(lib["path"]).parent if lib else _library_root()
+
+
+def _parking(anchor: Path) -> Path | None:
+    """<anchor>/_superseded, created with media-server ignore markers."""
+    base = anchor / SUPERSEDED_DIR
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        # keep media servers out even if a library points at the media root:
+        # .plexignore for Plex, .ignore for Jellyfin/Emby
+        for marker, body in ((".plexignore", "*\n"), (".ignore", "")):
+            if not (base / marker).exists():
+                (base / marker).write_text(body)
+    except OSError as e:
+        log.warning("cannot prepare %s: %s", base, e)
+        return None
+    return base
+
+
+def _park(loser: Path, anchor: Path, base: Path) -> None:
+    """Move a file and its sidecars to base/<path relative to anchor>."""
+    rel = loser.relative_to(anchor)
+    companions = [p for p in loser.parent.iterdir()
+                  if p != loser and p.is_file()
+                  and p.name.startswith(loser.stem + ".")
+                  and p.suffix.lower() not in VIDEO_EXTS]
+    for src in [loser, *companions]:
+        dest = base / rel.parent / src.name
+        n = 2
+        while dest.exists():
+            dest = base / rel.parent / f"{src.stem} ({n}){src.suffix}"
+            n += 1
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        os.rename(src, dest)
+
+
+def _retire_superseded(pairs: dict) -> int:
     """Move superseded files (and their sidecar subtitles) to
-    <root>/_superseded/<same relative path>. Same share as the library, so
-    it's a rename; reversible; outside the movies/tvshows sections.
+    <library's parent>/_superseded/<same relative path>. Same share as the
+    library, so it's a rename; reversible; outside the library itself.
 
     Guard rails — a file is only moved when:
       * the winner is a file the sorter placed (library_files record whose
@@ -207,17 +249,6 @@ def _retire_superseded(root: Path, pairs: dict) -> int:
     if os.environ.get("SUPERSEDED_ACTION", "move").strip().lower() != "move":
         return 0
     moved = 0
-    base = root / SUPERSEDED_DIR
-    try:
-        base.mkdir(parents=True, exist_ok=True)
-        # keep media servers out even if a library points at the media root:
-        # .plexignore for Plex, .ignore for Jellyfin/Emby
-        for marker, body in ((".plexignore", "*\n"), (".ignore", "")):
-            if not (base / marker).exists():
-                (base / marker).write_text(body)
-    except OSError as e:
-        log.warning("cannot prepare %s: %s", base, e)
-        return 0
     for loser, winner in pairs.items():
         try:
             if winner.parent != loser.parent or not loser.exists():
@@ -225,30 +256,21 @@ def _retire_superseded(root: Path, pairs: dict) -> int:
             with db.connect() as c:
                 if _recorded_quality(c, str(winner), winner.stat().st_size) is None:
                     continue
-            rel = loser.relative_to(root)
-            companions = [p for p in loser.parent.iterdir()
-                          if p != loser and p.is_file()
-                          and p.name.startswith(loser.stem + ".")
-                          and p.suffix.lower() not in VIDEO_EXTS]
-            for src in [loser, *companions]:
-                dest = base / rel.parent / src.name
-                n = 2
-                while dest.exists():
-                    dest = base / rel.parent / f"{src.stem} ({n}){src.suffix}"
-                    n += 1
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                os.rename(src, dest)
-                log.info("retired superseded %s -> %s (better copy: %s)",
-                         src.name, dest, winner.name)
+            anchor = _anchor(loser)
+            base = _parking(anchor)
+            if base is None:
+                continue
+            _park(loser, anchor, base)
+            log.info("retired superseded %s -> %s (better copy: %s)",
+                     loser.name, base, winner.name)
             moved += 1
         except OSError as e:
             log.warning("could not retire superseded %s: %s", loser, e)
     return moved
 
 
-def _scan_tv(root: Path, stats: dict, force: bool = False,
+def _scan_tv(tv: Path, stats: dict, force: bool = False,
              seen: set | None = None) -> None:
-    tv = root / "tvshows"
     if not tv.exists():
         return
     for f in tv.rglob("*"):
@@ -351,9 +373,8 @@ def _scan_tv(root: Path, stats: dict, force: bool = False,
         stats["episodes"] += 1
 
 
-def _scan_movies(root: Path, stats: dict, force: bool = False,
+def _scan_movies(mv: Path, stats: dict, force: bool = False,
                  seen: set | None = None) -> None:
-    mv = root / "movies"
     if not mv.exists():
         return
     for f in mv.rglob("*"):
@@ -423,19 +444,29 @@ def scan(force: bool = False) -> dict:
     force=True ignores the mtime cache and re-reads every file (useful right
     after a batch of downloads lands, or when folders were reorganized)."""
     db.init()
-    root = _library_root()
+    from . import libraries as libs_mod
     stats = {"episodes": 0, "movies": 0, "skipped": 0, "unparsed": 0}
-    if not root.exists():
-        log.warning("Library root %s not present (NAS mounted?)", root)
-        stats["error"] = "library root not found"
+    tv_dirs = [Path(lib["path"]) for lib in libs_mod.of_kind("tv")]
+    mv_dirs = [Path(lib["path"]) for lib in libs_mod.of_kind("movie")]
+    present = [d for d in tv_dirs + mv_dirs if d.exists()]
+    if not present:
+        log.warning("No library folder is reachable (NAS mounted?): %s",
+                    ", ".join(str(d) for d in tv_dirs + mv_dirs) or "none configured")
+        stats["error"] = "no library folder reachable"
         return stats
     if guessit is None:
         stats["error"] = "guessit not installed"
         return stats
     seen_tv: set = set()
     seen_mv: set = set()
-    _scan_tv(root, stats, force=force, seen=seen_tv)
-    _scan_movies(root, stats, force=force, seen=seen_mv)
+    for d in tv_dirs:
+        _scan_tv(d, stats, force=force, seen=seen_tv)
+    for d in mv_dirs:
+        _scan_movies(d, stats, force=force, seen=seen_mv)
+    # only libraries that were actually reachable get pruned below: an
+    # unmounted one keeps its rows instead of "losing" everything in it
+    tv_prefixes = tuple(str(d).rstrip("/") + "/" for d in tv_dirs if d.exists())
+    mv_prefixes = tuple(str(d).rstrip("/") + "/" for d in mv_dirs if d.exists())
     # Prune rows whose files vanished (deleted/renamed/moved). Without this the
     # inventory says an episode is still owned forever, so reconcile never
     # re-hunts anything that was removed from disk. Only prune paths under the
@@ -448,13 +479,11 @@ def scan(force: bool = False) -> dict:
     # once, assume the mount is sick and skip pruning entirely this scan.
     stats["pruned"] = 0
     PRUNE_MAX_FRACTION = float(os.environ.get("PRUNE_MAX_FRACTION", "0.2"))
-    tv_prefix = str(root / "tvshows")
-    mv_prefix = str(root / "movies")
     with db.connect() as c:
         gone_eps = []
         for row in c.execute("SELECT id, path FROM library_episodes").fetchall():
             p = row["path"] or ""
-            if (p.startswith(tv_prefix) and p not in seen_tv
+            if (tv_prefixes and p.startswith(tv_prefixes) and p not in seen_tv
                     and not os.path.exists(p)):
                 gone_eps.append((row["id"], p))
         gone_mv = []
@@ -462,7 +491,7 @@ def scan(force: bool = False) -> dict:
             p = row["path"] or ""
             # manually-linked files (Fix Location) can live outside movies/ and
             # below the size floor — the exists() check keeps those safe
-            if (p.startswith(mv_prefix) and p not in seen_mv
+            if (mv_prefixes and p.startswith(mv_prefixes) and p not in seen_mv
                     and not os.path.exists(p)):
                 gone_mv.append((row["id"], p))
         total_rows = (c.execute("SELECT COUNT(*) AS n FROM library_episodes").fetchone()["n"]
@@ -485,7 +514,7 @@ def scan(force: bool = False) -> dict:
             # quality records for files that no longer exist
             for row in c.execute("SELECT path FROM library_files").fetchall():
                 p = row["path"] or ""
-                if (p.startswith((tv_prefix, mv_prefix))
+                if ((tv_prefixes + mv_prefixes) and p.startswith(tv_prefixes + mv_prefixes)
                         and p not in seen_tv and p not in seen_mv
                         and not os.path.exists(p)):
                     c.execute("DELETE FROM library_files WHERE path=?", (p,))
@@ -501,25 +530,65 @@ def scan(force: bool = False) -> dict:
                 c.execute("DELETE FROM library_dupes WHERE path=?", (r["path"],))
     pairs = stats.pop("_superseded", {})
     if pairs and healthy:
-        stats["superseded_moved"] = _retire_superseded(root, pairs)
+        stats["superseded_moved"] = _retire_superseded(pairs)
+    try:
+        libs_mod.mark_scanned([lib["id"] for lib in libs_mod.all_libraries(enabled_only=True)
+                               if Path(lib["path"]).exists()])
+        linked = libs_mod.auto_link()
+        stats["folders_linked"] = linked["linked"]
+        stats["folders_unlinked"] = len(linked["unlinked"])
+    except Exception as e:                       # noqa: BLE001 - linking never fails a scan
+        log.warning("folder linking failed: %s", e)
     log.info("Library scan: %d episodes, %d movies (%d skipped, %d unparsed, %d pruned)",
              stats["episodes"], stats["movies"], stats["skipped"], stats["unparsed"],
              stats["pruned"])
     return stats
 
 
-def have_episode(show_name: str, season: int, episode: int) -> dict | None:
-    """Is this episode already on disk? Matches on the normalized show title so
-    folder-name quirks (tags, punctuation, apostrophes) don't cause misses."""
+def have_episode(show_name: str, season: int, episode: int,
+                 series_id: int | None = None) -> dict | None:
+    """Is this episode already on disk?
+
+    With `series_id`: files in a show folder linked to that series
+    (faucet.libraries) first; then files in folders not linked to anything,
+    matched on the normalized show title (folder-name quirks — tags,
+    punctuation, apostrophes — don't cause misses). A folder linked to a
+    DIFFERENT series never counts. Without `series_id`, name matching only."""
     key = normalize_title(show_name)
     with db.connect() as c:
-        rows = c.execute(
-            "SELECT * FROM library_episodes WHERE season=? AND episode=?",
-            (season, episode)).fetchall()
+        if series_id is not None:
+            r = c.execute("SELECT * FROM library_episodes WHERE series_id=? AND season=? "
+                          "AND episode=? LIMIT 1", (series_id, season, episode)).fetchone()
+            if r:
+                return dict(r)
+            rows = c.execute("SELECT * FROM library_episodes WHERE season=? AND episode=? "
+                             "AND series_id IS NULL", (season, episode)).fetchall()
+        else:
+            rows = c.execute("SELECT * FROM library_episodes WHERE season=? AND episode=?",
+                             (season, episode)).fetchall()
     for r in rows:
         if normalize_title(r["show_name"]) == key:
             return dict(r)
     return None
+
+
+def owned_index(c) -> tuple[dict, dict]:
+    """(by_series_id, by_normalized_name) -> set of (season, episode), for
+    whole-library views; rows linked to a series are only in the first."""
+    by_series: dict = {}
+    by_name: dict = {}
+    for r in c.execute("SELECT series_id, show_name, season, episode FROM library_episodes"):
+        if r["series_id"] is not None:
+            by_series.setdefault(r["series_id"], set()).add((r["season"], r["episode"]))
+        else:
+            by_name.setdefault(normalize_title(r["show_name"] or ""), set()).add(
+                (r["season"], r["episode"]))
+    return by_series, by_name
+
+
+def owned_for(index: tuple[dict, dict], series_id: int, title: str) -> set:
+    by_series, by_name = index
+    return by_series.get(series_id, set()) | by_name.get(normalize_title(title or ""), set())
 
 
 def owned_file_quality(path: str | None, quality: str | None) -> tuple[str | None, bool]:
@@ -569,16 +638,15 @@ def duplicates() -> dict:
 
 def retire_duplicates(paths: list[str] | None = None) -> dict:
     """Move recorded duplicates (all, or the given subset) and their sidecar
-    subtitles to LIBRARY_ROOT/_superseded/<same relative path> — the same
-    reversible parking spot the automatic upgrade cleanup uses.
+    subtitles to <library's parent>/_superseded/<same relative path> — the
+    same reversible parking spot the automatic upgrade cleanup uses.
 
-    Only paths that are in the duplicates table, inside the library root,
-    and whose winner still exists are touched; anything else is reported
-    as skipped, never moved."""
-    root = _library_root().resolve()
-    base = root / SUPERSEDED_DIR
+    Only paths that are in the duplicates table, inside a library, and whose
+    winner still exists are touched; anything else is reported as skipped,
+    never moved."""
+    from . import libraries as libs_mod
     want = None if paths is None else set(paths)
-    moved, skipped, freed = [], [], 0
+    moved, skipped, freed, bases = [], [], 0, set()
     with db.connect() as c:
         _ensure_dupes(c)
         rows = [dict(r) for r in c.execute(
@@ -589,8 +657,9 @@ def retire_duplicates(paths: list[str] | None = None) -> dict:
         loser, winner = Path(r["path"]), Path(r["winner_path"] or "")
         try:
             real = loser.resolve()
-            if root not in real.parents or base in real.parents:
-                skipped.append({"path": r["path"], "why": "outside the library root"})
+            lib = libs_mod.containing(real)
+            if lib is None or f"/{SUPERSEDED_DIR}/" in str(real):
+                skipped.append({"path": r["path"], "why": "outside every library"})
                 continue
             if not loser.is_file():
                 skipped.append({"path": r["path"], "why": "file is gone"})
@@ -598,23 +667,13 @@ def retire_duplicates(paths: list[str] | None = None) -> dict:
             if not winner.is_file() or winner.resolve() == real:
                 skipped.append({"path": r["path"], "why": "the better copy is missing"})
                 continue
-            base.mkdir(parents=True, exist_ok=True)
-            for marker, body in ((".plexignore", "*\n"), (".ignore", "")):
-                if not (base / marker).exists():
-                    (base / marker).write_text(body)
-            rel = real.relative_to(root)
-            companions = [p for p in loser.parent.iterdir()
-                          if p != loser and p.is_file()
-                          and p.name.startswith(loser.stem + ".")
-                          and p.suffix.lower() not in VIDEO_EXTS]
-            for src in [loser, *companions]:
-                dest = base / rel.parent / src.name
-                n = 2
-                while dest.exists():
-                    dest = base / rel.parent / f"{src.stem} ({n}){src.suffix}"
-                    n += 1
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                os.rename(src, dest)
+            anchor = Path(lib["path"]).resolve().parent
+            base = _parking(anchor)
+            if base is None:
+                skipped.append({"path": r["path"], "why": "can't create _superseded"})
+                continue
+            _park(real, anchor, base)
+            bases.add(str(base))
             log.info("retired duplicate %s (library keeps %s)", loser, winner.name)
             moved.append(r["path"])
             freed += r["size"] or 0
@@ -626,7 +685,7 @@ def retire_duplicates(paths: list[str] | None = None) -> dict:
         for p in want - {r["path"] for r in rows}:
             skipped.append({"path": p, "why": "not a recorded duplicate"})
     return {"moved": len(moved), "bytes": freed, "skipped": skipped,
-            "to": str(base)}
+            "to": ", ".join(sorted(bases))}
 
 
 def scan_report() -> dict:

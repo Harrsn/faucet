@@ -142,7 +142,7 @@ All via environment / `.env`:
 | `DOWNLOAD_CLIENT` | `transmission` | `transmission` \| `qbittorrent` \| `deluge`. |
 | `CLIENT_URL` | Transmission RPC | Client web/RPC endpoint. |
 | `CLIENT_USER` / `CLIENT_PASS` | — | Client credentials. |
-| `LIBRARY_ROOT` | `/library` | Library root (`tvshows/`, `movies/`). |
+| `LIBRARY_ROOT` | `/library` | Where the two starter libraries live (`tvshows/`, `movies/`) until you edit them. Libraries are managed in the app (`/api/libraries`): add folders anywhere the container can see, pick which one new downloads go to. |
 | `DOWNLOAD_DIR` | `/downloads` | Active download dir. |
 | `DISK_PATH` | `/downloads` | Path used for the disk-free gauge. |
 | `BROWSE_ROOT` | `LIBRARY_ROOT` | Root the admin file browser is scoped to. |
@@ -152,7 +152,7 @@ All via environment / `.env`:
 | `AIR_DELAY_DAYS` | `1` | Days after an episode's air date before it is hunted. `0` hunts on the air date (early "releases" are usually fakes). Also in Settings → Behavior. |
 | `BLOCK_EXECUTABLE_RELEASES` | `1` | Hide releases whose name is an executable (`…1080p.exe`) from search and the hunter. |
 | `GUARD_INTERVAL_SECONDS` | `60` | How often live downloads are checked for executable-only payloads (paused and flagged for review). `0` disables. |
-| `SUPERSEDED_ACTION` | `move` | After an upgrade lands, `move` parks the old copy in `LIBRARY_ROOT/_superseded/` (same relative path, reversible); `keep` leaves it in place. |
+| `SUPERSEDED_ACTION` | `move` | After an upgrade lands, `move` parks the old copy in `_superseded/` beside its library (`/media/tvshows/X` → `/media/_superseded/tvshows/X`, reversible); `keep` leaves it in place. |
 | `HUNT_MAX_ACTIVE` | `5` | Skip hunting if this many torrents are already downloading. |
 | `HUNT_MAX_PER_RUN` | `3` | Max grabs per scheduler tick. |
 | `HUNT_MAX_SEARCHES` | `40` | Max indexer queries per scheduler tick (season-pack searches included). |
