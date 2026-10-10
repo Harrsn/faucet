@@ -404,7 +404,7 @@ def _hunt_wanted(series_filter=None, max_override=None) -> dict:
             # pack-worthiness
             if (w.get("series_title") and w.get("episode") is not None
                     and _lib.have_episode(w["series_title"], int(w["season"]),
-                                          int(w["episode"]))):
+                                          int(w["episode"]), w.get("series_id"))):
                 with db.connect() as c:
                     c.execute("DELETE FROM wanted WHERE id=?", (w["id"],))
                 w["_gone"] = True
@@ -514,7 +514,7 @@ def _hunt_wanted(series_filter=None, max_override=None) -> dict:
             # handler, or rows created during a NAS-mount hiccup). Grabbing is
             # expensive; a SELECT is not.
             from . import library as _lib
-            owned = _lib.have_episode(title, int(season), int(episode))
+            owned = _lib.have_episode(title, int(season), int(episode), w.get("series_id"))
             if owned and w.get("reason") != "upgrade":
                 with db.connect() as c:
                     c.execute("DELETE FROM wanted WHERE id=?", (w["id"],))

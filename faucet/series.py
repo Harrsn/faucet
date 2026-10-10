@@ -283,13 +283,13 @@ def reconcile(series_id: int) -> dict:
         if cutoff and ep["air_date"] and ep["air_date"] < cutoff:
             # never want backlog episodes; clear any stale want and count owned
             _clear_wanted(series_id, season, episode)
-            if library.have_episode(s["title"], season, episode):
+            if library.have_episode(s["title"], season, episode, series_id):
                 have += 1
             continue
         # season 0 is "specials" — skip from missing-hunting by default
         if season == 0:
             continue
-        owned = library.have_episode(s["title"], season, episode)
+        owned = library.have_episode(s["title"], season, episode, series_id)
         if not owned:
             _add_wanted(series_id, season, episode, ep["title"], "missing")
             missing += 1
@@ -386,7 +386,7 @@ def episode_breakdown(series_id: int) -> dict:
     for ep in canon:
         if ep["season"] == 0:
             continue  # specials shown separately if ever needed
-        owned = library.have_episode(s["title"], ep["season"], ep["episode"])
+        owned = library.have_episode(s["title"], ep["season"], ep["episode"], series_id)
         # no air date = TBA/unannounced -> not aired (matches reconcile())
         aired = bool(ep["air_date"]) and ep["air_date"] <= today
         if aired:
