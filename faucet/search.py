@@ -113,7 +113,37 @@ def indexers(jackett_url: str, api_key: str, timeout: int = 15) -> list[dict]:
 
 
 def search(jackett_url: str, api_key: str, indexer: str, query: str,
-           category: str, limit: int, timeout: int = 30) -> Results:
+           category: str, limit: int, timeout: int = 30, record: bool = True) -> Results:
+    """Torznab search. Every call is timed and recorded for the indexer-health
+    view (faucet.indexerhealth) unless `record` is False."""
+    import time
+    t0 = time.monotonic()
+    try:
+        out = _search(jackett_url, api_key, indexer, query, category, limit, timeout)
+    except SearchError as e:
+        if record:
+            _record(indexer, False, t0, error=str(e))
+        raise
+    if record:
+        trackers: dict = {}
+        for r in out:
+            t = r.get("tracker") or "unknown"
+            trackers[t] = trackers.get(t, 0) + 1
+        _record(indexer, True, t0, results=len(out), trackers=trackers)
+    return out
+
+
+def _record(indexer, ok, t0, **kw) -> None:
+    import time
+    try:
+        from .indexerhealth import record_search
+        record_search(indexer, ok, int((time.monotonic() - t0) * 1000), **kw)
+    except Exception:                            # noqa: BLE001 - telemetry never breaks search
+        pass
+
+
+def _search(jackett_url: str, api_key: str, indexer: str, query: str,
+            category: str, limit: int, timeout: int = 30) -> Results:
     if not api_key:
         raise SearchError("Indexer API key not configured.")
     cat = CATS.get(category, "")
