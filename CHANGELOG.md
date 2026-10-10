@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Added
+
+- **Hunt log.** Every hunt attempt is recorded: query, how many results the
+  indexer returned, how many were rejected and why (already tried, wrong
+  title, pack, not an upgrade, seeders, size, resolution, cam, language),
+  what was grabbed (tracker, seeders) and when the next search is due.
+  "Hunt log" on show and movie pages; the per-episode search modal shows
+  the episode's want state and last attempt. `GET /api/wanted/log`.
+- **Indexer health** (Dashboard → Services → indexer health). Per-search
+  telemetry over 24h (latency, failures by kind, results per tracker); a
+  per-indexer probe that queries each Jackett indexer on its own — the
+  aggregate endpoint waits for the slowest one, so a single hung tracker
+  shows up as timeouts on every search — daily and on demand; and hunter
+  grab outcomes per tracker (stalled vs completed).
+- **Duplicate copies** are recorded by the scanner, listed in the scan
+  report with their size, and can be retired to `_superseded/` (reversible,
+  same folder layout). They are no longer re-parsed on every scan.
+  `GET /api/library/duplicates`, `POST /api/library/duplicates/retire`.
+
+### Changed
+
+- **Ranking favours live swarms.** Seeders count logarithmically, and a
+  release under `HUNT_HEALTHY_SEEDERS` (5) ranks below a healthy release one
+  resolution step lower — most backlog grabs were near-dead torrents that
+  stalled. Trackers whose recent hunter grabs mostly stalled are ranked down.
+
 ### Security
 
 - **Credentials are redacted** from error messages, history, the Settings
