@@ -504,3 +504,21 @@ button.fp-row { width: 100%; padding-right: 12px; }
 .urow .uname { flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .urow .uname .muted { font-size: 12.5px; }
 .urow .ubadges { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+/* ══ 6.4a: discover, calendar, requests, activity, wanted ══════════════ */
+.btn.small { min-height: 34px; padding: 0 12px; font-size: 13px; align-self: flex-start; }
+.cal-day { display: flex; flex-direction: column; gap: 10px; }
+.cal-day h2 { margin: 0; font: 700 18px var(--font-display); color: var(--text-2); }
+.cal-day.today h2 { color: var(--accent-hi); }
+.ep-row.cal { color: var(--text); padding: 10px 16px; }
+.ep-row.cal:hover { color: #fff; }
+.cal-thumb { flex: 0 0 40px; width: 40px; height: 60px; border-radius: 6px; background: var(--panel-2) center / cover; }
+.frow.req { color: var(--text); }
+a.frow.req:hover { background: var(--panel); color: #fff; }
+.frow.req .fname a { color: inherit; }
+.frow.req .fname a:hover { color: var(--accent-hi); }
+.dlrow .ini { flex: 0 0 40px; height: 56px; border-radius: var(--r-sm); background: var(--panel-2); display: grid; place-items: center; font: 600 12px var(--mono); color: var(--muted); }
+.dlrow .fname { gap: 6px; }
+.dlrow .fname b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dlrow .fname .muted { font-size: 12px; }
+@media (max-width: 600px) { .ep-row.cal { display: flex; } }

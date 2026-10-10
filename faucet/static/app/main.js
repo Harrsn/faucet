@@ -13,6 +13,11 @@ const ROUTES = [
   [/^\/movies\/?$/, "movies", () => import("./views/movies.js")],
   [/^\/movies\/(\d+)\/?$/, "movies", () => import("./views/movie.js")],
   [/^\/settings(?:\/([a-z]+))?\/?$/, "settings", () => import("./views/settings.js")],
+  [/^\/discover\/?$/, "discover", () => import("./views/discover.js")],
+  [/^\/calendar\/?$/, "calendar", () => import("./views/calendar.js")],
+  [/^\/requests\/?$/, "requests", () => import("./views/requests.js")],
+  [/^\/activity\/?$/, "activity", () => import("./views/activity.js")],
+  [/^\/wanted\/?$/, "wanted", () => import("./views/wanted.js")],
 ];
 
 let me = null;

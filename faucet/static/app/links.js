@@ -1,5 +1,4 @@
-// Where things open. Pages the new UI doesn't have yet deep-link into the
-// classic UI; as each view lands, its entry here moves to a #/ route.
+// Where things open — one place, so a route change is one edit.
 export const links = {
   home: "#/",
   shows: "#/shows",
@@ -7,11 +6,11 @@ export const links = {
   movies: "#/movies",
   movie: (id) => `#/movies/${encodeURIComponent(id)}`,
   classicMovie: (id) => `/classic#movie/${encodeURIComponent(id)}`,
-  discover: "/classic#page/discover",
-  calendar: "/classic#page/calendar",
-  requests: "/classic#page/requests",
-  activity: "/classic#activity",
-  wanted: "/classic#page/dashboard",
+  discover: "#/discover",
+  calendar: "#/calendar",
+  requests: "#/requests",
+  activity: "#/activity",
+  wanted: "#/wanted",
   indexers: "#/settings/integrations",
   settings: "#/settings/libraries",
   users: "#/settings/users",
