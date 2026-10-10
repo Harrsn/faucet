@@ -7,7 +7,7 @@ from typing import Optional
 
 import requests
 
-from .base import (AddResult, DownloadClient, DownloadClientError, Transfer,
+from .base import (AddResult, DownloadClient, DownloadClientError, Transfer, fetch_torrent,
                    TransferFile)
 
 # Transmission status codes -> normalized labels
@@ -90,21 +90,10 @@ class TransmissionClient(DownloadClient):
         elif magnet_or_url.startswith("http"):
             # Indexer .torrent URLs often 302-redirect (e.g. Jackett -> tracker),
             # and Transmission won't follow that redirect. Fetch the torrent
-            # ourselves (following redirects) and hand over the actual bytes.
-            try:
-                resp = requests.get(magnet_or_url, timeout=self.timeout,
-                                    allow_redirects=True)
-                resp.raise_for_status()
-                body = resp.content
-                # Some indexers redirect a .torrent link to a magnet; honor that.
-                final = resp.url or ""
-                if body[:7] == b"magnet:" or final.startswith("magnet:"):
-                    args["filename"] = (body.decode("utf-8", "ignore")
-                                        if body[:7] == b"magnet:" else final)
-                else:
-                    args["metainfo"] = base64.b64encode(body).decode()
-            except requests.RequestException as e:
-                raise DownloadClientError(f"couldn't fetch torrent: {e}")
+            # ourselves and hand over the bytes — or the magnet the redirect
+            # chain ends at (Jackett's /dl/ links for public trackers do that).
+            kind, value = fetch_torrent(magnet_or_url, self.timeout)
+            args["filename" if kind == "magnet" else "metainfo"] = value
         else:
             # raw torrent file contents
             args["metainfo"] = base64.b64encode(magnet_or_url.encode()).decode()
