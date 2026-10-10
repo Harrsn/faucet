@@ -57,11 +57,16 @@ exec python3 -m faucet.hook
 ## Containerized Faucet (Transmission on host, Faucet in Docker)
 
 If your torrent client runs on the host but Faucet runs in a container, the hook
-has to reach the completed file *inside* the container, which means translating
-the host download path to the container's mount path. A ready-made, commented
-template is in [`docs/faucet-hook-wrapper.sh`](faucet-hook-wrapper.sh) — copy it,
-edit the three variables at the top (`CONTAINER`, `HOST_DL`, `CONTAINER_DL`),
-make it executable, and point `script-torrent-done-filename` at it.
+runs `python -m faucet.hook` inside the container with `docker exec`. The
+ready-made wrapper is [`deploy/cascade-hook-wrapper.sh`](../deploy/cascade-hook-wrapper.sh):
+install it (`install -m 755 deploy/cascade-hook-wrapper.sh /opt/cascade-hook-wrapper.sh`),
+set `CONTAINER` if yours isn't called `faucet`, and point
+`script-torrent-done-filename` at it.
+
+The wrapper passes the path exactly as the client reports it. Faucet translates
+it with **Settings → Path mappings** — e.g. `/mnt/nas/torrents` → `/data/torrents` —
+whenever it can't see that path itself, so the wrapper needs no knowledge of the
+container's mounts.
 
 Two things make this setup work cleanly:
 
@@ -74,7 +79,8 @@ Two things make this setup work cleanly:
   they point into the same share (`/mnt/nas/torrents:/downloads` +
   `/mnt/nas/media:/library`): rename fails with EXDEV and every move becomes a
   copy. Mounting the share's parent once and pointing both paths inside it
-  restores instant renames.
+  restores instant renames. **Settings → Libraries** shows, per library,
+  whether finished downloads move in by rename or get copied.
 - **`MEDIASORT_MODE`.** Set this in the container's environment. `auto` (default)
   tries hardlink → move → copy; on a CIFS/SMB share (no hardlinks) it moves.
   Set it to `move` explicitly if you want predictable move-and-clean behavior and
