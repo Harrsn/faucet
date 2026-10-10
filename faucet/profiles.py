@@ -81,9 +81,7 @@ def score(result: dict, profile: dict) -> float:
     # source: next most important
     if badges.get("source") in src_pref:
         s += (len(src_pref) - src_pref.index(badges["source"])) * 20
-    # health: a gentle log-ish bonus so seeders break ties but don't dominate
-    seeders = result.get("seeders", 0)
-    s += min(seeders, 100) * 0.5
+    s += health(result)
     # preferred-language bonus: an exact match outranks an undetermined one,
     # which outranks (but here we've already filtered out) the wrong language.
     lang_pref = _effective_language(profile)
@@ -91,6 +89,29 @@ def score(result: dict, profile: dict) -> float:
         from . import langdetect
         if langdetect.detect(result) == lang_pref:
             s += 50
+    return s
+
+
+def health(result: dict) -> float:
+    """Swarm-health term of the score.
+
+    Logarithmic, so 10 vs 100 seeders matters far more than 100 vs 1000; and
+    a release under HUNT_HEALTHY_SEEDERS (default 5) takes a penalty larger
+    than one resolution step. Old backlog torrents on public trackers often
+    report a handful of seeders that never connect — the hunter used to take
+    the 1080p with 3 seeders over the 720p with 300, and most of those grabs
+    stalled. Indexer seeder counts are self-reported, so treat low ones as
+    probably dead."""
+    import math
+    import os
+    try:
+        floor = int(os.environ.get("HUNT_HEALTHY_SEEDERS", "5"))
+    except ValueError:
+        floor = 5
+    seeders = max(0, int(result.get("seeders") or 0))
+    s = min(100.0, 40.0 * math.log10(1 + seeders))
+    if seeders < floor:
+        s -= 150.0
     return s
 
 
