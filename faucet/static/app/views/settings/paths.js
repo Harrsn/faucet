@@ -5,8 +5,10 @@ import { icons } from "../../icons.js";
 import { toast } from "../../ui/toast.js";
 
 export async function render(el) {
-  let rows = (await api.get("/api/path-mappings")).mappings.map((m) => ({ remote: m.remote, local: m.local }));
+  const pm = await api.get("/api/path-mappings");
+  let rows = pm.mappings.map((m) => ({ remote: m.remote, local: m.local }));
   if (!rows.length) rows = [{ remote: "", local: "" }];
+  const dl = pm.downloads;
 
   function draw() {
     mount(el, html`<div class="stack" style="max-width:900px">
@@ -22,6 +24,18 @@ export async function render(el) {
         <div class="acts" style="margin-top:12px"><button class="btn line" type="button" data-addrow>Add mapping</button>
           <button class="btn" type="button" data-save>Save</button></div>
       </div>
+      <div class="panel"><h3>Finished downloads</h3>
+        <p class="muted" style="margin:0 0 12px;font-size:13px">The folder completed downloads land in, as Faucet sees it. The sweep picks up anything the completion hook missed from here, and moving from here into a library is instant only when both are on the same mount.</p>
+        <div class="nadd"><label class="sr" for="pm-dl">Finished downloads folder</label>
+          <input id="pm-dl" class="field mono" value="${dl.configured ? dl.path : ""}" placeholder="${dl.path}">
+          <button class="btn line" type="button" data-savedl>Save</button></div>
+        <dl class="kv" style="margin-top:14px">
+          <dt>Now</dt><dd class="mono">${dl.path}${dl.exists ? ` · mount ${dl.mount || "?"}` : " · not reachable"}</dd>
+          ${pm.moves.map((x) => html`<dt>${x.library}</dt><dd>${x.moves === "rename"
+            ? html`<span class="istatus ok"><span class="dot"></span>instant rename</span>`
+            : x.moves === "copy" ? html`<span class="istatus bad"><span class="dot"></span>copied over the network — different mount</span>`
+            : html`<span class="muted">unknown (a folder isn't reachable)</span>`} <span class="mono muted">${x.path}</span></dd>`)}
+        </dl></div>
       <div class="panel"><h3>Test a path</h3>
         <div class="nadd"><label class="sr" for="pm-t">A path as the client reports it</label>
           <input id="pm-t" class="field mono" placeholder="/mnt/nas/torrents/complete/Some.Show.S01E01">
@@ -40,6 +54,15 @@ export async function render(el) {
         if (!rows.length) rows = [{ remote: "", local: "" }];
         toast("Path mappings saved.");
         draw();
+      } catch (err) { toast(err.message, "err"); }
+    });
+    el.querySelector("[data-savedl]").addEventListener("click", async () => {
+      const v = el.querySelector("#pm-dl").value.trim();
+      try {
+        const r = await api.patch("/api/settings", { values: { COMPLETE_DIR: v } });
+        (r.warnings || []).forEach((w) => toast(w));
+        toast("Saved.");
+        render(el);
       } catch (err) { toast(err.message, "err"); }
     });
     el.querySelector("[data-test]").addEventListener("click", async () => {

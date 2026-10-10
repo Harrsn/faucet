@@ -11,10 +11,12 @@ const KIND = { tv: "TV", movie: "Movies" };
 export async function render(el) {
   let libs = [], folders = [], series = [], onlyUnlinked = true;
 
+  let dlMount = "";
   async function load() {
     const [l, f, s] = await Promise.all([api.get("/api/libraries"),
       api.get("/api/libraries/folders"), api.get("/api/series")]);
     libs = l.libraries;
+    dlMount = (l.downloads && (l.downloads.mount || l.downloads.path)) || "";
     folders = f.folders;
     series = s.series;
     draw();
@@ -32,6 +34,8 @@ export async function render(el) {
         <span class="mono lib-path">${lib.path}</span>
         <span class="muted lib-stats">${lib.files} file${lib.files === 1 ? "" : "s"}${lib.last_scan ? ` · scanned ${ago(lib.last_scan)}` : " · not scanned yet"}</span>
         ${warn ? html`<span class="lib-warn">${warn}</span>` : ""}
+        ${lib.moves === "rename" ? html`<span class="istatus ok"><span class="dot"></span>Finished downloads move in instantly (same mount)</span>`
+          : lib.moves === "copy" ? html`<span class="istatus bad"><span class="dot"></span>Finished downloads are copied in over the network — they arrive on a different mount (${dlMount}). See Settings → Path mappings.</span>` : ""}
       </div>
       <div class="acts"><button class="btn line" type="button" data-edit="${lib.id}">Edit</button>
         <button class="btn line" type="button" data-rm="${lib.id}">Remove</button></div>
@@ -151,7 +155,7 @@ export async function render(el) {
               enabled: b.querySelector("[data-enabled]").checked })
           : await api.post("/api/libraries", { name, kind, path, is_default: isDefault });
         (r.warnings || []).forEach((w) => toast(w));
-        if (!lib) await api.post("/api/libraries/scan");
+        if (!lib || (r.warnings || []).some((w) => w.startsWith("Different folder"))) await api.post("/api/libraries/scan");
         toast(lib ? "Library saved." : "Library added — scanning it now.");
         m.close();
         load();
