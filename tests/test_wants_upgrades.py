@@ -284,6 +284,9 @@ def test_hunter_episode_upgrade_filter(env, monkeypatch):
         _release("Show.S01E01.720p.HDTV.x264-OTHER", "magnet:same")])
     env.SCH.hunt_wanted()
     assert client.added == []
+    # the fruitless search backed the want off; let the backoff elapse
+    with env.db.connect() as c:
+        c.execute("UPDATE wanted SET next_search=NULL")
     monkeypatch.setattr(env.SCH.searchmod, "search", lambda *a, **k: [
         _release("Show.S01E01.720p.HDTV.x264-OTHER", "magnet:same"),
         _release("Show.S01E01.1080p.WEB-DL.x264-GRP", "magnet:better")])
