@@ -23,7 +23,12 @@ _NS = "{http://torznab.com/schemas/2015/feed}"
 
 
 class SearchError(Exception):
-    pass
+    """Indexer failure. The message is always credential-free: requests'
+    exception text embeds the full URL, apikey included."""
+
+    def __init__(self, msg="", *secrets):
+        from .redact import redact
+        super().__init__(redact(msg, *secrets))
 
 
 class Results(list):
@@ -112,24 +117,24 @@ def search(jackett_url: str, api_key: str, indexer: str, query: str,
     if not api_key:
         raise SearchError("Indexer API key not configured.")
     cat = CATS.get(category, "")
-    url = (f"{jackett_url}/api/v2.0/indexers/{indexer}/results/torznab/api"
-           f"?apikey={api_key}&t=search&q={quote(query)}")
+    url = (f"{jackett_url}/api/v2.0/indexers/{quote(indexer or 'all', safe='')}"
+           f"/results/torznab/api?apikey={quote(api_key, safe='')}&t=search&q={quote(query)}")
     if cat:
         url += f"&cat={cat}"
     try:
         r = requests.get(url, timeout=timeout)
         r.raise_for_status()
     except requests.RequestException as e:
-        raise SearchError(f"Indexer query failed: {e}")
+        raise SearchError(f"Indexer query failed: {e}", api_key) from None
     try:
         root = ET.fromstring(r.content)
     except ET.ParseError as e:
-        raise SearchError(f"Bad XML from indexer: {e}")
+        raise SearchError(f"Bad XML from indexer: {e}", api_key) from None
     if root.tag == "error":
         # Torznab reports failures (bad API key, disabled indexer) as HTTP 200
         # with an <error> document — previously read as "no results"
         raise SearchError(f"Indexer error {root.get('code', '?')}: "
-                          f"{root.get('description', 'unknown')}")
+                          f"{root.get('description', 'unknown')}", api_key)
 
     results = []
     for item in root.iter("item"):
