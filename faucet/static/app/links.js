@@ -12,8 +12,8 @@ export const links = {
   requests: "/classic#page/requests",
   activity: "/classic#activity",
   wanted: "/classic#page/dashboard",
-  indexers: "/classic#indexers",
-  settings: "/classic#settings",
+  indexers: "#/settings/integrations",
+  settings: "#/settings/libraries",
   users: "/classic#users",
 };
 
