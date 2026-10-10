@@ -16,7 +16,6 @@ otherwise 'und' (undetermined) so callers can decide how strict to be.
 from __future__ import annotations
 
 import re
-import unicodedata
 
 # tag/word -> ISO code. Word-boundary matched, case-insensitive.
 _TAG_LANG = {

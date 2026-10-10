@@ -13,6 +13,7 @@ management endpoints are admin-only; other authenticated users get the rest.
 """
 from __future__ import annotations
 
+import logging
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -21,9 +22,6 @@ from pydantic import BaseModel
 from . import auth
 
 router = APIRouter()
-
-import logging
-
 log = logging.getLogger("faucet.auth")
 
 CSRF_COOKIE = "faucet_csrf"

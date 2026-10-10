@@ -33,7 +33,6 @@ def link_movie_file(movie_id: int, abs_path: str) -> dict:
     movie's own title/year so reconcile matches it, then flips the movie to
     have/in_library. No file is moved."""
     import os
-    from . import library
     m = movies_mod.get_movie(movie_id)
     if not m:
         return {"error": "movie not found"}
