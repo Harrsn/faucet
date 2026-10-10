@@ -22,6 +22,7 @@ from datetime import datetime
 from . import db
 from . import search as searchmod
 from . import profiles as prof
+from . import huntlog
 from . import config as _cfgmod
 from .clients import make_client, DownloadClientError
 
@@ -138,6 +139,9 @@ def check_subscription(sub: dict) -> dict:
     return result
 
 
+_last_pack: dict = {}       # stats from the most recent _try_season_pack, for the hunt log
+
+
 def _try_season_pack(title, season, profile):
     """Search for a season pack for this show/season. Returns the best matching
     pack release (a dict with title/href) or None. Only returns true season
@@ -150,28 +154,87 @@ def _try_season_pack(title, season, profile):
         results = searchmod.search(
             _cfg().jackett_url, _cfg().jackett_api_key, _cfg().jackett_indexer,
             query, "all", _cfg().search_limit, _cfg().request_timeout)
-    except searchmod.SearchError:
+    except searchmod.SearchError as e:
+        _last_pack.update(error=str(e))
         return None
+    reasons: dict = {}
+    _last_pack.update(results=len(results), reasons=reasons)
     candidates = []
     for r in results:
         if db.already_grabbed(r["title"]):
+            reasons["blocklisted"] = reasons.get("blocklisted", 0) + 1
             continue
         # the release must actually BE this show — substring search happily
         # returns spin-offs ("Trailer Park Boys: Out of the Park ...")
         if not releasematch.matches_series(r["title"], title):
+            reasons["wrong_title"] = reasons.get("wrong_title", 0) + 1
             continue
         cls = packs.classify_pack(r["title"])
         # require the EXACT season: a pack whose season can't be determined
         # may be any season (or a mislabeled range) — too risky to grab
         if cls["kind"] == "season" and cls["season"] == season:
             candidates.append(r)
+        else:
+            reasons["pack"] = reasons.get("pack", 0) + 1
     if not candidates:
         return None
-    if profile:
-        ranked = prof.rank(candidates, profile)
-    else:
-        ranked = _rank_no_profile(candidates)
+    ranked = _rank_for_hunt(candidates, profile, reasons, _tracker_penalties())
     return ranked[0] if ranked else None
+
+
+def _tracker_penalties() -> dict[str, float]:
+    """Score penalty per tracker whose recent hunter grabs mostly stalled.
+
+    A tracker needs HUNT_TRACKER_MIN_GRABS (4) settled grabs in the last 14
+    days, and a stall rate of at least HUNT_TRACKER_STALL_RATE (0.5), before
+    it is penalised — enough to push its releases below a healthy
+    alternative one resolution step lower, never enough to exclude it."""
+    try:
+        min_n = int(os.environ.get("HUNT_TRACKER_MIN_GRABS", "4"))
+        rate = float(os.environ.get("HUNT_TRACKER_STALL_RATE", "0.5"))
+    except ValueError:
+        min_n, rate = 4, 0.5
+    out = {}
+    try:
+        for t, d in huntlog.tracker_outcomes().items():
+            settled = d["stalled"] + d["completed"]
+            if settled >= min_n and d["stall_rate"] is not None and d["stall_rate"] >= rate:
+                out[t] = 120.0
+    except Exception:                            # noqa: BLE001 - ranking must not fail on stats
+        return {}
+    return out
+
+
+def _rank_for_hunt(candidates: list, profile, reasons: dict | None = None,
+                   trackers: dict | None = None) -> list:
+    """Rank for an unattended grab: the profile's hard filters (rejections
+    counted into `reasons` by bucket), its score — or, without a profile,
+    the default-language filter and swarm health — minus any tracker
+    penalty."""
+    reasons = reasons if reasons is not None else {}
+    if profile:
+        kept = []
+        for r in candidates:
+            ok, why = prof.passes(r, profile)
+            if ok:
+                rr = dict(r)
+                rr["_score"] = prof.score(r, profile)
+                kept.append(rr)
+            else:
+                b = huntlog.profile_bucket(why)
+                reasons[b] = reasons.get(b, 0) + 1
+    else:
+        langok = _lang_filter(candidates)
+        if len(langok) != len(candidates):
+            reasons["language"] = reasons.get("language", 0) + len(candidates) - len(langok)
+        kept = [dict(r, _score=prof.health(r)) for r in langok]
+    for r in kept:
+        pen = (trackers or {}).get(r.get("tracker") or "unknown", 0.0)
+        if pen:
+            r["_score"] -= pen
+            r["_tracker_penalty"] = pen
+    kept.sort(key=lambda x: (x["_score"], x.get("seeders", 0)), reverse=True)
+    return kept
 
 
 _hunt_lock = threading.Lock()
@@ -303,6 +366,11 @@ def _hunt_wanted(series_filter=None, max_override=None) -> dict:
 
     budget = min(max_per_run, max_active - active)
     now = datetime.now()
+    trackers = _tracker_penalties()
+    try:
+        huntlog.prune()
+    except Exception:                            # noqa: BLE001
+        pass
 
     def due(w):
         return manual or wants.is_due(w, now)
@@ -366,8 +434,15 @@ def _hunt_wanted(series_filter=None, max_override=None) -> dict:
             if aired <= 0 or owned > max(1, aired // 10):
                 continue                     # own too much of it — episode grabs instead
             searches += 1
+            _last_pack.clear()
             pack = _try_season_pack(title, season, _load_profile_for_series(sid))
+            pack_key = {"kind": "pack", "series_id": sid, "season": season,
+                        "query": f"{title} S{int(season):02d}"}
             if not pack:
+                huntlog.record(**pack_key, outcome="error" if _last_pack.get("error") else "miss",
+                               results=_last_pack.get("results", 0),
+                               reasons=_last_pack.get("reasons"),
+                               detail=_last_pack.get("error", ""))
                 continue
             # grab the pack
             if not db.mark_grabbed(pack["title"], None):
@@ -385,6 +460,10 @@ def _hunt_wanted(series_filter=None, max_override=None) -> dict:
                                 "reason": "pack", "grabbed": pack["title"], "error": None,
                                 "covers": len(eps)})
                 log.info("Grabbed season pack '%s' covering %d episodes", pack["title"], len(eps))
+                huntlog.record(**pack_key, outcome="grabbed",
+                               results=_last_pack.get("results", 0), kept=1,
+                               reasons=_last_pack.get("reasons"), pick=pack,
+                               detail=f"covers {len(eps)} episode(s)")
                 _notify_grab(pack["title"], f"{title} S{int(season):02d} pack", series_id=sid)
             except DownloadClientError as e:
                 with db.connect() as c:
@@ -447,6 +526,9 @@ def _hunt_wanted(series_filter=None, max_override=None) -> dict:
         if not query:
             continue
         res = {"want": query, "reason": w.get("reason"), "grabbed": None, "error": None}
+        log_key = {"kind": kind, "series_id": w.get("series_id"),
+                   "season": None if kind == "movie" else season,
+                   "episode": None if kind == "movie" else episode, "query": query}
         searches += 1
         try:
             results = searchmod.search(
@@ -457,9 +539,18 @@ def _hunt_wanted(series_filter=None, max_override=None) -> dict:
             res["error"] = f"search failed: {e}"
             details.append(res)
             search_errors.append(str(e))
+            huntlog.record(**log_key, outcome="error", detail=str(e))
             continue
 
-        fresh = [r for r in results if not db.already_grabbed(r["title"])]
+        reasons: dict = {}
+
+        def keep(rows, bucket, pred):
+            out = [r for r in rows if pred(r)]
+            if len(out) != len(rows):
+                reasons[bucket] = reasons.get(bucket, 0) + len(rows) - len(out)
+            return out
+
+        fresh = keep(results, "blocklisted", lambda r: not db.already_grabbed(r["title"]))
         # Verify every candidate actually IS the wanted title. Indexer search is
         # substring-based, so "Trailer Park Boys S01E01" also returns
         # "Trailer Park Boys: Out of the Park: Europe S01E01" — without this
@@ -467,8 +558,8 @@ def _hunt_wanted(series_filter=None, max_override=None) -> dict:
         from . import releasematch as _rm
         if kind == "movie":
             if movie_title:
-                fresh = [r for r in fresh
-                         if _rm.matches_movie(r["title"], movie_title, movie_year)]
+                fresh = keep(fresh, "wrong_title", lambda r: _rm.matches_movie(
+                    r["title"], movie_title, movie_year))
         else:
             # For episode wants, never grab a season or series pack here — the
             # pack pre-pass already handled pack-worthy seasons, and an episode
@@ -476,10 +567,10 @@ def _hunt_wanted(series_filter=None, max_override=None) -> dict:
             # contain the query episode. Grabbing those re-downloads seasons we
             # already own.
             from . import packs as _packs
-            fresh = [r for r in fresh
-                     if _packs.classify_pack(r["title"]).get("kind") == "single"
-                     and _rm.matches_episode(r["title"], title,
-                                             int(season), int(episode))]
+            fresh = keep(fresh, "pack", lambda r: _packs.classify_pack(
+                r["title"]).get("kind") == "single")
+            fresh = keep(fresh, "wrong_title", lambda r: _rm.matches_episode(
+                r["title"], title, int(season), int(episode)))
         if w.get("reason") == "upgrade":
             # An upgrade has to beat the file on disk. The profile alone isn't
             # enough: a ["1080p", "720p"] profile happily ranks a 720p release
@@ -496,19 +587,20 @@ def _hunt_wanted(series_filter=None, max_override=None) -> dict:
                     owned.get("path"), owned.get("quality")) if owned else (None, False)
             if is_owned:
                 before = len(fresh)
-                fresh = [r for r in fresh if _q.is_upgrade(r["title"], owned_q, owned_cam)]
+                fresh = keep(fresh, "not_upgrade",
+                             lambda r: _q.is_upgrade(r["title"], owned_q, owned_cam))
                 if not fresh:
                     res["error"] = (f"no release better than owned "
                                     f"{owned_q or 'unknown'}{' CAM' if owned_cam else ''} "
                                     f"({before} candidates)")
-        if profile:
-            ranked = prof.rank(fresh, profile)
-        else:
-            ranked = _rank_no_profile(fresh)
+        ranked = _rank_for_hunt(fresh, profile, reasons, trackers)
         if not ranked:
             res["next_search"] = wants.record_miss(
                 w["id"], w.get("search_count") or 0, _is_recent(w.get("_air", "")))
             details.append(res)
+            huntlog.record(**log_key, outcome="miss", results=len(results), kept=0,
+                           reasons=reasons, detail=res.get("error") or "",
+                           next_search=res["next_search"])
             continue
 
         pick = ranked[0]
@@ -523,7 +615,10 @@ def _hunt_wanted(series_filter=None, max_override=None) -> dict:
             grabbed += 1
             db.add_history("added", pick["title"], f"hunt: {query} ({w.get('reason')})")
             wants.mark_grabbed(w["id"])
-            log.info("Hunt grabbed '%s' for %s", pick["title"], query)
+            log.info("Hunt grabbed '%s' for %s (%s seeders, %s)", pick["title"], query,
+                     pick.get("seeders"), pick.get("tracker") or "?")
+            huntlog.record(**log_key, outcome="grabbed", results=len(results),
+                           kept=len(ranked), reasons=reasons, pick=pick)
             _notify_grab(pick["title"], query,
                          series_id=None if kind == "movie" else w.get("series_id"),
                          movie_id=w.get("series_id") if kind == "movie" else None)
@@ -532,6 +627,8 @@ def _hunt_wanted(series_filter=None, max_override=None) -> dict:
             with db.connect() as c:
                 c.execute("DELETE FROM grabbed WHERE title=?", (pick["title"],))
             _grab_failed(pick["title"], query, e)
+            huntlog.record(**log_key, outcome="add_failed", results=len(results),
+                           kept=len(ranked), reasons=reasons, pick=pick, detail=str(e))
         details.append(res)
     if search_errors:
         log.warning("Hunt: %d search(es) failed this pass (first: %s)",
@@ -700,6 +797,14 @@ def _run_once() -> dict:
     except Exception as e:                       # noqa: BLE001 - never kill the tick
         log.warning("Library pipeline error: %s", e)
         lib_summary = {"error": str(e)}
+
+    # 4b. indexer probe (daily by default) + telemetry retention
+    try:
+        from . import indexerhealth
+        indexerhealth.prune()
+        indexerhealth.probe_if_due()
+    except Exception as e:                       # noqa: BLE001 - never kill the tick
+        log.warning("Indexer probe error: %s", e)
 
     # 5. housekeeping: purge expired sessions + used/expired reset tokens
     # (they previously accumulated forever)
