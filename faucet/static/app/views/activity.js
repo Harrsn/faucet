@@ -23,8 +23,10 @@ export async function render(el, ctx) {
   function downloads() {
     if (data.error) return html`<div class="empty">The download client isn't reachable: ${data.error}</div>`;
     const t = data.transfers;
-    if (!t.length) return html`<div class="empty">Nothing in the download client.</div>`;
-    return html`<div class="ftable">${t.map((x) => {
+    const slow = data.client && data.client.ok === false
+      ? html`<p class="lib-warn" style="margin:0 0 10px">The client is slow to respond right now — showing the list from ${data.client.as_of ? data.client.as_of.slice(11, 19) : "earlier"}.</p>` : "";
+    if (!t.length) return html`${slow}<div class="empty">Nothing in the download client.</div>`;
+    return html`${slow}<div class="ftable">${t.map((x) => {
       const paused = /stop|pause/i.test(x.status);
       return html`<div class="frow dlrow">
         <span class="ini" aria-hidden="true">${initials(x.name)}</span>

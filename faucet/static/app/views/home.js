@@ -121,7 +121,8 @@ function downloads(d) {
     !d.stats.client_ok ? "client offline"
       : `${act.length} active${d.stats.down_rate ? ` · ${rate(d.stats.down_rate)}` : ""}`,
     ["Activity", links.activity],
-    !d.stats.client_ok ? html`<div class="empty">The download client isn't reachable. Check Settings → Connections.</div>`
-      : act.length ? html`<div class="dl-grid">${act.slice(0, 8).map(dlCard)}</div>`
-      : html`<div class="empty">Nothing downloading right now.</div>`);
+    !d.stats.client_ok ? html`<div class="empty">The download client isn't reachable. Check Settings → Integrations.</div>`
+      : html`${d.stats.client_slow ? html`<p class="lib-warn" style="margin:0 0 10px">The client is slow to respond right now (often while a big download is being moved onto the NAS) — showing the list from ${d.stats.client_as_of ? d.stats.client_as_of.slice(11, 16) : "earlier"}.</p>` : ""}
+        ${act.length ? html`<div class="dl-grid">${act.slice(0, 8).map(dlCard)}</div>`
+          : html`<div class="empty">Nothing downloading right now.</div>`}`);
 }
