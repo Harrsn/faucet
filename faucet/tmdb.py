@@ -157,7 +157,8 @@ def season_episodes(tmdb_id: int, season_no: int, fresh: bool = False) -> list[d
     ck = f"season:{tmdb_id}:{season_no}"
     if not fresh:
         cached = _cache_get(ck)
-        if cached is not None:
+        # cached before episode stills were kept: refetch once to fill them
+        if cached is not None and all("still" in e for e in cached):
             return cached
     try:
         data = _get(f"/tv/{tmdb_id}/season/{season_no}", {})
@@ -188,6 +189,20 @@ def episodes(tmdb_id: int, total_seasons: int, fresh: bool = False) -> list[dict
     for season_no in range(1, (total_seasons or 0) + 1):
         out.extend(season_episodes(tmdb_id, season_no, fresh=fresh) or [])
     return out
+
+
+def cached_details(tmdb_id: int, media_type: str) -> dict:
+    """Details from the cache only ({} when not cached) — for list pages."""
+    return _cache_get(f"details2:{media_type}:{tmdb_id}") or {}
+
+
+def cached_season(tmdb_id: int, season_no: int) -> list[dict] | None:
+    """A season from the cache only (no network): for page renders that
+    shouldn't wait on TMDb. None when not cached or cached without stills."""
+    cached = _cache_get(f"season:{tmdb_id}:{season_no}")
+    if cached is not None and all("still" in e for e in cached):
+        return cached
+    return None
 
 
 def external_ids(tmdb_id: int, media_type: str) -> dict:

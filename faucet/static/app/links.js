@@ -2,10 +2,11 @@
 // classic UI; as each view lands, its entry here moves to a #/ route.
 export const links = {
   home: "#/",
-  shows: "/classic#page/shows",
-  show: (id) => `/classic#show/${encodeURIComponent(id)}`,
-  movies: "/classic#page/movies",
-  movie: (id) => `/classic#movie/${encodeURIComponent(id)}`,
+  shows: "#/shows",
+  show: (id, season) => `#/shows/${encodeURIComponent(id)}${season != null ? `/${encodeURIComponent(season)}` : ""}`,
+  movies: "#/movies",
+  movie: (id) => `#/movies/${encodeURIComponent(id)}`,
+  classicMovie: (id) => `/classic#movie/${encodeURIComponent(id)}`,
   discover: "/classic#page/discover",
   calendar: "/classic#page/calendar",
   requests: "/classic#page/requests",

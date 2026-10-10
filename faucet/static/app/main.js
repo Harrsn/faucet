@@ -8,6 +8,10 @@ import { toast } from "./ui/toast.js";
 // route -> [nav id, () => import(view module)]
 const ROUTES = [
   [/^\/?$/, "home", () => import("./views/home.js")],
+  [/^\/shows\/?$/, "shows", () => import("./views/shows.js")],
+  [/^\/shows\/(\d+)(?:\/(\d+))?\/?$/, "shows", () => import("./views/show.js")],
+  [/^\/movies\/?$/, "movies", () => import("./views/movies.js")],
+  [/^\/movies\/(\d+)\/?$/, "movies", () => import("./views/movie.js")],
 ];
 
 let me = null;

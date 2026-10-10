@@ -27,9 +27,9 @@ export function initPalette(me) {
   });
 }
 
-export async function open(me) {
+export async function open(me, tab = "all") {
   if (state) return;
-  state = { me, tab: "all", q: "", library: null, tmdb: [], releases: null, busy: {},
+  state = { me, tab, q: "", library: null, tmdb: [], releases: null, busy: {},
             sel: 0, timer: null, returnFocus: document.activeElement };
   const root = $("#palette-root");
   mount(root, html`<div class="palette-scrim" data-close>

@@ -113,7 +113,7 @@ class _NoClient:
 def test_home_for_admin_and_member(app, monkeypatch):
     sid, mid = _seed(app.db)
     monkeypatch.setattr(app.m["app"], "client", lambda: _NoClient())
-    monkeypatch.setattr(app.m["tmdb"], "season_episodes", lambda tid, s, fresh=False: [
+    monkeypatch.setattr(app.m["tmdb"], "cached_season", lambda tid, s: [
         {"episode": 1, "still": "https://image.tmdb.org/t/p/w300/s1.jpg"}])
     monkeypatch.setattr(app.m["tmdb"], "details", lambda *a, **k: {
         "backdrop": "https://image.tmdb.org/t/p/w1280/b.jpg", "overview": "O", "year": 2011})
@@ -125,7 +125,7 @@ def test_home_for_admin_and_member(app, monkeypatch):
     assert a["hero"]["backdrop"].endswith("/b.jpg")
     assert a["movies"] == [{"id": mid, "title": "Rags", "year": 2012, "poster": None,
                             "quality": "720p", "cam": True, "want": "upgrade"}]
-    assert a["hunting"] == [{"id": sid, "title": "Show", "wanted": 1, "pct": 67,
+    assert a["hunting"] == [{"id": sid, "title": "Show", "wanted": 1, "pct": 66,
                              "poster": "https://image.tmdb.org/t/p/w342/a.jpg"}]
     assert a["stats"]["client_ok"] is False and a["stats"]["wanted"] == 2
     b = app.bob.get("/api/home").json()

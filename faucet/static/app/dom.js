@@ -46,8 +46,8 @@ export const bg = (u) => {
 
 // deterministic muted tint for art-less cards
 export function tint(seed) {
-  let h = 0;
-  for (const ch of String(seed || "")) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  let h = 2166136261;                                  // FNV-1a, so "x1" and "x2" differ
+  for (const ch of String(seed || "")) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
   const hue = h % 360;
   return raw(`background-color:hsl(${hue} 28% 22%)`);
 }
@@ -84,4 +84,27 @@ export const sxe = (s, e) => `S${String(s).padStart(2, "0")}E${String(e).padStar
 export function initials(title) {
   return String(title || "?").replace(/^the\s+/i, "").split(/\s+/).slice(0, 2)
     .map((w) => w[0] || "").join("").toUpperCase();
+}
+
+export function day(iso) {
+  if (!iso) return "";
+  const d = new Date(iso.length === 10 ? `${iso}T12:00:00` : iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+export function until(iso) {
+  if (!iso) return "";
+  const s = (new Date(iso).getTime() - Date.now()) / 1000;
+  if (s <= 60) return "any minute";
+  if (s < 3600) return `in ${Math.round(s / 60)} min`;
+  if (s < 86400) return `in ${Math.round(s / 3600)} h`;
+  return `in ${Math.round(s / 86400)} d`;
+}
+
+export function stamp(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
