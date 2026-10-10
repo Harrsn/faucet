@@ -1,224 +1,137 @@
 <div align="center">
 
-<img src="docs/logo.svg" alt="Faucet logo" width="90">
+<img src="docs/logo.svg" alt="" width="84">
 
 # Faucet
 
-**A complete self-hosted media manager — search, grab, sort, request, and track your shows and movies — in one lightweight app.**
+**Your shows and movies — hunted, downloaded, sorted, requested and tracked, in one self-hosted app.**
 
-Sonarr + Radarr + Overseerr + a download manager, without the five-container stack. One service over your indexer and torrent client, with a clean multi-user web UI.
+Everything a Sonarr + Radarr + Overseerr stack does, as one container over your indexer and torrent client — with an interface that feels like Plex.
 
 [![CI](https://github.com/Harrsn/faucet/actions/workflows/ci.yml/badge.svg)](https://github.com/Harrsn/faucet/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+[![Release](https://img.shields.io/github/v/release/Harrsn/faucet?sort=semver)](https://github.com/Harrsn/faucet/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+
+<img src="docs/screenshots/home.png" alt="Faucet's home page: a featured backdrop for the newest arrival, then rails of recently added episodes, live downloads, movies and shows still being hunted" width="100%">
 
 </div>
 
 ---
 
+Monitor a show and Faucet knows every episode that exists, sees which ones you already have, and hunts the rest — across every indexer at once, ranked by your quality rules, retried on a sensible schedule. Finished downloads are renamed and filed into a clean Plex / Jellyfin layout the moment they complete. The people you share your server with get their own accounts to browse and request; you approve.
+
+It's one Python service with SQLite, no build step and a handful of dependencies. Point it at Jackett, a download client (Transmission, qBittorrent or Deluge) and a folder.
+
+> **Heads up:** Faucet automates your own downloads. What you download, and staying within the law where you live, is on you.
+
+## A look around
+
+| | |
+|---|---|
+| ![A TV Shows library: poster grid with completion bars, filters, and each library as its own section in the sidebar](docs/screenshots/library.png) | ![A show page: backdrop, season cards, and episodes with stills and a status each](docs/screenshots/show.png) |
+| **Libraries** — every library is its own section, Plex-style | **Show pages** — what's on disk, missing, downloading or unaired |
+| ![⌘K search across your library, TMDb and every indexer](docs/screenshots/search.png) | ![Interactive release search: ranked releases, rejected ones greyed out with the reason](docs/screenshots/releases.png) |
+| **⌘K** — your library, TMDb and every indexer, from anywhere | **Release search** — ranked by your profile, rejects explained |
+| ![Settings → Libraries: library cards showing whether downloads move in instantly, and show-folder links](docs/screenshots/settings.png) | ![Discover: TMDb trending and popular lists with Monitor and Request on every card](docs/screenshots/discover.png) |
+| **Settings** — libraries, integrations, hunting, users, all in the app | **Discover** — trending and popular, one click to monitor or request |
+
+<p align="center"><img src="docs/screenshots/mobile.png" alt="Faucet on a phone" width="300"></p>
+
 ## What it does
 
-Faucet manages the whole lifecycle of your media library from a single page. Search your indexers and grab a release, and Faucet hands it to your torrent client, watches it download, then renames and files it into a clean Plex/Jellyfin layout. Beyond one-off downloads, it tracks your library the way Sonarr and Radarr do: monitor a show, and Faucet knows every episode that exists, sees what you already have on disk, and hunts only what's missing. Point it at an existing library and it imports everything automatically.
+**Tracks your library like Sonarr and Radarr.** Faucet reads every show's episode list from TMDb, matches it against what's on disk, and keeps a precise list of what's missing. Airing shows re-read their episode lists twice a day, ended shows weekly. Movies on disk below your quality target — or cam copies — are hunted for upgrades, and the old copy is parked, not deleted, when the better one lands.
 
-It also covers the request side. Faucet has real accounts, roles, and an approval workflow, so household members can sign in and request titles while admins approve and manage — the Overseerr role, folded into the same app.
+**Searches properly.** Each indexer is queried on its own, in parallel, with structured queries (season and episode numbers, IMDb / TVDB ids) where it supports them. A slow Cloudflare-fronted indexer only delays its own results; one that's down only loses its own. Indexers that don't carry what you're looking for aren't asked. Releases are verified against the exact show and episode — spin-offs and wrong seasons don't get through — then ranked by your quality profile, seeders and each tracker's track record.
 
-It runs as one container over Jackett (or Prowlarr) and your torrent client. No Prowlarr + Sonarr + Radarr + a request frontend — just one app and minimal moving parts.
+**Hunts patiently.** Wanted episodes are searched newest first, a capped number per run, backing off when nothing turns up (recent episodes are retried within hours, old backlog within days). Season packs are grabbed when most of a season is missing. Downloads that stall are dropped, blocklisted and replaced with another release. Every search is logged — open any show's hunt log to see what was found and why it was rejected.
 
-> **Heads up:** Faucet manages your own downloads. You are responsible for what you download and for complying with the law where you live.
+**Files everything where it belongs.** A completion hook — plus a sweep for anything it misses — renames each download into `Show/Season 01/Show - S01E01.mkv` or `Movie (Year)/Movie (Year).mkv` and moves it into the right library, with an instant rename when downloads and media share a mount (Faucet checks this for you). Executable payloads and fakes are quarantined, not filed.
 
-## Features
+**Many libraries, like Plex.** Add as many libraries as you want — a separate collection for a relative, say — and each becomes its own section. Every show and movie has a library it's saved to, and Faucet routes its downloads there. Show folders are linked to shows once, automatically or by hand, so a renamed TMDb title or an odd folder name never makes a show look missing.
 
-### Library management (the Sonarr/Radarr core)
+**Lets everyone else request.** Real accounts with roles: members browse your library, Discover and the calendar, and request titles; admins approve, decline, or auto-approve trusted people. The first account on a fresh install is the admin, and a setup wizard walks through the rest.
 
-- **Monitored shows** — add a show and Faucet pulls its full episode list from TMDb, scans your library for what you own, and tracks the rest. A per-show detail view lays out every season and episode as have, missing, or unaired, with detected quality.
-- **Monitored movies** — the Radarr side: add a movie, Faucet checks whether it's already in your library and grabs it if not. Movie detail view shows the file you have plus TMDb metadata, with a search-releases button.
-- **Library auto-import** — point Faucet at an existing library and it discovers every show and movie on disk, matches each to TMDb, and creates monitored entries automatically. No adding hundreds of titles by hand.
-- **Reconciliation** — diffs what *should* exist (canonical episode lists) against what you *have* (the library scan) to compute exactly what's missing, plus quality upgrades when you own something below your profile's target resolution.
-- **Robust matching** — handles the messy reality of real libraries: release tags (`[1080p]`, `[BDRip]`), punctuation (`Bob's Burgers` vs `Bobs Burgers`), franchise entries, and truncated movie folders (`The Chronicles of Narnia` to the full subtitled TMDb title), disambiguated by year.
-- **Fix Match & Fix Location** — when the matcher gets a title wrong or a movie lives inside a multi-film pack, re-link it to the correct TMDb entry, or point Faucet at an existing file on disk without moving it — straight from the detail page.
+**Stays out of the way.** Settings live in the app, not in environment files. Pages never wait on a slow download client. A Prometheus `/metrics` endpoint, a health check, database backups and automatic housekeeping are built in.
 
-### Accounts, roles & requests (the Overseerr role)
-
-- **Real authentication** — signed session cookies, hashed passwords, CSRF protection, and brute-force lockout (configurable attempts and lockout window). Faucet's own login is the perimeter; no separate auth proxy required.
-- **First-run bootstrap** — the very first account created becomes the **admin**, automatically and active. No seeding a config file by hand.
-- **Roles & approval flow** — new sign-ups land in a pending state and require admin approval before they can log in. Admins can approve, disable, re-enable, promote/demote, reset passwords (one-time link), delete users, or mark a user **trusted** so their requests auto-approve.
-- **User requests** — non-admin users browse and request shows or movies; requests queue for admin approval, then flow straight into the monitored/hunting pipeline. Trusted users skip the queue.
-- **Themed login** — the sign-in / register / password-reset page shares the app's look, with the same dark/light toggle.
-
-### Discover, calendar & interactive search
-
-- **Discover** — browse TMDb trending / popular / upcoming as a poster wall; one click adds it (admin) or requests it (users). Titles already in your library are badged.
-- **Calendar** — everything airing across your monitored shows, past week and next two, with on-disk / grabbed / missing / upcoming status per episode.
-- **Interactive search** — the hourglass: per-episode and per-season release search with strict verification (right show, right episode, no spin-offs, no wrong-season packs), ranked by your quality profile, one-click grab that coordinates with the background hunter.
-
-### Hunting
-
-- **Automatic background hunting** — a built-in scheduler scans the library, reconciles every monitored show and movie, and grabs what's missing on a timer (default every 30 minutes). No extra container or cron job.
-- **Season-pack preference** — when two or more episodes of a season are wanted, Faucet grabs a single season pack instead of many individual episodes: one client slot, many episodes, better seeded.
-- **Fake-release protection** — executable "releases" are hidden from search and never auto-grabbed; a download whose files turn out to be executables with no video is paused and flagged for review; and new episodes aren't hunted until the day after they air (configurable).
-- **Stalled-download handling** — a download with zero progress for `STALL_HOURS` is removed, blocklisted, and re-hunted with a different release automatically.
-- **Quality upgrades** — cams/telesyncs and below-profile files are hunted for copies that actually beat what's on disk; the best file per movie/episode wins and the replaced copy is parked in `_superseded/` for you to purge.
-- **Concurrency caps** — never floods your client. Won't start hunting if too many torrents are already downloading, and grabs only a few per cycle; the rest stay queued for the next tick. Tunable via `HUNT_MAX_ACTIVE` / `HUNT_MAX_PER_RUN`.
-- **Per-show monitor modes** — `all` (hunt every missing episode), `future` (only new episodes from the add date forward — ignore a huge back catalog), or `paused`. Keeps big shows from trying to backfill hundreds of episodes.
-
-### Quality profiles
-
-- **Per-profile rules** — define preferred resolutions and sources in priority order, minimum seeders, and size caps. Releases are scored and the best match wins; profiles drive both search ranking and upgrade decisions.
-- **Per-title assignment** — assign a specific profile to an individual show or movie from its detail page, overriding the default for that title.
-- **Default-profile fallback** — set a global default profile so auto-imported titles (which start with no profile of their own) still inherit your quality rules instead of grabbing whatever's best-seeded. A default language preference works the same way.
-
-### Search and download
-
-- **Unified search** across every indexer Jackett or Prowlarr exposes, ranked by seeders, with type and quality badges (1080p · WEB-DL · MKV) and content classification (movie / TV / game).
-- **Title search with posters** — search by title via TMDb, see posters, and drill into releases.
-- **Any client** — Transmission, qBittorrent, or Deluge. Same UI, one env var to switch. Handles indexer redirects so `.torrent` URLs that 302 to magnets just work.
-- **Auto-grab subscriptions** — follow a search query and Faucet grabs matching new releases on a timer, with de-duplication so nothing is grabbed twice.
-
-### Library and UI
-
-- **Admin dashboard** — the landing page for admins: storage gauge, live transfers with per-torrent progress and ETA, indexer/client health chips, library counts, recent activity feed, and request/user quick-links — in a single consolidated call, not a waterfall of fetches.
-- **Auto-sort** — finished downloads are renamed and filed into `movies/` and `tvshows/` (`Show/Season 01/Show - S01E03.mkv`) with `guessit`. Games and disc/archive releases route to their own folders. An optional catch-up sweep (`faucet.sweep`, run on a timer) re-files anything the completion hook missed — see [docs/HOOKS.md](docs/HOOKS.md).
-- **Live activity** — disk free, total speed, active and seeding counts, per-torrent progress with pause / resume / remove, an events feed, and download history with stats.
-- **Built-in file browser** — an admin file browser scoped to a configured root, used for Fix Location and for moving/creating folders without shelling into the box.
-- **Scan report** — a diagnostic view of library files that couldn't be matched to a show or movie, with the reason, so naming issues and stray files are visible instead of silently skipped.
-- **Full settings editor** — tune the whole environment from the UI: connections, metadata, behavior, and (behind an advanced section with live status chips) the container paths. Changes persist across restarts; structural secrets like the session key stay in your stack by design.
-- **Cinematic web UI** — a distinctive projection-booth theme with proper pages for Dashboard, Search, Shows, Movies, Auto-grab, Profiles, and Requests, an activity drawer, a settings panel, a mobile bottom-nav, and a dark/light toggle.
-- **Notifications** — Discord, Telegram, ntfy, Gotify, or any webhook, on the events you choose.
-
-## Screenshots
-
-| Shows library | Show detail | Episode search |
-|---|---|---|
-| ![shows](docs/screenshot-shows.png) | ![detail](docs/screenshot-detail.png) | ![search](docs/screenshot-search.png) |
-
-| Dashboard | Discover | Calendar |
-|---|---|---|
-| ![dashboard](docs/screenshot-activity.png) | ![discover](docs/screenshot-discover.png) | ![calendar](docs/screenshot-calendar.png) |
-
-*(demo data — with a TMDb key every card shows real poster art and backdrops)*
-
-## Quickstart (Docker)
+## Quick start
 
 ```bash
-git clone https://github.com/Harrsn/faucet.git
-cd faucet
-cp .env.example .env        # set JACKETT_API_KEY, SESSION_SECRET, client creds
+git clone https://github.com/Harrsn/faucet.git && cd faucet
+cp .env.example .env
+python3 -c "import secrets; print('SESSION_SECRET=' + secrets.token_urlsafe(48))" >> .env
+mkdir -p data/media/tvshows data/media/movies data/torrents
 docker compose up -d
 ```
 
-Open **http://localhost:8088**.
+Open **http://localhost:8088** and create the admin account. The setup wizard then takes you through:
 
-The compose stack bundles **Jackett** (add your indexers at `:9117`) and **Transmission** so it works out of the box. Already running your own? Delete that service from `docker-compose.yml` and point the env vars at yours.
+1. **Libraries** — `/data/media/tvshows` and `/data/media/movies` are ready; point them elsewhere or add more.
+2. **Download client** — the bundled Transmission is pre-filled; test and save.
+3. **Path mapping** — skip it with the bundled stack (both containers see `/data`).
+4. **Indexer** — open Jackett at `http://localhost:9117`, add a few indexers, paste its API key.
+5. **TMDb** — a free v3 API key from [themoviedb.org](https://www.themoviedb.org/settings/api), for posters, episode lists and matching.
+6. **Import** — monitor everything already in your libraries.
 
-### First run
+One setting in Transmission itself: in its web UI (`http://localhost:9091`) → **Preferences → Torrents**, set the download folder to `/data/torrents` and the incomplete folder to `/data/torrents/incomplete`, so partial downloads live on the data volume too.
 
-1. Open Faucet — you'll hit the sign-in page. Click **Register**; the **first account you create becomes the admin** (active immediately). Anyone who registers after that lands in a pending state until you approve them.
-2. Open Jackett at `http://localhost:9117`, add a few indexers, and copy the **API key**.
-3. In Faucet, go to **Settings**, and paste your Jackett key and your **TMDb API key** (free from [themoviedb.org](https://www.themoviedb.org) — needed for title search, posters, and episode tracking). While you're there, confirm the **paths** under the Advanced tab show green (mounted & writable) and set a **default quality profile**.
-4. Go to **Shows** or **Movies** and hit **import library** to auto-monitor everything already on disk, or **add** individual titles. Faucet scans, reconciles, and starts filling gaps.
+### Bring your own stack
 
-> Set a strong, fixed **`SESSION_SECRET`** in your environment. If you don't, Faucet generates one and stores it, but a fixed secret keeps sessions valid across restarts and redeploys.
+Already running Jackett or a download client? Delete that service from `docker-compose.yml` and enter yours in the wizard. Two things to get right:
 
-## Bare-metal
+- **Paths.** If your client sees the download folder under a different path than Faucet does (Transmission on the host writes to `/mnt/nas/torrents`, Faucet's container sees `/data/torrents`), add a **path mapping** in Settings.
+- **The completion hook.** Have your client run Faucet's hook when a download finishes. [docs/HOOKS.md](docs/HOOKS.md) covers Transmission, qBittorrent and Deluge, and [deploy/cascade-hook-wrapper.sh](deploy/cascade-hook-wrapper.sh) is a ready wrapper for a client on the host with Faucet in Docker. Without a hook, the sweep files finished downloads within a scheduler run.
 
-```bash
-pip install -e .
-cp .env.example .env        # fill in URLs + keys
-set -a; . ./.env; set +a
-uvicorn faucet.app:app --host 0.0.0.0 --port 8088
+### Storage layout
+
+Put your libraries and your download folder **on one mount** — one volume in Docker, one share on a NAS:
+
+```
+/data
+├── media
+│   ├── tvshows
+│   └── movies
+└── torrents
 ```
 
-Wire the completion hook in your client to run `python -m faucet.hook` so finished downloads get sorted — see [docs/HOOKS.md](docs/HOOKS.md) for per-client setup.
+Moving a finished download into a library is then a rename: instant, whatever the size. Mount `/downloads` and `/library` separately — even from the same disk — and every file is copied instead, through the network share if that's where it lives, while your download client stalls behind it. **Settings → Libraries** shows, for each library, whether downloads move in instantly or get copied.
 
 ## Configuration
 
-All via environment / `.env`:
+Almost everything is in **Settings**: libraries and show-folder links, integrations (indexers with per-indexer health, download client, TMDb, notifications), path mappings, general defaults, quality profiles, users and requests, hunting, and maintenance. Changes apply on the next scheduler run — no restart, no redeploy.
 
-| Variable | Default | Purpose |
+The environment is only for bootstrap and infrastructure:
+
+| Variable | Default | |
 |---|---|---|
-| `JACKETT_API_KEY` | — | **Required.** Indexer API key. |
-| `JACKETT_URL` | `http://127.0.0.1:9117` | Jackett/Prowlarr base URL. |
-| `JACKETT_INDEXER` | `all` | Which indexer to query (`all` aggregates). |
-| `DOWNLOAD_CLIENT` | `transmission` | `transmission` \| `qbittorrent` \| `deluge`. |
-| `CLIENT_URL` | Transmission RPC | Client web/RPC endpoint. |
-| `CLIENT_USER` / `CLIENT_PASS` | — | Client credentials. |
-| `LIBRARY_ROOT` | `/library` | Where the two starter libraries live (`tvshows/`, `movies/`) until you edit them. Libraries are managed in the app (`/api/libraries`): add folders anywhere the container can see, pick which one new downloads go to. |
-| `DOWNLOAD_DIR` | `/downloads` | Active download dir. |
-| `DISK_PATH` | `/downloads` | Path used for the disk-free gauge. |
-| `BROWSE_ROOT` | `LIBRARY_ROOT` | Root the admin file browser is scoped to. |
-| `REMOVE_ON_COMPLETE` | `0` | Remove finished torrents (stops seeding). Only after a clean sort; unfiled content is quarantined first. |
-| `MEDIASORT_MODE` | `auto` | `auto` \| `hardlink` \| `copy` \| `move`. See [docs/HOOKS.md](docs/HOOKS.md). |
-| `QUARANTINE_DIR` | `<release parent>/_failed` | Where the sorter parks content it couldn't file. |
-| `AIR_DELAY_DAYS` | `1` | Days after an episode's air date before it is hunted. `0` hunts on the air date (early "releases" are usually fakes). Also in Settings → Behavior. |
-| `BLOCK_EXECUTABLE_RELEASES` | `1` | Hide releases whose name is an executable (`…1080p.exe`) from search and the hunter. |
-| `GUARD_INTERVAL_SECONDS` | `60` | How often live downloads are checked for executable-only payloads (paused and flagged for review). `0` disables. |
-| `SUPERSEDED_ACTION` | `move` | After an upgrade lands, `move` parks the old copy in `_superseded/` beside its library (`/media/tvshows/X` → `/media/_superseded/tvshows/X`, reversible); `keep` leaves it in place. |
-| `HUNT_MAX_ACTIVE` | `5` | Skip hunting if this many torrents are already downloading. |
-| `HUNT_MAX_PER_RUN` | `3` | Max grabs per scheduler tick. |
-| `HUNT_MAX_SEARCHES` | `40` | Max indexer queries per scheduler tick (season-pack searches included). |
-| `WANT_BACKOFF_RECENT_HOURS` | `6` | After fruitless searches a want waits 1h, 2h, 4h… before the next one; this caps the wait for episodes that aired within `WANT_RECENT_DAYS`. |
-| `WANT_BACKOFF_MAX_HOURS` | `72` | Cap on that wait for everything else (backlog, movies). |
-| `WANT_RECENT_DAYS` | `14` | How recently an episode must have aired to count as "recent" for backoff. |
-| `GRAB_RETRY_HOURS` | `48` | A grab that hasn't landed on disk after this long goes back to wanted. |
-| `SERIES_REFRESH_HOURS` | `12` | How often a monitored show's episode list is re-read from TMDb (ended/canceled shows: weekly). |
-| `SERIES_REFRESH_PER_TICK` | `5` | Max shows refreshed per scheduler tick. `0` disables refreshing. |
-| `HUNT_HEALTHY_SEEDERS` | `5` | Releases with fewer seeders are ranked below a healthy release one resolution step lower. |
-| `HUNT_TRACKER_MIN_GRABS` | `4` | Settled grabs (stalled + completed, last 14 days) a tracker needs before its stall rate affects ranking. |
-| `HUNT_TRACKER_STALL_RATE` | `0.5` | Stall rate at which a tracker's releases are ranked down. |
-| `HUNT_LOG_DAYS` | `14` | How long hunt-log entries are kept. |
-| `INDEXER_PROBE_HOURS` | `24` | How often each Jackett indexer is probed individually. `0` = only on demand. |
-| `INDEXER_STATS_DAYS` | `7` | How long per-search telemetry is kept. |
-| `SEARCH_TIMEOUT` | `60` | Seconds each indexer gets per search (indexers are searched in parallel). |
-| `SEARCH_CONCURRENCY` | `8` | Indexers searched at once. |
-| `SEARCH_STRAGGLER_SECONDS` | `10` | Once most indexers have answered, how long the rest get before the search moves on without them. |
-| `INDEXER_PROBE_TIMEOUT` | `60` | Seconds each indexer gets in the probe (Cloudflare challenges through FlareSolverr take 10–15s each). |
-| `INDEXER_PROBE_CONCURRENCY` | `2` | Indexers probed at once (one FlareSolverr solves challenges serially). |
-| `METRICS_TOKEN` | — | Enables `/metrics` (Prometheus text format) for `Authorization: Bearer <token>`. Admin sessions can always read it; with neither, `/metrics` is 404. |
-| `EVENTS_MAX_BYTES` | `5242880` | Rotate `events.jsonl` to `events.jsonl.1` past this size. |
-| `HISTORY_DAYS` | `365` | History retention. |
-| `HISTORY_FAILED_DAYS` | `14` | Retention for `grab_failed` / `remove_failed` history rows. |
-| `DB_VACUUM_FREE_PCT` | `25` | VACUUM the database (at most daily) when free pages exceed this percentage. |
-| `RSS_INTERVAL_SECONDS` | `1800` | How often the scheduler scans/reconciles/hunts. |
-| `SEARCH_LIMIT` | `150` | Max results per search. |
-| `BIG_DOWNLOAD_GB` | `20` | Threshold for the "big download" warning. |
-| `REQUEST_TIMEOUT` | `30` | Outbound HTTP timeout (seconds). |
-| `NOTIFY_URLS` | — | Comma-separated notification targets. |
-| `NOTIFY_ON` | `completed,sorted,failed` | Which events notify. |
-| `UI_THEME` | `dark` | Default theme (`dark` \| `light`); users can toggle. |
+| `SESSION_SECRET` | generated | **Set it.** Signs session cookies; a fixed value keeps people signed in across restarts. |
+| `EVENTS_FILE` | `/config/events.jsonl` | Where the database and event log live (the folder holding this file). |
+| `TRUSTED_PROXIES` | — | Behind a reverse proxy: whose `X-Forwarded-*` / `CF-*` headers to believe. `auto` = the container's gateway. |
+| `CLIENT_IP_HEADERS` | `cf-connecting-ip,x-real-ip,x-forwarded-for` | Which headers carry the client IP, in order. |
+| `COOKIE_SECURE` | `auto` | Secure-cookie flag; `auto` follows HTTPS. |
+| `SESSION_DAYS` · `LOGIN_*` · `REGISTER_IP_MAX` | 30 days · see [.env.example](.env.example) | Session lifetime and sign-in throttling. |
+| `METRICS_TOKEN` | — | Bearer token for `/metrics`. |
+| `MEDIASORT_MODE` | `auto` | How the sorter files a download: `auto` (hardlink, else move, else copy), `move`, `hardlink` or `copy`. |
 
-### Authentication
+Connection and behaviour settings found in the environment (`JACKETT_URL`, `CLIENT_PASS`, `HUNT_MAX_ACTIVE`, …) are **imported once** on the first start. After that Settings owns them and the environment is ignored, with a startup warning naming anything it skips.
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `SESSION_SECRET` | auto-generated | **Set this.** Signing key for session cookies; a fixed value keeps logins valid across restarts. |
-| `SESSION_DAYS` | `30` | Session lifetime in days. |
-| `LOGIN_MAX_FAILED` | `5` | Failed logins per (client IP, username) before that pair is throttled. |
-| `LOGIN_IP_MAX_FAILED` | `20` | Failed logins per client IP, any username, before the IP is throttled. |
-| `LOGIN_ACCOUNT_MAX_FAILED` | `50` | Failed logins from anywhere before the account itself is locked (backstop against distributed guessing). |
-| `LOGIN_LOCK_MINUTES` | `15` | Throttle window and lock duration. |
-| `REGISTER_IP_MAX` | `5` | Self-registrations per client IP per hour. |
-| `TRUSTED_PROXIES` | — | IPs/CIDRs whose forwarding headers (`CF-Connecting-IP`, `X-Real-IP`, `X-Forwarded-For`, `CF-Visitor`, `X-Forwarded-Proto`) are believed, or `auto` = the container's default gateway (where Docker's port proxy connects from). Unset = trust nobody; every request is attributed to its TCP peer. |
-| `CLIENT_IP_HEADERS` | `cf-connecting-ip,x-real-ip,x-forwarded-for` | Which headers carry the client IP, in order (X-Forwarded-For: right-most entry). |
-| `COOKIE_SECURE` | `auto` | `auto` sets the cookie `Secure` flag when the browser connection is HTTPS (directly or per a trusted proxy); `1`/`0` force it. |
+## Security
 
-Connection, path, behavior, hunting, retention and metadata settings are edited in the in-app **Settings** pages and stored in Faucet's database. The variables below still work as a first-start import. Environment variables for them are only read once — on the first start, to import an existing setup — and ignored after that (a startup warning names any such variable). Full list and notification URL formats are in [.env.example](.env.example).
+- Every page and API call needs a session, and members can't reach admin endpoints. Sign-in is throttled per IP and username, with a per-account backstop.
+- A strict Content-Security-Policy: scripts only from Faucet itself — no inline script, no eval, no third parties — and the interface escapes everything it renders.
+- API keys, the client password and notification webhooks are write-only: the interface shows whether one is set, never the value, and error messages are scrubbed of them.
+- Requests store metadata looked up server-side, never what the browser sent, and the folder picker only lists directories under the configured mounts.
 
-## Library tidy
-
-Normalize existing season folders to `Season NN` and merge scattered duplicates:
+## For developers
 
 ```bash
-python -m faucet.libtidy                 # dry-run, shows the plan
-python -m faucet.libtidy --tv --apply    # execute TV renames
+pip install -r requirements.txt -r requirements-dev.txt
+pytest -q
+ruff check faucet tests
+for f in $(find faucet/static/app -name '*.js'); do node --check "$f"; done
 ```
 
-## How it compares
-
-Faucet covers the same ground as a Prowlarr + Sonarr + Radarr + Overseerr + download-client stack — monitored library tracking, episode-level reconciliation, season-pack-aware hunting, quality profiles, auto-import, and a multi-user request/approval workflow — but as a single service with one config and one container. It trades some of Sonarr/Radarr's depth (no per-season toggles yet, single metadata source) for radically fewer moving parts. If you want a single pane of glass for your library and your household's requests without running and updating five or six separate services, that's the niche.
-
-## Contributing
-
-Issues and PRs welcome. `pytest -q` runs the suite. New client backends just implement `faucet/clients/base.py`'s `DownloadClient` interface.
+FastAPI and SQLite on the back end; the interface is plain ES modules served as-is — no bundler, no framework, no `node_modules`. Download clients implement `faucet/clients/base.py`, and everything the interface does goes through the JSON API under `/api`. Issues and pull requests are welcome.
 
 ## License
 

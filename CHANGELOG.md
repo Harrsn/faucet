@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **New README**, with new screenshots (shot list in `docs/screenshots/`).
+- **The bundled `docker-compose.yml` uses one data mount** (`./data` → `/data`,
+  with `media/` and `torrents/` inside) for Faucet and Transmission, so a
+  finished download moves into the library by rename instead of a full copy.
+  `.env.example` is cut down to what the environment is still for
+  (`SESSION_SECRET`, compose paths, proxy and sign-in hardening, operations);
+  everything else is set in the setup wizard. Existing installs keep their own
+  compose files and are unaffected.
+- `docs/HOOKS.md` points at `deploy/cascade-hook-wrapper.sh` and path mappings;
+  the old path-rewriting `docs/faucet-hook-wrapper.sh` is gone.
+
 ## 2.2.0 — 2026-10-11
 
 ### Added

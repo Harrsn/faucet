@@ -1,38 +1,45 @@
-# Faucet — one-command self-hosted media pipeline.
+# Faucet — self-hosted media manager, with Jackett and Transmission bundled.
 #
-#   1. cp .env.example .env   &&   edit the few required values
+#   1. cp .env.example .env   (set SESSION_SECRET; everything else is optional)
 #   2. docker compose up -d
-#   3. open http://localhost:8088
+#   3. open http://localhost:8088 — the setup wizard takes it from there
 #
-# This bundles Faucet with Jackett (indexers) and Transmission (download client)
-# so you get a working stack out of the box. Already running your own Jackett or
-# a different client? Delete that service and point the env vars at yours.
+# Storage: ONE data folder, mounted at /data in both Faucet and Transmission:
+#
+#   ./data/media/tvshows   ./data/media/movies     <- your libraries
+#   ./data/torrents/                               <- downloads
+#
+# Downloads and libraries on one mount means a finished download moves into
+# the library with an instant rename. Separate mounts (/downloads + /library),
+# even of the same disk, force a full copy of every file.
+#
+# Already running Jackett or a download client? Delete that service and enter
+# yours in the setup wizard.
 
 services:
   faucet:
     image: ghcr.io/harrsn/faucet:latest
-    # To build locally instead of pulling: comment image, uncomment build.
-    # build: .
+    # build: .                # to build locally instead of pulling
     container_name: faucet
     restart: unless-stopped
     ports:
       - "8088:8088"
     env_file: .env
     environment:
-      # talk to the bundled services by their compose hostnames
+      EVENTS_FILE: /config/events.jsonl
+      # First-start defaults for the bundled services and the /data layout.
+      # Imported once; after that Settings (or the wizard) owns them.
       JACKETT_URL: http://jackett:9117
       DOWNLOAD_CLIENT: transmission
       CLIENT_URL: http://transmission:9091/transmission/rpc
-      DOWNLOAD_DIR: /downloads
-      LIBRARY_ROOT: /library
-      DISK_PATH: /downloads
-      EVENTS_FILE: /config/events.jsonl
-      # SESSION_SECRET comes from .env — set a long random value there so logins
-      # survive restarts (see .env.example for a generator one-liner).
+      LIBRARY_ROOT: /data/media
+      DOWNLOAD_DIR: /data/torrents
+      COMPLETE_DIR: /data/torrents
+      DISK_PATH: /data
+      BROWSE_ROOT: /data
     volumes:
       - ./config:/config
-      - ${LIBRARY_PATH:-./library}:/library
-      - ${DOWNLOADS_PATH:-./downloads}:/downloads
+      - ${DATA_PATH:-./data}:/data
     depends_on:
       - jackett
       - transmission
@@ -48,7 +55,7 @@ services:
     volumes:
       - ./config/jackett:/config
     ports:
-      - "9117:9117"        # expose so you can add indexers in its UI
+      - "9117:9117"           # add your indexers in Jackett's UI
 
   transmission:
     image: lscr.io/linuxserver/transmission:latest
@@ -62,10 +69,6 @@ services:
       PASS: ${CLIENT_PASS:-faucet}
     volumes:
       - ./config/transmission:/config
-      - ${DOWNLOADS_PATH:-./downloads}:/downloads
-      - ${LIBRARY_PATH:-./library}:/library
+      - ${DATA_PATH:-./data}:/data
     ports:
       - "9091:9091"
-
-# Named volumes aren't used so everything is visible under ./config, ./downloads,
-# ./library next to this file — easy to back up, easy to inspect.
