@@ -700,7 +700,7 @@ def api_settings_get():
         "REMOVE_ON_COMPLETE": os.environ.get("REMOVE_ON_COMPLETE", "0"),
         "REQUEST_TIMEOUT": str(c.request_timeout), "SEARCH_LIMIT": str(c.search_limit),
         "BIG_DOWNLOAD_GB": str(c.big_download_gb),
-        "NOTIFY_URLS": ",".join(c.notify_urls), "NOTIFY_ON": ",".join(c.notify_on),
+        "NOTIFY_ON": ",".join(c.notify_on),
         # metadata / ui
         "UI_THEME": c.ui_theme,
     }
@@ -708,6 +708,8 @@ def api_settings_get():
     # secrets are editable but never returned; show only whether one is set.
     env_view["CLIENT_PASS_SET"] = bool(c.client_pass)
     env_view["JACKETT_API_KEY_SET"] = bool(c.jackett_api_key)
+    # notification URLs carry webhook tokens: write-only, like the keys
+    env_view["NOTIFY_URLS_COUNT"] = len(c.notify_urls)
     env_view["TMDB_KEY_SET"] = tmdbmod.enabled()
     # live status of each path (exists / writable inside the container)
     path_status = {k: _path_status(env_view.get(k, "")) for k in PATH_KEYS}
@@ -767,6 +769,12 @@ def api_settings_patch(p: SettingsPatch):
     from .config import save, WIZARD_KEYS, PATH_KEYS
     env_updates, db_updates, warnings = {}, {}, []
     for k, v in p.values.items():
+        if k == "NOTIFY_URLS":
+            # write-only targets: they're managed through
+            # /api/settings/notifications, which never echoes them back
+            warnings.append("NOTIFY_URLS: edit notification targets in Settings → "
+                            "Integrations; not changed here.")
+            continue
         if k in WIZARD_KEYS:
             # validate path keys but don't block the save — warn instead, since
             # a path may legitimately be created later or mounted differently.
@@ -1556,6 +1564,176 @@ def api_library_link(lib_id: int, body: LinkBody):
         libraries.link_folder(lib_id, body.folder, body.series_id, auto=False)
         series_mod.reconcile(body.series_id)
     return {"status": "ok"}
+
+
+def _browse_roots() -> list[str]:
+    """Top-level folders the library picker may browse: the mounts Faucet is
+    configured with (BROWSE_ROOT, LIBRARY_ROOT, the download folders) and the
+    folder above each existing library. Directories only — this lists names,
+    never file contents."""
+    from . import libraries
+    c = cfg()
+    cands = [c.browse_root, os.environ.get("LIBRARY_ROOT", ""), c.download_dir, c.disk_path]
+    cands += [str(Path(lib["path"]).parent) for lib in libraries.all_libraries()]
+    roots: list[str] = []
+    for r in cands:
+        if not r:
+            continue
+        try:
+            rp = str(Path(r).resolve())
+        except OSError:
+            continue
+        if rp != "/" and os.path.isdir(rp) and rp not in roots:
+            roots.append(rp)
+    # drop roots nested inside another root
+    return sorted(r for r in roots if not any(r != o and r.startswith(o + "/") for o in roots))
+
+
+@app.get("/api/libraries/browse")
+def api_library_browse(path: str = ""):
+    """Folders for the library picker (admin). Without a path: the roots."""
+    from . import libraries
+    roots = _browse_roots()
+    libs = {lib["path"].rstrip("/"): lib for lib in libraries.all_libraries()}
+    if not path:
+        return {"roots": roots, "path": None, "parent": None,
+                "dirs": [{"name": r, "path": r, "library": (libs.get(r) or {}).get("name")}
+                         for r in roots]}
+    try:
+        p = Path(path).resolve()
+    except OSError:
+        raise HTTPException(400, "Bad path")
+    sp = str(p)
+    root = next((r for r in roots if sp == r or sp.startswith(r + "/")), None)
+    if root is None or not p.is_dir():
+        raise HTTPException(404, "Not a folder Faucet can browse")
+    dirs = []
+    try:
+        for e in sorted(os.scandir(p), key=lambda e: e.name.lower()):
+            if e.name.startswith(".") or not e.is_dir(follow_symlinks=False):
+                continue
+            ep = str(Path(e.path))
+            lib = libs.get(ep)
+            inside = libraries.containing(ep)
+            dirs.append({"name": e.name, "path": ep,
+                         "library": lib["name"] if lib else None,
+                         "in_library": (inside or {}).get("name") if not lib else None})
+            if len(dirs) >= 500:
+                break
+    except OSError as e:
+        raise HTTPException(403, f"Can't read {sp}: {e.strerror}")
+    return {"roots": roots, "path": sp,
+            "parent": None if sp == root else str(p.parent),
+            "writable": os.access(sp, os.W_OK), "dirs": dirs}
+
+
+# --- notifications: targets are write-only (they carry webhook tokens) ---
+_NOTIFY_EVENTS = ["added", "completed", "sorted", "failed", "suspicious"]
+_NOTIFY_SCHEMES = ("https://", "http://", "discord://", "telegram://", "ntfy://",
+                   "ntfys://", "gotify://")
+
+
+def _notify_kind(url: str) -> str:
+    if url.startswith("discord://") or "discord.com/api/webhooks" in url:
+        return "Discord"
+    for pre, name in (("telegram://", "Telegram"), ("ntfy", "ntfy"), ("gotify://", "Gotify")):
+        if url.startswith(pre):
+            return name
+    return "Webhook"
+
+
+def _notify_display(url: str) -> str:
+    """Enough to recognise a target, nothing that would let you post to it."""
+    from urllib.parse import urlsplit
+    # host only: on ntfy.sh the topic IS the secret, on Discord the path is
+    u = urlsplit(url)
+    return f"{u.scheme}://{u.hostname or ''}/…"
+
+
+@app.get("/api/settings/notifications")
+def api_notifications_get():
+    c = cfg()
+    return {"targets": [{"i": i, "kind": _notify_kind(u), "display": _notify_display(u)}
+                        for i, u in enumerate(c.notify_urls)],
+            "notify_on": c.notify_on, "events": _NOTIFY_EVENTS}
+
+
+class NotifyBody(BaseModel):
+    keep: list[int] = []
+    add: list[str] = []
+    notify_on: list[str] | None = None
+
+
+@app.put("/api/settings/notifications")
+def api_notifications_put(body: NotifyBody):
+    """Rebuild the target list from the indexes to keep plus new URLs (the
+    existing URLs are never sent to the browser, so they can't be resent)."""
+    from .config import save
+    c = cfg()
+    urls = [c.notify_urls[i] for i in body.keep if 0 <= i < len(c.notify_urls)]
+    for u in body.add:
+        u = (u or "").strip()
+        if not u:
+            continue
+        if not u.startswith(_NOTIFY_SCHEMES) or any(ch in u for ch in ",\n\r\t "):
+            raise HTTPException(400, f"Not a notification URL: {u[:40]}…")
+        urls.append(u)
+    values = {"NOTIFY_URLS": ",".join(dict.fromkeys(urls))}
+    if body.notify_on is not None:
+        bad = [e for e in body.notify_on if e not in _NOTIFY_EVENTS]
+        if bad:
+            raise HTTPException(400, f"Unknown events: {', '.join(bad)}")
+        values["NOTIFY_ON"] = ",".join(body.notify_on)
+    try:
+        save(values)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return api_notifications_get()
+
+
+class NotifyTest(BaseModel):
+    i: int | None = None
+    url: str | None = None
+
+
+@app.post("/api/settings/notifications/test")
+def api_notifications_test(body: NotifyTest):
+    """Send a test message to one saved target (by index) or a typed URL."""
+    from . import notify as notify_mod
+    from .redact import redact
+    c = cfg()
+    url = c.notify_urls[body.i] if body.i is not None and 0 <= body.i < len(c.notify_urls) \
+        else (body.url or "").strip()
+    if not url or not url.startswith(_NOTIFY_SCHEMES):
+        raise HTTPException(400, "Nothing to test")
+    try:
+        notify_mod._dispatch(url, "Faucet test", "If you can read this, notifications work.")
+    except Exception as e:                       # noqa: BLE001
+        return {"ok": False, "msg": redact(e, url)}
+    return {"ok": True, "msg": f"Sent to {_notify_kind(url)}."}
+
+
+class TmdbTest(BaseModel):
+    key: str | None = None
+
+
+@app.post("/api/settings/test-tmdb")
+def api_settings_test_tmdb(body: TmdbTest):
+    """Check a TMDb key (typed, or the saved one) with one cheap API call."""
+    import requests as _rq
+    key = (body.key or "").strip() or tmdbmod.api_key()
+    if not key:
+        return {"ok": False, "msg": "No TMDb key set."}
+    try:
+        r = _rq.get("https://api.themoviedb.org/3/configuration", params={"api_key": key},
+                    timeout=10)
+    except _rq.RequestException as e:
+        return {"ok": False, "msg": f"Couldn't reach TMDb: {type(e).__name__}"}
+    if r.status_code == 401:
+        return {"ok": False, "msg": "TMDb rejected the key."}
+    if r.status_code != 200:
+        return {"ok": False, "msg": f"TMDb answered HTTP {r.status_code}."}
+    return {"ok": True, "msg": "TMDb key accepted."}
 
 
 class MappingsBody(BaseModel):

@@ -1805,8 +1805,7 @@ $("settingsBtn").addEventListener("click",async()=>{
       <label class="fld">Wait before hunting new episodes (days after air date) <span class="muted">(0 = on the air date; early "releases" are usually fakes)</span></label>
       <input type="number" id="st_airdelay" min="0" max="30" value="${esc(env.AIR_DELAY_DAYS||'1')}" style="width:100%">
       <label class="fld">"Big download" warning threshold (GB)</label><input type="number" id="st_bigdl" value="${esc(env.BIG_DOWNLOAD_GB||'20')}" style="width:100%">
-      <label class="fld">Notification URLs <span class="muted">(comma-separated, Apprise-style)</span></label>
-      <input type="text" id="st_notify" value="${esc(env.NOTIFY_URLS||'')}" style="width:100%">
+      <p class="muted" style="margin:10px 0 0">Notification targets (${env.NOTIFY_URLS_COUNT||0} set) are managed in the new UI: Settings → Integrations.</p>
       <label class="fld">Notify on <span class="muted">(comma-separated: completed, sorted, failed, added, suspicious)</span></label>
       <input type="text" id="st_notifyon" value="${esc(env.NOTIFY_ON||'completed,sorted,failed')}" style="width:100%">
     </div>
@@ -1866,7 +1865,7 @@ $("settingsBtn").addEventListener("click",async()=>{
       CLIENT_USER:$("st_cuser").value.trim(),
       REMOVE_ON_COMPLETE:$("st_rem").value, SEARCH_LIMIT:$("st_slimit").value,
       REQUEST_TIMEOUT:$("st_timeout").value, BIG_DOWNLOAD_GB:$("st_bigdl").value,
-      NOTIFY_URLS:$("st_notify").value.trim(), NOTIFY_ON:$("st_notifyon").value.trim(),
+      NOTIFY_ON:$("st_notifyon").value.trim(),
       AIR_DELAY_DAYS:$("st_airdelay").value,
       LIBRARY_ROOT:$("st_lib").value.trim(), DOWNLOAD_DIR:$("st_dldir").value.trim(),
       DISK_PATH:$("st_disk").value.trim(), BROWSE_ROOT:$("st_browse").value.trim(),
