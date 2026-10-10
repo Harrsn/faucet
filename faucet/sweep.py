@@ -33,7 +33,6 @@ import sys
 import time
 from pathlib import Path
 
-from . import config
 
 VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".m4v", ".mov", ".ts", ".wmv", ".flv", ".webm"}
 
@@ -113,6 +112,21 @@ def _sort_one(item: Path, dry: bool) -> int:
     return subprocess.run(cmd, env=env).returncode
 
 
+# (item name, reason) pairs already logged at INFO. The sweep runs every tick,
+# and a leftover folder that will never sort (no video, a staging dir) used to
+# log the same SKIP line every 30 minutes forever.
+_reported: set = set()
+
+
+def _skip(log, reason: str, name: str) -> None:
+    key = (name, reason)
+    if key in _reported:
+        log.debug("SKIP (%s): %s", reason, name)
+        return
+    _reported.add(key)
+    log.info("SKIP (%s): %s", reason, name)
+
+
 def run(dry: bool = False, settle_min: int | None = None) -> dict:
     """One sweep pass. Importable (the scheduler calls this every tick) as well
     as runnable from the CLI. Returns counters; {'error': ...} when the
@@ -138,11 +152,11 @@ def run(dry: bool = False, settle_min: int | None = None) -> dict:
         reason = _is_excluded(item)
         if reason:
             skipped_excluded += 1
-            log.info("SKIP (%s): %s", reason, item.name)
+            _skip(log, reason, item.name)
             continue
         if not _has_video(item):
             skipped_novideo += 1
-            log.info("SKIP (no video): %s", item.name)
+            _skip(log, "no video", item.name)
             continue
         age = now - _newest_mtime(item)
         if age < settle_secs:
