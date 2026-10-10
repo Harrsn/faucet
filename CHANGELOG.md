@@ -1,8 +1,37 @@
 # Changelog
 
-## Unreleased
+## 2.0.0 — 2026-10-10
+
+A new interface and a new configuration model. **Upgrading:** settings that
+lived in `faucet.env` or the environment are imported into the database on
+first start and the environment is ignored for them afterwards (a startup
+warning names any it skips); `/classic` is gone.
 
 ### Added
+
+- **First-run setup.** A fresh install opens on "Welcome to Faucet": create
+  the admin account, then a guided setup — libraries, download client, path
+  mapping, indexer, TMDb, and importing what's already on disk (in the
+  background; big libraries take minutes). Any step can be skipped or
+  finished later, and everything is changeable in Settings afterwards.
+  Existing, configured installs never see it.
+  `GET /api/setup/state`, `POST /api/setup/import`, `POST /api/setup/complete`.
+- **New sign-in page** in the app's design: sign in, request an account,
+  set a password from a reset link.
+- **Fix location** for movies in the new UI: point a movie at a file Faucet
+  didn't recognise, from a file picker.
+
+### Removed
+
+- **The classic UI (`/classic`).** Everything it did is in the new UI, except
+  the file browser's move/mkdir tools and the legacy Auto-grab query
+  subscriptions page (their APIs remain; existing subscriptions still run).
+
+### Security
+
+- **Strict script policy:** `script-src 'self'` — no inline script anywhere,
+  so an HTML-injection bug can't run script. A test fails the build if any
+  page carries an inline `<script>` or `on…=` handler.
 
 - **New UI, step 4a: the remaining pages.** **Discover** (TMDb lists as
   rails for TV and movies; titles you have link to their page, the rest

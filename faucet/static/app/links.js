@@ -5,7 +5,6 @@ export const links = {
   show: (id, season) => `#/shows/${encodeURIComponent(id)}${season != null ? `/${encodeURIComponent(season)}` : ""}`,
   movies: "#/movies",
   movie: (id) => `#/movies/${encodeURIComponent(id)}`,
-  classicMovie: (id) => `/classic#movie/${encodeURIComponent(id)}`,
   discover: "#/discover",
   calendar: "#/calendar",
   requests: "#/requests",
@@ -16,4 +15,3 @@ export const links = {
   users: "#/settings/users",
 };
 
-export const isClassic = (href) => href.startsWith("/classic");

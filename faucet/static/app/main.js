@@ -18,6 +18,7 @@ const ROUTES = [
   [/^\/requests\/?$/, "requests", () => import("./views/requests.js")],
   [/^\/activity\/?$/, "activity", () => import("./views/activity.js")],
   [/^\/wanted\/?$/, "wanted", () => import("./views/wanted.js")],
+  [/^\/setup(?:\/([a-z]+))?\/?$/, "settings", () => import("./views/setup.js")],
 ];
 
 let me = null;
@@ -72,6 +73,13 @@ async function boot() {
   renderShell(me, "home");
   initPalette(me);
   window.addEventListener("hashchange", route);
+  if (me.role === "admin" && !location.hash.startsWith("#/setup")
+      && !sessionStorage.getItem("faucet-setup-later")) {
+    try {
+      const s = await api.get("/api/setup/state");
+      if (!s.complete) { location.hash = "#/setup"; return; }   // hashchange routes it
+    } catch { /* never block the app on this */ }
+  }
   route();
 }
 

@@ -76,7 +76,6 @@ export async function render(el, ctx) {
               <div class="items">
                 <button type="button" data-act="log">Hunt log</button>
                 <button type="button" data-act="fix">Fix match…</button>
-                <a href="/classic#show/${s.id}">Open in classic UI</a>
                 <button type="button" class="danger" data-act="remove">Remove show…</button>
               </div></details>
           </div>` : ""}

@@ -136,13 +136,14 @@ async def _auth_gate(request: _Request, call_next):
     return await call_next(request)
 
 
-# Content-Security-Policy for the UI. 'unsafe-inline' stays for scripts and
-# styles because the single-file UI is built on inline <script>/<style>; the
-# policy still pins every *origin* (no exfiltration to arbitrary hosts, no
-# framing, no plugins, no <base> hijack).
+# Content-Security-Policy for the UI. Scripts: our own modules only — no
+# inline script, no eval, no third-party code, so an HTML-injection bug
+# can't become script execution. Styles keep 'unsafe-inline' (the UI sets
+# per-element style attributes); the policy still pins every origin (no
+# exfiltration to arbitrary hosts, no framing, no plugins, no <base> hijack).
 _CSP = "; ".join((
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline'",
+    "script-src 'self'",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",
     "img-src 'self' data: https://image.tmdb.org",
@@ -1885,6 +1886,73 @@ def api_tunables_put(body: TunablesBody):
     return {"status": "ok", "saved": sorted(clean)}
 
 
+# --- first-run setup ---
+_import_job: dict = {"running": False, "result": None, "started": None}
+
+
+def _setup_complete() -> bool:
+    """Done once finished in the wizard — or, for installs that predate it,
+    as soon as they're plainly configured (they never see the wizard)."""
+    if db.get_setting("setup_complete"):
+        return True
+    with db.connect() as c:
+        titles = c.execute("SELECT (SELECT COUNT(*) FROM series) + (SELECT COUNT(*) FROM movies)").fetchone()[0]
+    if cfg().configured() and titles:
+        db.set_setting("setup_complete", "1")
+        return True
+    return False
+
+
+@app.get("/api/setup/state")
+def api_setup_state():
+    from . import libraries
+    c = cfg()
+    libs = libraries.all_libraries()
+    with db.connect() as conn:
+        shows = conn.execute("SELECT COUNT(*) FROM series").fetchone()[0]
+        movies = conn.execute("SELECT COUNT(*) FROM movies").fetchone()[0]
+    return {"complete": _setup_complete(),
+            "steps": {"libraries": any(os.path.isdir(lib["path"]) for lib in libs),
+                      "client": bool(c.client_url and (c.client_pass or c.client_user)),
+                      "indexer": bool(c.jackett_api_key),
+                      "tmdb": tmdbmod.enabled()},
+            "libraries": [{"name": lib["name"], "kind": lib["kind"], "path": lib["path"],
+                           "exists": os.path.isdir(lib["path"])} for lib in libs],
+            "shows": shows, "movies": movies,
+            "import": {k: v for k, v in _import_job.items()}}
+
+
+@app.post("/api/setup/import")
+def api_setup_import():
+    """Import what's already on disk (monitor every show and movie found),
+    in the background — matching a big library against TMDb takes minutes."""
+    import threading
+    from datetime import datetime as _dt
+    from . import importer
+    if _import_job["running"]:
+        return {"started": False, "running": True}
+    if not tmdbmod.enabled():
+        raise HTTPException(400, "Add a TMDb key first — importing matches folders against TMDb.")
+
+    def run():
+        try:
+            _import_job["result"] = importer.import_library(None)
+        except Exception as e:                   # noqa: BLE001
+            _import_job["result"] = {"error": str(e)}
+        finally:
+            _import_job["running"] = False
+
+    _import_job.update(running=True, result=None, started=_dt.now().isoformat(timespec="seconds"))
+    threading.Thread(target=run, name="library-import", daemon=True).start()
+    return {"started": True, "running": True}
+
+
+@app.post("/api/setup/complete")
+def api_setup_complete():
+    db.set_setting("setup_complete", "1")
+    return {"complete": True}
+
+
 class MappingsBody(BaseModel):
     mappings: list[dict]
 
@@ -2044,30 +2112,6 @@ def favicon():
     raise HTTPException(404)
 
 
-@app.get("/login")
-def login_page():
-    f = STATIC / "login.html"
-    if f.exists():
-        return FileResponse(f)
-    raise HTTPException(404, "Login page not installed.")
-
-
-@app.get("/register")
-def register_page():
-    f = STATIC / "login.html"  # same page, register tab
-    if f.exists():
-        return FileResponse(f)
-    raise HTTPException(404)
-
-
-@app.get("/reset")
-def reset_page():
-    f = STATIC / "login.html"
-    if f.exists():
-        return FileResponse(f)
-    raise HTTPException(404)
-
-
 _NO_STORE = {"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
              "Pragma": "no-cache"}
 
@@ -2097,11 +2141,7 @@ def index():
     # never cache the app shell: a cached copy would render after logout and
     # look like an auth bypass (the API calls behind it 401, but the frame
     # still appears). No-store forces every load to hit the auth gate.
-    f = STATIC / "index.html"
-    if f.exists():
-        body = f.read_text().replace("/static/app/", f"/app/{ASSET_VERSION}/")
-        return HTMLResponse(body, headers=_NO_STORE)
-    raise HTTPException(404, "UI not installed.")
+    return _shell("index.html")
 
 
 _ASSET_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
@@ -2123,14 +2163,21 @@ def app_asset(version: str, path: str):
                         headers={"Cache-Control": cache})
 
 
-@app.get("/classic")
-def classic():
-    """The previous single-file UI, kept reachable while the new one is
-    built out; pages the new UI doesn't have yet deep-link here."""
-    f = STATIC / "classic.html"
-    if f.exists():
-        return FileResponse(f, headers=_NO_STORE)
-    raise HTTPException(404, "Classic UI not installed.")
+def _shell(name: str):
+    f = STATIC / name
+    if not f.exists():
+        raise HTTPException(404, "UI not installed.")
+    body = f.read_text().replace("/static/app/", f"/app/{ASSET_VERSION}/")
+    return HTMLResponse(body, headers=_NO_STORE)
+
+
+@app.get("/login")
+@app.get("/register")
+@app.get("/reset")
+def auth_page():
+    """Sign in, first-run admin account, and password reset: one page,
+    driven by the path and /api/auth/me."""
+    return _shell("auth.html")
 
 
 # ---------------------------------------------------------------------------
