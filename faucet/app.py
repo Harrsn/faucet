@@ -27,6 +27,8 @@ from .notify import notify
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s %(message)s")
+from .redact import install as _install_redaction, redact as _redact  # noqa: E402
+_install_redaction()
 log = logging.getLogger("faucet")
 
 from contextlib import asynccontextmanager
@@ -130,6 +132,41 @@ async def _auth_gate(request: _Request, call_next):
         return _Redirect(url="/", status_code=302)
     request.state.user = user
     return await call_next(request)
+
+
+# Content-Security-Policy for the UI. 'unsafe-inline' stays for scripts and
+# styles because the single-file UI is built on inline <script>/<style>; the
+# policy still pins every *origin* (no exfiltration to arbitrary hosts, no
+# framing, no plugins, no <base> hijack).
+_CSP = "; ".join((
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data: https://image.tmdb.org",
+    "connect-src 'self'",
+    "frame-ancestors 'none'",
+    "base-uri 'none'",
+    "object-src 'none'",
+    "form-action 'self'",
+))
+_SECURITY_HEADERS = {
+    "Content-Security-Policy": _CSP,
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "same-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+}
+
+
+@app.middleware("http")
+async def _security_headers(request: _Request, call_next):
+    # registered after _auth_gate, so it wraps it: auth redirects and 401s
+    # carry the headers too
+    response = await call_next(request)
+    for k, v in _SECURITY_HEADERS.items():
+        response.headers.setdefault(k, v)
+    return response
 
 
 # Endpoints regular users may READ: browse the monitored library, search
@@ -507,17 +544,34 @@ def api_settings_test(w: ConnTest):
     (Admin-gated by the auth middleware via the /api/settings prefix.)"""
     c = cfg()
     j_url = (w.jackett_url if w.jackett_url is not None else c.jackett_url).rstrip("/")
-    j_key = w.jackett_api_key if w.jackett_api_key is not None else c.jackett_api_key
     j_idx = w.jackett_indexer if w.jackett_indexer is not None else c.jackett_indexer
     k_kind = w.client_kind if w.client_kind is not None else c.client_kind
     k_url = w.client_url if w.client_url is not None else c.client_url
     k_user = w.client_user if w.client_user is not None else c.client_user
-    # password is write-only in the editor: a null here means "use the saved one"
-    k_pass = w.client_pass if w.client_pass is not None else c.client_pass
-
+    # Secrets are write-only in the editor: null means "use the saved one" —
+    # but only against the SAVED endpoint. Testing a different URL with the
+    # saved key/password would hand them to whatever host was typed in.
     result = {"indexer": None, "client": None}
+    j_key = w.jackett_api_key
+    if j_key is None:
+        if j_url != (c.jackett_url or "").rstrip("/") and c.jackett_api_key:
+            result["indexer"] = {"ok": False, "msg": "Enter the API key to test a "
+                                 "different Jackett URL (the saved key is only "
+                                 "sent to the saved URL)."}
+        j_key = c.jackett_api_key
+    k_pass = w.client_pass
+    client_blocked = False
+    if k_pass is None:
+        if k_url != c.client_url and c.client_pass:
+            result["client"] = {"ok": False, "msg": "Enter the password to test a "
+                                "different client URL (the saved password is only "
+                                "sent to the saved URL)."}
+            client_blocked = True
+        k_pass = c.client_pass
     # indexer: a real search call is the only true test of the key
-    if j_url and j_key:
+    if result["indexer"] is not None:
+        pass
+    elif j_url and j_key:
         try:
             searchmod.search(j_url, j_key, j_idx or "all", "test", "all", 1, 10)
             result["indexer"] = {"ok": True, "msg": "Indexer reachable, key accepted."}
@@ -526,12 +580,14 @@ def api_settings_test(w: ConnTest):
     else:
         result["indexer"] = {"ok": False, "msg": "Jackett URL and API key required."}
     # client: ping + auth
-    if k_kind and k_url:
+    if client_blocked:
+        pass
+    elif k_kind and k_url:
         try:
             make_client(k_kind, k_url, k_user or "", k_pass or "", 10).test()
             result["client"] = {"ok": True, "msg": f"{k_kind} reachable, auth OK."}
         except Exception as e:                       # noqa: BLE001
-            result["client"] = {"ok": False, "msg": str(e)}
+            result["client"] = {"ok": False, "msg": _redact(e, k_pass)}
     else:
         result["client"] = {"ok": False, "msg": "Client type and URL required."}
     return result
@@ -656,9 +712,11 @@ def api_settings_get():
     # secrets are editable but never returned; show only whether one is set.
     env_view["CLIENT_PASS_SET"] = bool(c.client_pass)
     env_view["JACKETT_API_KEY_SET"] = bool(c.jackett_api_key)
+    env_view["TMDB_KEY_SET"] = tmdbmod.enabled()
     # live status of each path (exists / writable inside the container)
     path_status = {k: _path_status(env_view.get(k, "")) for k in PATH_KEYS}
-    return {"env": env_view, "db": db.all_settings(),
+    db_view = {k: v for k, v in db.all_settings().items() if k not in _DB_SECRET_KEYS}
+    return {"env": env_view, "db": db_view,
             "tmdb_enabled": tmdbmod.enabled(),
             "path_status": path_status,
             "wizard_keys": sorted(WIZARD_KEYS)}
@@ -675,6 +733,34 @@ def _path_status(path: str) -> dict:
         writable = os.access(path, os.W_OK)
     return {"set": True, "exists": exists, "writable": writable,
             "is_dir": p.is_dir() if exists else False}
+
+
+# DB-backed settings the editor may write. Anything else used to be stored
+# verbatim under whatever key the request named.
+_DB_SETTING_KEYS = {"tmdb_key", "default_language", "default_profile_id"}
+_DB_SECRET_KEYS = {"tmdb_key", "session_secret"}
+
+
+def _clean_db_setting(k: str, v):
+    """Validated value for a DB setting, or raise ValueError."""
+    if k == "default_profile_id":
+        if v in (None, "", 0, "0"):
+            return ""
+        pid = int(str(v).strip())
+        with db.connect() as c:
+            if not c.execute("SELECT 1 FROM profiles WHERE id=?", (pid,)).fetchone():
+                raise ValueError(f"no profile with id {pid}")
+        return pid
+    v = "" if v is None else str(v).strip()
+    if k == "default_language":
+        if not (v == "any" or (v.isalpha() and 2 <= len(v) <= 3)):
+            raise ValueError("must be an ISO-639 code like 'en', or 'any'")
+        return v.lower()
+    if k == "tmdb_key":
+        if not v or len(v) > 512 or not all(ch.isalnum() or ch in "._-" for ch in v):
+            raise ValueError("doesn't look like a TMDb API key")
+        return v
+    raise ValueError("not an editable setting")
 
 
 @app.patch("/api/settings")
@@ -706,11 +792,18 @@ def api_settings_patch(p: SettingsPatch):
                     continue
                 v = str(days)
             env_updates[k] = v
+        elif k in _DB_SETTING_KEYS:
+            try:
+                db_updates[k] = _clean_db_setting(k, v)
+            except ValueError as e:
+                warnings.append(f"{k}: {e}. Not saved.")
         else:
-            db_updates[k] = v
+            warnings.append(f"{k}: not an editable setting. Ignored.")
     if env_updates:
         try:
             save(env_updates)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
         except OSError as e:
             raise HTTPException(500, f"Couldn't persist config: {e}")
     for k, v in db_updates.items():
@@ -1167,9 +1260,14 @@ def api_movies_add(m: MovieAdd):
 
 
 @app.get("/api/movies/{mid}/detail")
-def api_movie_detail(mid: int):
+def api_movie_detail(mid: int, request: _Request):
     from . import movies as movies_mod
-    return movies_mod.movie_detail(mid)
+    out = movies_mod.movie_detail(mid)
+    user = getattr(request.state, "user", None) or {}
+    if user.get("role") != "admin" and out.get("file"):
+        # members see that it's on disk and at what quality, not where
+        out["file"] = {k: v for k, v in out["file"].items() if k != "path"}
+    return out
 
 
 @app.delete("/api/movies/{mid}")
@@ -1199,7 +1297,7 @@ def health(request: _Request):
         client().test()
         status["client"] = "reachable"
     except Exception as e:
-        status["client"] = f"error: {e}"
+        status["client"] = f"error: {_redact(e)}"
     return status
 
 

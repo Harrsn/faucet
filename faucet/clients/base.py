@@ -48,7 +48,15 @@ class AddResult:
 
 
 class DownloadClientError(Exception):
-    """Raised for any client-level failure (auth, connectivity, bad response)."""
+    """Raised for any client-level failure (auth, connectivity, bad response).
+
+    Messages are redacted on construction: they end up in HTTP responses,
+    history and logs, and requests' error text carries the full URL (with
+    any user:password@ or session id in it)."""
+
+    def __init__(self, *args):
+        from ..redact import redact
+        super().__init__(*(redact(a) if isinstance(a, str) else a for a in args))
 
 
 class DownloadClient(ABC):

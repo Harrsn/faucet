@@ -684,10 +684,11 @@ def test_auth_sessions_and_revocation(tmp_path, monkeypatch):
 def test_auth_lockout(tmp_path, monkeypatch):
     auth = _auth_setup(tmp_path, monkeypatch)
     auth.create_user("admin1", "supersecret123")
-    for _ in range(5):
+    # account-wide backstop (per-IP throttling: tests/test_security.py)
+    for _ in range(auth.MAX_FAILED):
         auth.authenticate("admin1", "wrong")
     _, err = auth.authenticate("admin1", "supersecret123")
-    assert "locked" in err.lower()
+    assert err == auth.LOCKED
 
 
 def test_request_flow_lifecycle(tmp_path, monkeypatch):

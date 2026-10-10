@@ -22,6 +22,10 @@ from . import auth
 
 router = APIRouter()
 
+import logging
+
+log = logging.getLogger("faucet.auth")
+
 CSRF_COOKIE = "faucet_csrf"
 
 
@@ -64,9 +68,15 @@ def _set_session_cookies(response: Response, signed: str, secure: bool) -> None:
 
 
 def _secure_request(request: Request) -> bool:
-    # honour proxy TLS termination (Caddy/Cloudflare) via X-Forwarded-Proto
-    xfp = request.headers.get("x-forwarded-proto", "")
-    return request.url.scheme == "https" or xfp == "https"
+    # proxy TLS termination is honoured only from a trusted proxy (netutil)
+    from . import netutil
+    return netutil.is_https(request)
+
+
+def _retry_after(seconds: float) -> HTTPException:
+    import math
+    return HTTPException(429, auth.LOCKED,
+                         headers={"Retry-After": str(max(1, math.ceil(seconds)))})
 
 
 # ── models ──────────────────────────────────────────────────────────────────
@@ -115,8 +125,13 @@ def create_request_ep(body: RequestIn, request: Request,
                       user: dict = Depends(require_user)):
     verify_csrf(request)
     from . import requests_flow
-    return requests_flow.create_request(
+    if body.media_type not in ("tv", "series", "movie"):
+        raise HTTPException(400, "media_type must be 'tv' or 'movie'.")
+    out = requests_flow.create_request(
         user, body.media_type, body.tmdb_id, body.title, body.year, body.poster)
+    if out.get("status") == "unknown_title":
+        raise HTTPException(400, out["error"])
+    return out
 
 
 @router.get("/api/requests")
@@ -180,7 +195,7 @@ def admin_match_search(q: str, kind: str,
 
 
 @router.post("/api/admin/title/{kind}/{item_id}/status")
-async def admin_set_status(kind: str, item_id: int, request: Request,
+async def admin_set_title_status(kind: str, item_id: int, request: Request,
                            admin: dict = Depends(require_admin)):
     """Set a title's library status: monitored | in_library | ignored.
     Namespaced under /title/ so the {kind} param can't shadow sibling admin
@@ -259,11 +274,17 @@ def auth_me(request: Request):
 
 
 @router.post("/api/auth/register")
-def auth_register(body: RegisterIn):
-    first = auth.user_count() == 0
+def auth_register(body: RegisterIn, request: Request):
+    from . import netutil
+    ip = netutil.client_ip(request)
+    wait = netutil.register_blocked(ip)
+    if wait:
+        raise _retry_after(wait)
+    netutil.register_hit(ip)
     uid, err = auth.create_user(body.username, body.password, body.email)
     if err:
         raise HTTPException(400, err)
+    first = (auth.get_user(uid) or {}).get("role") == "admin"
     # first user is auto-admin+active; others are pending
     if first:
         return {"status": "ok", "admin_created": True,
@@ -274,10 +295,20 @@ def auth_register(body: RegisterIn):
 
 @router.post("/api/auth/login")
 def auth_login(body: LoginIn, request: Request, response: Response):
+    from . import netutil
+    ip = netutil.client_ip(request)
+    wait = netutil.login_blocked(ip, body.username)
+    if wait:
+        raise _retry_after(wait)
     user, err = auth.authenticate(body.username, body.password)
     if err:
+        if err == auth.LOCKED:
+            raise _retry_after(auth.LOCK_MINUTES * 60)
+        if err == "Invalid username or password.":
+            netutil.login_failed(ip, body.username)
+            log.warning("failed login for %r from %s", body.username[:60], ip)
         raise HTTPException(401, err)
-    ip = request.client.host if request.client else ""
+    netutil.login_succeeded(ip, body.username)
     ua = request.headers.get("user-agent", "")
     signed = auth.create_session(user["id"], ip, ua)
     _set_session_cookies(response, signed, _secure_request(request))
@@ -302,7 +333,8 @@ def auth_change_password(body: ChangePwIn, request: Request, response: Response,
     if err:
         raise HTTPException(400, err)
     # password change revoked all sessions (incl. this one) — issue a fresh one
-    ip = request.client.host if request.client else ""
+    from . import netutil
+    ip = netutil.client_ip(request)
     signed = auth.create_session(user["id"], ip, request.headers.get("user-agent", ""))
     _set_session_cookies(response, signed, _secure_request(request))
     return {"status": "ok"}

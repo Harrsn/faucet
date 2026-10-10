@@ -128,21 +128,62 @@ WIZARD_KEYS = {
 PATH_KEYS = {"LIBRARY_ROOT", "DOWNLOAD_DIR", "DISK_PATH", "BROWSE_ROOT"}
 
 
+def _check_value(key: str, value: str) -> str:
+    """A value that can be written as one KEY=VALUE line. A newline in a value
+    used to start a new line in faucet.env, i.e. set an arbitrary variable —
+    SESSION_SECRET included — on the next load."""
+    if any(ch in value for ch in ("\n", "\r", "\x00")):
+        raise ValueError(f"{key}: value must be a single line")
+    if len(value) > 4096:
+        raise ValueError(f"{key}: value too long")
+    return value
+
+
 def save(values: dict) -> None:
     """Persist whitelisted key/values to CONFIG_FILE, then reload config.
-    Merges with anything already persisted so partial saves are fine."""
+    Merges with anything already persisted so partial saves are fine.
+
+    The file holds CLIENT_PASS and JACKETT_API_KEY, so it is written 0600 and
+    atomically (temp file + rename): a crash mid-write can't leave a
+    truncated config behind. Raises ValueError for an unwritable value
+    before touching the file."""
+    import tempfile
+    updates = {k: _check_value(k, str(v)) for k, v in values.items()
+               if k in WIZARD_KEYS and v is not None}
     existing = _load_persisted(into_env=False)
-    for k, v in values.items():
-        if k in WIZARD_KEYS and v is not None:
-            existing[k] = str(v)
+    existing.update(updates)
     p = Path(CONFIG_FILE)
     p.parent.mkdir(parents=True, exist_ok=True)
     lines = ["# Written by Faucet (Settings). Safe to edit by hand.",
              "# Values here override process environment.", ""]
     for k in sorted(existing):
         lines.append(f"{k}={existing[k]}")
-    p.write_text("\n".join(lines) + "\n")
+    fd, tmp = tempfile.mkstemp(prefix=".faucet-env-", dir=str(p.parent))
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write("\n".join(lines) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, p)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     reload()
 
 
+def harden_permissions() -> None:
+    """Tighten an existing config file written by an older version (0644)."""
+    try:
+        p = Path(CONFIG_FILE)
+        if p.exists() and (p.stat().st_mode & 0o077):
+            os.chmod(p, 0o600)
+    except OSError:
+        pass
+
+
 config = Config()
+harden_permissions()

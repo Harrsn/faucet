@@ -14,8 +14,9 @@ Design notes
   cookie carries that token *signed* with itsdangerous so a tampered cookie is
   rejected before any DB lookup. Deleting the session row revokes access
   immediately (logout, account disable, password change all do this).
-* Lockout: after MAX_FAILED failed logins a user is locked for LOCK_MINUTES.
-  This blunts online brute force even though the login page is public.
+* Lockout: failed logins are throttled per IP and per (IP, username) in
+  faucet.netutil; after LOGIN_ACCOUNT_MAX_FAILED failures from anywhere the
+  account itself is locked for LOCK_MINUTES.
 * Roles: 'admin' (manage users, approve requests) and 'user' (make requests).
 * Status: 'pending' (self-registered, inert), 'active', 'disabled'.
 """
@@ -35,9 +36,15 @@ log = logging.getLogger("faucet.auth")
 
 SESSION_COOKIE = "faucet_session"
 SESSION_DAYS = int(os.environ.get("SESSION_DAYS", "30"))
-MAX_FAILED = int(os.environ.get("LOGIN_MAX_FAILED", "5"))
+# Account-wide lock: a backstop against guessing spread across many IPs.
+# Per-IP / per-(IP, user) throttling lives in faucet.netutil and fires first;
+# this is deliberately high so a stranger can't lock the admin out.
+MAX_FAILED = int(os.environ.get("LOGIN_ACCOUNT_MAX_FAILED", "50"))
 LOCK_MINUTES = int(os.environ.get("LOGIN_LOCK_MINUTES", "15"))
 RESET_TOKEN_HOURS = 24
+# One message for every kind of "slow down", so the response never reveals
+# whether a username exists.
+LOCKED = "Too many attempts. Try again later."
 
 
 def _now() -> datetime:
@@ -143,16 +150,22 @@ def create_user(username: str, password: str, email: str | None = None,
     perr = _validate_password(password)
     if perr:
         return None, perr
-    if get_user_by_name(username):
-        return None, "That username is taken."
-    # bootstrap: first account ever is the admin
-    if user_count() == 0:
-        role, status = "admin", "active"
+    pw_hash = hash_password(password)            # slow; outside the write lock
     with db.connect() as c:
+        # BEGIN IMMEDIATE takes the write lock before the checks, so two
+        # simultaneous first-run registrations can't both see an empty users
+        # table and both become admin, and two same-name signups can't race.
+        c.execute("BEGIN IMMEDIATE")
+        if c.execute("SELECT 1 FROM users WHERE username=? COLLATE NOCASE",
+                     (username,)).fetchone():
+            return None, "That username is taken."
+        # bootstrap: first account ever is the admin
+        if c.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"] == 0:
+            role, status = "admin", "active"
         cur = c.execute(
             "INSERT INTO users (username, email, pw_hash, role, status, created_ts) "
             "VALUES (?,?,?,?,?,?)",
-            (username, (email or "").strip() or None, hash_password(password),
+            (username, (email or "").strip() or None, pw_hash,
              role, status, _iso(_now())))
         return cur.lastrowid, None
 
@@ -212,7 +225,7 @@ def authenticate(username: str, password: str) -> tuple[dict | None, str | None]
         verify_password(password, "$2b$12$" + "x" * 53)
         return None, "Invalid username or password."
     if _is_locked(user):
-        return None, "Account temporarily locked. Try again later."
+        return None, LOCKED
     if not verify_password(password, user["pw_hash"]):
         failed = (user.get("failed_logins") or 0) + 1
         locked_until = None
