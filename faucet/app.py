@@ -222,6 +222,12 @@ def client():
                        cfg().client_user, cfg().client_pass, cfg().request_timeout)
 
 
+# the transfer poller builds its client through this module's client() — the
+# name is looked up per poll, so settings changes (and test fakes) apply
+from . import transfers as _transfers_mod  # noqa: E402
+_transfers_mod.configure(lambda: client())
+
+
 # ----------------------------------------------------------------------------
 # Models
 # ----------------------------------------------------------------------------
@@ -266,6 +272,7 @@ def api_add(req: AddRequest):
         raise HTTPException(400, "No magnet/href provided.")
     try:
         res = client().add(req.magnet, cfg().download_dir or None)
+        _refresh_transfers()
     except DownloadClientError as e:
         raise HTTPException(502, str(e))
     log.info("Added: %s (id=%s, dup=%s)", res.name, res.id, res.duplicate)
@@ -292,12 +299,21 @@ def _fmt_eta(eta: int) -> str:
     return f"{eta // 86400}d"
 
 
+def _refresh_transfers() -> None:
+    from . import transfers
+    transfers.refresh_soon()
+
+
 @app.get("/api/transfers")
 def api_transfers():
-    try:
-        xs = client().list_transfers()
-    except DownloadClientError as e:
-        raise HTTPException(502, str(e))
+    """The client's transfers from the background poller (faucet.transfers):
+    never waits on the client. `client` says whether the latest poll worked
+    and how old the list is."""
+    from . import transfers
+    snap = transfers.snapshot()
+    if snap["ok"] is False and not snap["items"]:
+        raise HTTPException(502, snap["error"] or "Download client not responding")
+    xs = snap["items"]
     try:
         from . import safety
         flagged = safety.flags()
@@ -315,7 +331,8 @@ def api_transfers():
             "flag": f["reason"] if f and f.get("name") == t.name else None,
         })
     out.sort(key=lambda x: (x["done"], -x["percent"]))
-    return {"transfers": out}
+    return {"transfers": out, "client": {"ok": snap["ok"], "error": snap["error"],
+                                         "as_of": snap["as_of"], "stale": snap["stale"]}}
 
 
 @app.post("/api/torrent/{tid}")
@@ -335,6 +352,8 @@ def api_torrent_action(tid: str, req: TorrentAction):
     except DownloadClientError as e:
         raise HTTPException(502, str(e))
     log.info("Torrent %s: %s", tid, req.action)
+    from . import transfers
+    transfers.refresh_soon()
     return {"status": "ok", "id": tid, "action": req.action}
 
 
@@ -364,8 +383,9 @@ def api_stats():
                        "pct_used": round(du.used / du.total * 100, 1) if du.total else 0}
     except OSError:
         pass
+    from . import transfers as _tr
     try:
-        for t in client().list_transfers():
+        for t in _tr.snapshot()["items"]:
             out["down_total"] += t.down_rate
             out["up_total"] += t.up_rate
             out["total"] += 1
@@ -424,9 +444,11 @@ def api_dashboard():
     # ── live activity (current transfers) ──
     active = []
     down_total = up_total = downloading = seeding = 0
-    client_ok = True
+    from . import transfers as _tr
+    _snap = _tr.snapshot()
+    client_ok = _snap["ok"] is not False
     try:
-        for t in client().list_transfers():
+        for t in _snap["items"]:
             down_total += t.down_rate
             up_total += t.up_rate
             if t.status == "downloading":
@@ -1227,6 +1249,7 @@ def api_season_grab(sid: int, season: int, req: AddRequest):
         raise HTTPException(400, "No magnet/href provided.")
     try:
         res = client().add(req.magnet, cfg().download_dir or None)
+        _refresh_transfers()
     except DownloadClientError as e:
         raise HTTPException(502, str(e))
     title = req.title or res.name or ""
@@ -1258,6 +1281,7 @@ def api_episode_grab(sid: int, season: int, episode: int, req: AddRequest):
         raise HTTPException(400, "No magnet/href provided.")
     try:
         res = client().add(req.magnet, cfg().download_dir or None)
+        _refresh_transfers()
     except DownloadClientError as e:
         raise HTTPException(502, str(e))
     title = req.title or res.name or ""
@@ -1420,6 +1444,7 @@ def api_movie_grab(mid: int, req: AddRequest):
         raise HTTPException(400, "No magnet/href provided.")
     try:
         res = client().add(req.magnet, cfg().download_dir or None)
+        _refresh_transfers()
     except DownloadClientError as e:
         raise HTTPException(502, str(e))
     title = req.title or res.name or ""
@@ -2285,26 +2310,26 @@ def api_home(request: _Request):
 
     if admin:
         out["hunting"] = hunting
+        from . import transfers
+        snap = transfers.snapshot()                # never waits on the client
         downloads, rate, active = [], 0, 0
-        try:
-            for t in client().list_transfers():
-                rate += t.down_rate
-                if t.status == "downloading":
-                    active += 1
-                if t.status in ("downloading", "checking", "queued") or 0 < t.percent < 100:
-                    downloads.append({"id": t.id, "name": t.name, "percent": round(t.percent, 1),
-                                      "status": t.status, "down_rate": t.down_rate,
-                                      "eta": t.eta, "size": t.size, "error": t.error})
-            client_ok = True
-        except DownloadClientError:
-            client_ok = False
+        for t in snap["items"]:
+            rate += t.down_rate
+            if t.status == "downloading":
+                active += 1
+            if t.status in ("downloading", "checking", "queued") or 0 < t.percent < 100:
+                downloads.append({"id": t.id, "name": t.name, "percent": round(t.percent, 1),
+                                  "status": t.status, "down_rate": t.down_rate,
+                                  "eta": t.eta, "size": t.size, "error": t.error})
+        client_ok = snap["ok"] is not False or bool(snap["items"])
         downloads.sort(key=lambda d: d["down_rate"], reverse=True)
         out["downloads"] = downloads
         with db.connect() as c:
             wanted_total = c.execute("SELECT COUNT(*) FROM wanted WHERE status='wanted'"
                                      ).fetchone()[0]
         out["stats"] = {"downloading": active, "down_rate": rate, "client_ok": client_ok,
-                        "wanted": wanted_total}
+                        "client_slow": snap["ok"] is False and bool(snap["items"]),
+                        "client_as_of": snap["as_of"], "wanted": wanted_total}
     return out
 
 
