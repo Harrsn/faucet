@@ -15,7 +15,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from . import config as _cfg
 from .clients import make_client, DownloadClientError
@@ -838,6 +838,10 @@ def api_history_stats():
 
 
 # --- quality profiles ---
+_PROFILE_RES = ["2160p", "1080p", "720p", "480p"]
+_PROFILE_SOURCES = ["REMUX", "BluRay", "WEB-DL", "WEBRip", "HDTV", "DVDRip", "CAM"]
+
+
 class ProfileBody(BaseModel):
     name: str
     min_seeders: int = 1
@@ -846,6 +850,52 @@ class ProfileBody(BaseModel):
     max_size_gb: float = 0
     min_size_gb: float = 0
     language: str = "en"
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v):
+        v = (v or "").strip()
+        if not v or len(v) > 60:
+            raise ValueError("a name of 1–60 characters")
+        return v
+
+    @field_validator("resolutions")
+    @classmethod
+    def _res(cls, v):
+        bad = [x for x in v if x not in _PROFILE_RES]
+        if bad:
+            raise ValueError(f"unknown resolution(s): {', '.join(bad)}")
+        return list(dict.fromkeys(v))
+
+    @field_validator("sources")
+    @classmethod
+    def _src(cls, v):
+        bad = [x for x in v if x not in _PROFILE_SOURCES]
+        if bad:
+            raise ValueError(f"unknown source(s): {', '.join(bad)}")
+        return list(dict.fromkeys(v))
+
+    @field_validator("min_seeders")
+    @classmethod
+    def _seed(cls, v):
+        if not 0 <= v <= 10000:
+            raise ValueError("between 0 and 10000")
+        return v
+
+    @field_validator("max_size_gb", "min_size_gb")
+    @classmethod
+    def _size(cls, v):
+        if not 0 <= v <= 1000:
+            raise ValueError("between 0 and 1000 GB (0 = no limit)")
+        return v
+
+    @field_validator("language")
+    @classmethod
+    def _lang(cls, v):
+        v = (v or "").strip().lower()
+        if not (v == "any" or (v.isalpha() and 2 <= len(v) <= 3)):
+            raise ValueError("an ISO-639 code like 'en', or 'any'")
+        return v
 
 
 @app.get("/api/profiles")
@@ -879,6 +929,8 @@ def api_profiles_create(p: ProfileBody):
 def api_profiles_update(pid: int, p: ProfileBody):
     import json as _json
     with db.connect() as c:
+        if not c.execute("SELECT 1 FROM profiles WHERE id=?", (pid,)).fetchone():
+            raise HTTPException(404, "No such profile")
         c.execute(
             "UPDATE profiles SET name=?, min_seeders=?, resolutions=?, sources=?, "
             "max_size_gb=?, min_size_gb=?, language=? WHERE id=?",
@@ -887,10 +939,23 @@ def api_profiles_update(pid: int, p: ProfileBody):
     return {"status": "ok"}
 
 
+@app.get("/api/profiles/options")
+def api_profile_options():
+    return {"resolutions": _PROFILE_RES, "sources": _PROFILE_SOURCES}
+
+
 @app.delete("/api/profiles/{pid}")
 def api_profiles_delete(pid: int):
+    """Delete a profile; shows and movies using it fall back to the default
+    profile instead of pointing at nothing."""
     with db.connect() as c:
+        if c.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] <= 1:
+            raise HTTPException(400, "Keep at least one profile.")
+        c.execute("UPDATE series SET profile_id=NULL WHERE profile_id=?", (pid,))
+        c.execute("UPDATE movies SET profile_id=NULL WHERE profile_id=?", (pid,))
         c.execute("DELETE FROM profiles WHERE id=?", (pid,))
+    if str(db.get_setting("default_profile_id") or "") == str(pid):
+        db.set_setting("default_profile_id", "")
     return {"status": "ok"}
 
 
@@ -1734,6 +1799,45 @@ def api_settings_test_tmdb(body: TmdbTest):
     if r.status_code != 200:
         return {"ok": False, "msg": f"TMDb answered HTTP {r.status_code}."}
     return {"ok": True, "msg": "TMDb key accepted."}
+
+
+# --- behaviour settings (Settings → General / Hunting / Maintenance) ---
+@app.get("/api/settings/tunables")
+def api_tunables(section: str = Query(..., pattern="^(general|hunting|maintenance)$")):
+    from . import tunables
+    groups: dict = {}
+    for k, s in tunables.SPEC.items():
+        if s["section"] != section:
+            continue
+        cur = os.environ.get(k)
+        value = cur if cur not in (None, "") else tunables.default_str(k)
+        groups.setdefault(s["group"], []).append({
+            **{x: s[x] for x in ("key", "label", "kind", "unit", "help", "min", "max")},
+            "choices": [{"value": v, "label": lbl} for v, lbl in (s["choices"] or [])],
+            "default": tunables.default_str(k), "value": value,
+            "changed": value != tunables.default_str(k)})
+    return {"section": section, "groups": [{"name": g, "items": items} for g, items in groups.items()]}
+
+
+class TunablesBody(BaseModel):
+    values: dict
+
+
+@app.put("/api/settings/tunables")
+def api_tunables_put(body: TunablesBody):
+    """Validate and store; values apply on the next tick (the code reads them
+    from the environment, which the store updates immediately)."""
+    from . import tunables
+    from .config import save
+    unknown = [k for k in body.values if k not in tunables.KEYS]
+    if unknown:
+        raise HTTPException(400, f"Not a behaviour setting: {', '.join(unknown)}")
+    try:
+        clean = {k: tunables.validate(k, v) for k, v in body.values.items()}
+        save(clean)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"status": "ok", "saved": sorted(clean)}
 
 
 class MappingsBody(BaseModel):
