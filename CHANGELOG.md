@@ -1,5 +1,31 @@
 # Changelog
 
+## 2.0.2 — 2026-10-11
+
+### Fixed
+
+- **Every finished download was copied into the library over the network.**
+  Inside the container `/downloads` and `/library` are separate bind mounts
+  (even of the same NAS share), so the sorter's rename failed and it fell
+  back to copy + delete — gigabytes through the share, with Transmission's
+  RPC stalling meanwhile. Faucet now shows, per library, whether moves are an
+  **instant rename** or a **copy**, read from the kernel's mount table
+  (Settings → Libraries and → Path mappings), so libraries and downloads can
+  be put on one mount.
+
+### Added
+
+- **Finished downloads folder** setting (`COMPLETE_DIR`, Settings → Path
+  mappings): where completed downloads land as Faucet sees it. `DOWNLOAD_DIR`
+  stays what Faucet tells the *client*; it used to double as both.
+- **Re-pointing a library keeps what Faucet knows** when the new folder is
+  the same one through another mount (`/library/tvshows` →
+  `/nas/media/tvshows`): every file record and show-folder link is carried
+  over, so nothing is rescanned or re-hunted. A genuinely different folder
+  drops the old folder's records and is scanned fresh.
+- `deploy/cascade-hook-wrapper.sh` hands Faucet the path as Transmission
+  reports it; Settings → Path mappings translates it.
+
 ## 2.0.1 — 2026-10-10
 
 ### Fixed
