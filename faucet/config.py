@@ -254,6 +254,7 @@ WIZARD_KEYS = {
     "DOWNLOAD_CLIENT", "CLIENT_URL", "CLIENT_USER", "CLIENT_PASS",
     # paths
     "LIBRARY_ROOT", "DOWNLOAD_DIR", "DISK_PATH", "BROWSE_ROOT",
+    "COMPLETE_DIR",     # finished downloads, as Faucet sees them (sweep, mount check)
     # behavior
     "REMOVE_ON_COMPLETE", "REQUEST_TIMEOUT", "SEARCH_LIMIT", "BIG_DOWNLOAD_GB",
     "NOTIFY_URLS", "NOTIFY_ON", "AIR_DELAY_DAYS",
@@ -268,7 +269,7 @@ WIZARD_KEYS |= _tunables.KEYS
 
 # Subset that point at filesystem locations — the editor validates these before
 # saving (existence / writability inside the container) to avoid silent breakage.
-PATH_KEYS = {"LIBRARY_ROOT", "DOWNLOAD_DIR", "DISK_PATH", "BROWSE_ROOT"}
+PATH_KEYS = {"LIBRARY_ROOT", "DOWNLOAD_DIR", "DISK_PATH", "BROWSE_ROOT", "COMPLETE_DIR"}
 
 
 def _check_value(key: str, value: str) -> str:

@@ -1601,11 +1601,37 @@ def _library_view(lib: dict) -> dict:
             "writable": exists and os.access(p, os.W_OK), "files": files}
 
 
+def _downloads_view() -> dict:
+    """Where finished downloads land (as Faucet sees them) and its mount."""
+    from . import mounts, sweep
+    d = str(sweep._complete_dir())
+    m = mounts.mount_of(d) if os.path.isdir(d) else None
+    return {"path": d, "exists": os.path.isdir(d),
+            "mount": m["point"] if m else None,
+            "configured": bool(os.environ.get("COMPLETE_DIR"))}
+
+
+def _moves(lib_path: str, dl: dict) -> str | None:
+    """'rename' when a finished download can be moved into the library by
+    renaming, 'copy' when it has to be copied, None when unknown."""
+    from . import mounts
+    if not dl["exists"] or not os.path.isdir(lib_path):
+        return None
+    same = mounts.same_mount(dl["path"], lib_path)
+    return None if same is None else ("rename" if same else "copy")
+
+
 @app.get("/api/libraries")
 def api_libraries():
-    from . import libraries
-    return {"libraries": [_library_view(lib) for lib in libraries.all_libraries()],
-            "mappings": libraries.mappings()}
+    from . import libraries, mounts
+    dl = _downloads_view()
+    libs = []
+    for lib in libraries.all_libraries():
+        v = _library_view(lib)
+        m = mounts.mount_of(lib["path"]) if v["exists"] else None
+        v.update(mount=m["point"] if m else None, moves=_moves(lib["path"], dl))
+        libs.append(v)
+    return {"libraries": libs, "mappings": libraries.mappings(), "downloads": dl}
 
 
 @app.post("/api/libraries")
@@ -1985,7 +2011,10 @@ class MappingsBody(BaseModel):
 @app.get("/api/path-mappings")
 def api_path_mappings():
     from . import libraries
-    return {"mappings": libraries.mappings()}
+    dl = _downloads_view()
+    return {"mappings": libraries.mappings(), "downloads": dl,
+            "moves": [{"library": lib["name"], "path": lib["path"], "moves": _moves(lib["path"], dl)}
+                      for lib in libraries.all_libraries()]}
 
 
 @app.put("/api/path-mappings")
