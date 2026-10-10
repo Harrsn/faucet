@@ -6,23 +6,21 @@ in git so a host rebuild doesn't silently lose them.
 
 ## How config actually resolves
 
-Three layers, highest priority **last**:
+Since 1.7, settings live in **Faucet's database** (`/opt/cascade-config/cascade.db`,
+mode 0600). The Settings pages write them; nothing else does.
 
-| Layer | Holds | Owner |
+| Where | Holds | Owner |
 | --- | --- | --- |
-| `deploy/stack.yml` → `environment:` | `EVENTS_FILE`, `HUNT_MAX_*`, `MEDIASORT_MODE`, `DEFAULT_LANGUAGE` | this repo |
+| `deploy/stack.yml` → `environment:` | bootstrap and tunables with no UI yet: `EVENTS_FILE`, `HUNT_MAX_*`, `MEDIASORT_MODE`, `TRUSTED_PROXIES`, … | this repo |
 | `/opt/cascade-config/faucet.secrets.env` | `SESSION_SECRET` | host, root:root 600 |
-| `/opt/cascade-config/faucet.env` | everything in `config.py`'s `WIZARD_KEYS` | Faucet's Settings panel |
+| `cascade.db` → `settings` (`cfg.*`) | Jackett, download client, paths, notifications, behavior | Faucet's Settings |
 
-The third layer is the one that surprises people. `config.py::_load_persisted()`
-writes that file's keys **into `os.environ`** at import time, so it overrides
-anything the container was started with. Setting `JACKETT_URL` or `CLIENT_PASS`
-in the stack file does nothing while `faucet.env` defines them — change those in
-Settings, not in compose.
-
-Corollary worth remembering when rotating credentials: rotating at the source
-(Discord, Jackett, Transmission) and updating the stack file is **not enough**.
-`faucet.env` still holds the old value and still wins.
+On the first start of 1.7 every setting found in the old `faucet.env` (or in
+the environment) is **imported once** into the database and the file is
+renamed `faucet.env.imported`. After that the database wins: setting
+`JACKETT_URL` or `CLIENT_PASS` in the stack does nothing, and Faucet logs a
+warning at startup naming any such key it is ignoring. Rotating a credential
+means changing it in Settings (or in the database), not in compose.
 
 ## deploy.sh
 
