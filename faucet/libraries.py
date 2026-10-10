@@ -1,0 +1,378 @@
+"""Libraries, show-folder links, and client path mappings.
+
+A library is a folder Faucet scans for what you own and files new downloads
+into: {name, kind 'tv'|'movie', path, is_default}. They replace the fixed
+LIBRARY_ROOT/tvshows and LIBRARY_ROOT/movies layout; an existing install is
+seeded with exactly those two on first start, so nothing moves.
+
+Folder links tie a show folder inside a TV library to a monitored series by
+id. Matching used to normalise the folder name and the TMDb title on every
+lookup, so "Trailer Park Boys" vs "Trailer Park Boys (2001)" vs a renamed
+TMDb title decided whether 200 episodes counted as owned. A link is made
+once — automatically when the names agree, or by hand (Fix Match) — and the
+scanner then stamps series_id on every file in that folder.
+
+Path mappings translate the download client's view of a path into Faucet's
+(Transmission writes to /mnt/nas/torrents, Faucet sees /nas/torrents), so the
+completion hook can be handed the client's raw path.
+"""
+from __future__ import annotations
+
+import logging
+import os
+from datetime import datetime
+from pathlib import Path
+
+from . import db
+
+log = logging.getLogger("faucet.libraries")
+
+KINDS = ("tv", "movie")
+_SEEDED = "_libraries_seeded"
+
+
+def _now() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def ensure_schema(c) -> None:
+    c.execute(
+        "CREATE TABLE IF NOT EXISTS libraries ("
+        "  id         INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  name       TEXT NOT NULL,"
+        "  kind       TEXT NOT NULL,"            # tv | movie
+        "  path       TEXT NOT NULL UNIQUE,"
+        "  is_default INTEGER DEFAULT 0,"        # new downloads of this kind go here
+        "  enabled    INTEGER DEFAULT 1,"
+        "  auto_root  INTEGER DEFAULT 0,"        # seeded from LIBRARY_ROOT and follows it until edited
+        "  created_ts TEXT,"
+        "  last_scan  TEXT"
+        ")")
+    c.execute(
+        "CREATE TABLE IF NOT EXISTS library_links ("
+        "  library_id INTEGER NOT NULL,"
+        "  folder     TEXT NOT NULL,"            # show folder name inside the library
+        "  series_id  INTEGER NOT NULL,"
+        "  auto       INTEGER DEFAULT 1,"        # 0 = set by hand (Fix Match): never overwritten
+        "  created_ts TEXT,"
+        "  PRIMARY KEY (library_id, folder)"
+        ")")
+    c.execute(
+        "CREATE TABLE IF NOT EXISTS path_mappings ("
+        "  id     INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  remote TEXT NOT NULL UNIQUE,"         # as the download client sees it
+        "  local  TEXT NOT NULL"                 # as Faucet sees it
+        ")")
+
+
+def seed(c) -> None:
+    """First start with libraries: register the folders the old fixed layout
+    used, so an existing install keeps scanning and sorting exactly as before."""
+    row = c.execute("SELECT value FROM settings WHERE key=?", (_SEEDED,)).fetchone()
+    if row:
+        return
+    if not c.execute("SELECT 1 FROM libraries LIMIT 1").fetchone():
+        root = Path(os.environ.get("LIBRARY_ROOT", "") or "/library")
+        for name, kind, sub in (("TV Shows", "tv", "tvshows"), ("Movies", "movie", "movies")):
+            c.execute("INSERT OR IGNORE INTO libraries (name, kind, path, is_default, auto_root, "
+                      "created_ts) VALUES (?,?,?,1,1,?)", (name, kind, str(root / sub), _now()))
+    c.execute("INSERT INTO settings (key, value) VALUES (?, '1') "
+              "ON CONFLICT(key) DO UPDATE SET value='1'", (_SEEDED,))
+
+
+# ── libraries ───────────────────────────────────────────────────────────────
+
+_SUB = {"tv": "tvshows", "movie": "movies"}
+
+
+def _follow_root(c) -> None:
+    """Seeded libraries follow LIBRARY_ROOT until someone edits them, so the
+    old setting (and an install that changes it) keeps working."""
+    root = Path(os.environ.get("LIBRARY_ROOT", "") or "/library")
+    for r in c.execute("SELECT id, kind, path FROM libraries WHERE auto_root=1").fetchall():
+        want = str(root / _SUB.get(r["kind"], r["kind"]))
+        if r["path"] != want:
+            try:
+                c.execute("UPDATE libraries SET path=? WHERE id=?", (want, r["id"]))
+            except Exception:                    # noqa: BLE001 - a clash keeps the old path
+                pass
+
+
+def all_libraries(enabled_only: bool = False) -> list[dict]:
+    with db.connect() as c:
+        _follow_root(c)
+        q = "SELECT * FROM libraries"
+        if enabled_only:
+            q += " WHERE enabled=1"
+        return [dict(r) for r in c.execute(q + " ORDER BY kind DESC, name")]
+
+
+def of_kind(kind: str) -> list[dict]:
+    return [lib for lib in all_libraries(enabled_only=True) if lib["kind"] == kind]
+
+
+def get(lib_id: int) -> dict | None:
+    with db.connect() as c:
+        r = c.execute("SELECT * FROM libraries WHERE id=?", (lib_id,)).fetchone()
+    return dict(r) if r else None
+
+
+def default_path(kind: str) -> str | None:
+    """Where new downloads of this kind are filed."""
+    libs = of_kind(kind)
+    for lib in libs:
+        if lib["is_default"]:
+            return lib["path"]
+    return libs[0]["path"] if libs else None
+
+
+def containing(path) -> dict | None:
+    """The library a path lives in (the deepest, if they nest)."""
+    p = str(path)
+    best = None
+    for lib in all_libraries():
+        root = lib["path"].rstrip("/")
+        if (p == root or p.startswith(root + "/")) and (best is None or len(root) > len(best["path"])):
+            best = lib
+    return best
+
+
+def _clean_path(path: str) -> str:
+    p = os.path.normpath(str(path or "").strip())
+    if not p.startswith("/") or p == "/":
+        raise ValueError("library folder must be an absolute path below /")
+    return p
+
+
+def validate(path: str, kind: str, ignore_id: int | None = None) -> tuple[str, list[str]]:
+    """(clean path, warnings). Raises ValueError for a path that can't be a
+    library: relative, nested inside / containing another library, or
+    unreadable. A missing folder is only a warning (a NAS may be down)."""
+    if kind not in KINDS:
+        raise ValueError("kind must be 'tv' or 'movie'")
+    p = _clean_path(path)
+    for lib in all_libraries():
+        if lib["id"] == ignore_id:
+            continue
+        other = lib["path"].rstrip("/")
+        if p == other:
+            raise ValueError(f"already a library: {lib['name']}")
+        if p.startswith(other + "/") or other.startswith(p + "/"):
+            raise ValueError(f"overlaps the {lib['name']} library ({other}); libraries can't nest")
+    warnings = []
+    if not os.path.isdir(p):
+        warnings.append(f"{p} doesn't exist (or isn't mounted) right now")
+    elif not os.access(p, os.R_OK | os.X_OK):
+        raise ValueError(f"{p} isn't readable by Faucet")
+    elif not os.access(p, os.W_OK):
+        warnings.append(f"{p} is read-only: Faucet can scan it but not file downloads into it")
+    return p, warnings
+
+
+def add(name: str, kind: str, path: str, is_default: bool = False) -> tuple[int, list[str]]:
+    name = (name or "").strip()[:80] or ("TV Shows" if kind == "tv" else "Movies")
+    p, warnings = validate(path, kind)
+    with db.connect() as c:
+        first = not c.execute("SELECT 1 FROM libraries WHERE kind=?", (kind,)).fetchone()
+        if is_default or first:
+            c.execute("UPDATE libraries SET is_default=0 WHERE kind=?", (kind,))
+        lid = c.execute("INSERT INTO libraries (name, kind, path, is_default, created_ts) "
+                        "VALUES (?,?,?,?,?)",
+                        (name, kind, p, 1 if (is_default or first) else 0, _now())).lastrowid
+    log.info("Library added: %s (%s) at %s", name, kind, p)
+    return lid, warnings
+
+
+def update(lib_id: int, **fields) -> list[str]:
+    lib = get(lib_id)
+    if not lib:
+        raise LookupError("no such library")
+    warnings: list[str] = []
+    sets: dict = {}
+    if "name" in fields and fields["name"]:
+        sets["name"] = str(fields["name"]).strip()[:80]
+    if "path" in fields and fields["path"] and fields["path"] != lib["path"]:
+        sets["path"], warnings = validate(fields["path"], lib["kind"], ignore_id=lib_id)
+        sets["auto_root"] = 0                    # hand-set: stops following LIBRARY_ROOT
+    if "enabled" in fields and fields["enabled"] is not None:
+        sets["enabled"] = 1 if fields["enabled"] else 0
+    with db.connect() as c:
+        if fields.get("is_default"):
+            c.execute("UPDATE libraries SET is_default=0 WHERE kind=?", (lib["kind"],))
+            sets["is_default"] = 1
+        if sets:
+            cols = ", ".join(f"{k}=?" for k in sets)
+            c.execute(f"UPDATE libraries SET {cols} WHERE id=?", (*sets.values(), lib_id))
+        if "path" in sets:
+            # files under the old path are no longer this library's
+            c.execute("DELETE FROM library_links WHERE library_id=?", (lib_id,))
+    return warnings
+
+
+def remove(lib_id: int) -> None:
+    """Stop scanning a library. Files are never touched; the rows the scanner
+    recorded for it are dropped so nothing counts as owned from a folder
+    Faucet no longer looks at."""
+    lib = get(lib_id)
+    if not lib:
+        return
+    prefix = lib["path"].rstrip("/") + "/"
+    with db.connect() as c:
+        c.execute("DELETE FROM libraries WHERE id=?", (lib_id,))
+        c.execute("DELETE FROM library_links WHERE library_id=?", (lib_id,))
+        table = "library_episodes" if lib["kind"] == "tv" else "library_movies"
+        c.execute(f"DELETE FROM {table} WHERE substr(path, 1, ?) = ?", (len(prefix), prefix))
+        if lib["is_default"]:
+            nxt = c.execute("SELECT id FROM libraries WHERE kind=? ORDER BY id LIMIT 1",
+                            (lib["kind"],)).fetchone()
+            if nxt:
+                c.execute("UPDATE libraries SET is_default=1 WHERE id=?", (nxt["id"],))
+    log.info("Library removed: %s (%s)", lib["name"], lib["path"])
+
+
+def mark_scanned(lib_ids) -> None:
+    with db.connect() as c:
+        for lid in lib_ids:
+            c.execute("UPDATE libraries SET last_scan=? WHERE id=?", (_now(), lid))
+
+
+def sorter_env() -> dict:
+    """Environment for the sorter subprocess: where to file TV and movies.
+    The sorter stays free of the database; the hook and sweep resolve the
+    default libraries and hand them over."""
+    env = {}
+    tv, mv = default_path("tv"), default_path("movie")
+    if tv:
+        env["FAUCET_TV_DIR"] = tv
+    if mv:
+        env["FAUCET_MOVIES_DIR"] = mv
+    return env
+
+
+# ── folder links ────────────────────────────────────────────────────────────
+
+def link_folder(library_id: int, folder: str, series_id: int, auto: bool = False) -> None:
+    """Tie a show folder to a series. A manual link (auto=False) is never
+    replaced by automatic matching."""
+    with db.connect() as c:
+        if auto:
+            c.execute("INSERT INTO library_links (library_id, folder, series_id, auto, created_ts) "
+                      "VALUES (?,?,?,1,?) ON CONFLICT(library_id, folder) DO UPDATE SET "
+                      "series_id=excluded.series_id WHERE library_links.auto=1",
+                      (library_id, folder, series_id, _now()))
+        else:
+            c.execute("INSERT INTO library_links (library_id, folder, series_id, auto, created_ts) "
+                      "VALUES (?,?,?,0,?) ON CONFLICT(library_id, folder) DO UPDATE SET "
+                      "series_id=excluded.series_id, auto=0",
+                      (library_id, folder, series_id, _now()))
+        lib = c.execute("SELECT path FROM libraries WHERE id=?", (library_id,)).fetchone()
+        if lib:
+            _stamp(c, lib["path"], folder, series_id)
+
+
+def unlink_folder(library_id: int, folder: str) -> None:
+    with db.connect() as c:
+        c.execute("DELETE FROM library_links WHERE library_id=? AND folder=?", (library_id, folder))
+        lib = c.execute("SELECT path FROM libraries WHERE id=?", (library_id,)).fetchone()
+        if lib:
+            _stamp(c, lib["path"], folder, None)
+
+
+def _folder_prefix(lib_path: str, folder: str) -> str:
+    return lib_path.rstrip("/") + "/" + folder + "/"
+
+
+def _stamp(c, lib_path: str, folder: str, series_id) -> None:
+    prefix = _folder_prefix(lib_path, folder)
+    c.execute("UPDATE library_episodes SET series_id=? WHERE substr(path, 1, ?) = ?",
+              (series_id, len(prefix), prefix))
+
+
+def auto_link() -> dict:
+    """Link every unlinked show folder whose name matches a series title
+    (normalised, year tag ignored), and stamp series_id on its files.
+    Ambiguous folders (two series normalise the same) are left unlinked."""
+    from .library import normalize_title
+    out = {"linked": 0, "unlinked": []}
+    with db.connect() as c:
+        by_title: dict = {}
+        for s in c.execute("SELECT id, title FROM series"):
+            by_title.setdefault(normalize_title(s["title"]), []).append(s["id"])
+        linked = {(r["library_id"], r["folder"]): r["series_id"]
+                  for r in c.execute("SELECT library_id, folder, series_id FROM library_links")}
+        libs = [dict(r) for r in c.execute("SELECT id, path FROM libraries WHERE kind='tv'")]
+    for lib in libs:
+        for folder in folders(lib["path"]):
+            key = (lib["id"], folder)
+            if key in linked:
+                with db.connect() as c:
+                    _stamp(c, lib["path"], folder, linked[key])
+                continue
+            ids = by_title.get(normalize_title(folder), [])
+            if len(ids) == 1:
+                link_folder(lib["id"], folder, ids[0], auto=True)
+                out["linked"] += 1
+            else:
+                out["unlinked"].append({"library_id": lib["id"], "folder": folder,
+                                        "candidates": ids})
+    return out
+
+
+def folders(lib_path: str) -> list[str]:
+    """Show folders the scanner has seen under a TV library."""
+    prefix = lib_path.rstrip("/") + "/"
+    seen = set()
+    with db.connect() as c:
+        for r in c.execute("SELECT DISTINCT path FROM library_episodes WHERE substr(path, 1, ?) = ?",
+                           (len(prefix), prefix)):
+            rest = r["path"][len(prefix):]
+            if "/" in rest:
+                seen.add(rest.split("/", 1)[0])
+    return sorted(seen)
+
+
+def links(series_id: int | None = None) -> list[dict]:
+    with db.connect() as c:
+        q = ("SELECT l.*, b.name AS library, b.path AS library_path, s.title AS series "
+             "FROM library_links l JOIN libraries b ON b.id=l.library_id "
+             "LEFT JOIN series s ON s.id=l.series_id")
+        args: tuple = ()
+        if series_id is not None:
+            q += " WHERE l.series_id=?"
+            args = (series_id,)
+        return [dict(r) for r in c.execute(q + " ORDER BY b.name, l.folder", args)]
+
+
+# ── path mappings ───────────────────────────────────────────────────────────
+
+def mappings() -> list[dict]:
+    with db.connect() as c:
+        return [dict(r) for r in c.execute("SELECT * FROM path_mappings ORDER BY length(remote) DESC")]
+
+
+def set_mappings(items: list[dict]) -> list[dict]:
+    """Replace all mappings. Each {remote, local}: absolute, normalised."""
+    clean = []
+    for it in items or []:
+        remote = os.path.normpath(str(it.get("remote", "")).strip())
+        local = os.path.normpath(str(it.get("local", "")).strip())
+        if not remote.startswith("/") or not local.startswith("/"):
+            raise ValueError("path mappings must be absolute paths")
+        clean.append((remote, local))
+    if len({r for r, _ in clean}) != len(clean):
+        raise ValueError("each client path can be mapped only once")
+    with db.connect() as c:
+        c.execute("DELETE FROM path_mappings")
+        c.executemany("INSERT INTO path_mappings (remote, local) VALUES (?,?)", clean)
+    return mappings()
+
+
+def to_local(path: str) -> str:
+    """The client's path as Faucet sees it (longest matching prefix wins);
+    unchanged when no mapping applies."""
+    p = str(path or "")
+    for m in mappings():
+        remote = m["remote"].rstrip("/")
+        if p == remote or p.startswith(remote + "/"):
+            return m["local"].rstrip("/") + p[len(remote):]
+    return p

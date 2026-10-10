@@ -262,6 +262,9 @@ def init() -> None:
         with connect() as c:
             c.executescript(SCHEMA)
             _migrate(c)
+            from . import libraries as _libs
+            _libs.ensure_schema(c)
+            _libs.seed(c)
             # seed a sensible default quality profile if none exist
             n = c.execute("SELECT COUNT(*) AS n FROM profiles").fetchone()["n"]
             if n == 0:
