@@ -1464,6 +1464,51 @@ def api_wanted():
     return {"wanted": series_mod.list_wanted()}
 
 
+@app.get("/api/wanted/summary")
+def api_wanted_summary():
+    """What the hunter is after, per show / movie: counts, upgrades, and when
+    each title is next searched (the soonest of its wants)."""
+    from datetime import datetime as _dt
+    now = _dt.now().isoformat(timespec="seconds")
+    with db.connect() as c:
+        rows = c.execute(
+            "SELECT w.kind, w.series_id, w.status, w.reason, w.next_search, w.search_count, "
+            "s.title AS s_title, s.poster AS s_poster, m.title AS m_title, m.poster AS m_poster, "
+            "m.year AS m_year FROM wanted w "
+            "LEFT JOIN series s ON w.kind='episode' AND s.id=w.series_id "
+            "LEFT JOIN movies m ON w.kind='movie' AND m.id=w.series_id "
+            "WHERE w.status IN ('wanted','grabbed')").fetchall()
+    groups: dict = {}
+    for r in rows:
+        kind = "movie" if r["kind"] == "movie" else "show"
+        key = (kind, r["series_id"])
+        g = groups.setdefault(key, {
+            "kind": kind, "id": r["series_id"],
+            "title": (r["m_title"] if kind == "movie" else r["s_title"]) or "?",
+            "poster": r["m_poster"] if kind == "movie" else r["s_poster"],
+            "year": r["m_year"] if kind == "movie" else None,
+            "wanted": 0, "downloading": 0, "upgrades": 0, "searches": 0, "next_search": None,
+            "due": 0})
+        if r["status"] == "grabbed":
+            g["downloading"] += 1
+            continue
+        g["wanted"] += 1
+        g["searches"] += r["search_count"] or 0
+        if r["reason"] == "upgrade":
+            g["upgrades"] += 1
+        ns = r["next_search"]
+        if not ns or ns <= now:
+            g["due"] += 1
+        elif not g["next_search"] or ns < g["next_search"]:
+            g["next_search"] = ns
+    items = sorted(groups.values(), key=lambda g: (-g["due"], -g["wanted"], g["title"].lower()))
+    return {"items": items,
+            "totals": {"wanted": sum(g["wanted"] for g in items),
+                       "downloading": sum(g["downloading"] for g in items),
+                       "upgrades": sum(g["upgrades"] for g in items),
+                       "due": sum(g["due"] for g in items)}}
+
+
 @app.get("/api/wanted/log")
 def api_wanted_log(kind: str = Query(..., pattern="^(episode|movie)$"),
                    series_id: int = Query(...), season: int | None = None,
