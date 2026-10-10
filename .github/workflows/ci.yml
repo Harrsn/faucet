@@ -24,6 +24,10 @@ jobs:
           pip install -r requirements-dev.txt
       - name: Lint
         run: ruff check faucet/ tests/
+      - name: UI modules parse
+        run: |
+          set -e
+          for f in $(find faucet/static/app -name '*.js'); do node --check "$f"; done
       - name: Test
         run: pytest -q
 

@@ -160,11 +160,12 @@ def test_unknown_tmdb_id_is_refused(app, monkeypatch):
 
 
 def test_ui_only_renders_tmdb_image_urls():
-    html = (__import__("pathlib").Path(__file__).parent.parent / "faucet" / "static"
-            / "index.html").read_text()
-    assert "background-image:url('${esc(" not in html
-    assert 'src="${r.poster?esc(r.poster)' not in html
-    assert "function safeImg" in html
+    static = __import__("pathlib").Path(__file__).parent.parent / "faucet" / "static"
+    classic = (static / "classic.html").read_text()
+    assert "background-image:url('${esc(" not in classic
+    assert 'src="${r.poster?esc(r.poster)' not in classic
+    assert "function safeImg" in classic
+    assert "const TMDB_IMG" in (static / "app" / "dom.js").read_text()
 
 
 # ── S3: login throttling ─────────────────────────────────────────────────────
