@@ -1,0 +1,49 @@
+/* Faucet design tokens — Direction A ("Plex-style shell"). */
+:root {
+  color-scheme: dark;
+
+  /* ground → raised */
+  --bg: #0E1013;
+  --side: #0B0D10;
+  --panel: #15181D;
+  --panel-2: #1B1F25;
+  --line: #20242B;
+  --line-2: #262B33;
+  --line-3: #333943;
+
+  /* text (all ≥ 4.5:1 on --bg) */
+  --text: #ECEDEE;
+  --text-2: #C9CDD3;
+  --muted: #9AA1AB;
+  --dim: #8A919B;
+
+  /* accent + status (status colours also differ in lightness) */
+  --accent: #D9A441;
+  --accent-hi: #F0C266;
+  --on-accent: #14110A;
+  --good: #4FB286;
+  --good-text: #7CCBA5;
+  --info: #5B9BD5;
+  --info-text: #8DBBE6;
+  --warn: #E0904A;
+  --warn-text: #E0A06A;
+  --bad: #E06B5C;
+  --bad-text: #F09A8E;
+
+  /* type */
+  --font-display: "Bricolage Grotesque", "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* shape + rhythm */
+  --r-sm: 6px;
+  --r: 10px;
+  --r-lg: 14px;
+  --r-xl: 16px;
+  --gap: 16px;
+  --pad: 40px;
+  --side-w: 236px;
+  --tap: 44px;
+  --shadow: 0 18px 40px rgb(0 0 0 / .5);
+  --ease: cubic-bezier(.2, .7, .2, 1);
+}

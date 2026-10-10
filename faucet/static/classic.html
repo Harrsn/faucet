@@ -1,0 +1,2242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Faucet</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="alternate icon" href="/static/favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    /* "projection booth" — warm light against cold dark */
+    --bg:#0B0C0E; --panel:#141619; --panel2:#1B1E23; --line:#23262C; --line-hi:#32363E;
+    --txt:#E8E6E1; --muted:#8A8F98; --accent:#C8A24B; --accent-soft:#E0BE6A;
+    --link:#6E9BF0; --good:#5BB97E; --warn:#D8A23E; --bad:#E06B5E; --purple:#A98BE0;
+    --grain:0.035; --veil0:#0B0C0E44; --veil1:#0B0C0ECC; --veil2:#0B0C0EF5;
+    --disp:'Bricolage Grotesque',system-ui,sans-serif;
+    --sans:'Geist',system-ui,-apple-system,sans-serif;
+    --mono:'Geist Mono',ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --radius:12px;
+  }
+  body.theme-light{
+    --bg:#F5F3EF; --panel:#FFFFFF; --panel2:#F0EDE6; --line:#E2DED5; --line-hi:#D2CCC0;
+    --txt:#16181C; --muted:#6B6F77; --accent:#A67C2E; --accent-soft:#8A6624;
+    --link:#3D6AD6; --good:#3E9A63; --warn:#B07F1E; --bad:#C5483B; --purple:#7A5BC0;
+    --grain:0.018; --veil0:#F5F3EF44; --veil1:#F5F3EFCC; --veil2:#F5F3EFF5;
+  }
+  *{box-sizing:border-box;}
+  body::before{content:"";position:fixed;inset:0;z-index:9999;pointer-events:none;opacity:var(--grain);
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:var(--sans);font-size:14px;line-height:1.55;
+    -webkit-font-smoothing:antialiased;letter-spacing:-0.005em;transition:background .3s,color .3s;}
+  a{color:inherit;text-decoration:none;}
+
+  /* ── top nav ── */
+  .topnav{position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--panel) 88%,transparent);
+    backdrop-filter:blur(12px) saturate(1.2);border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:4px;padding:0 22px;height:58px;}
+  .brand{font-family:var(--disp);font-size:21px;font-weight:800;letter-spacing:-0.02em;margin-right:22px;
+    display:flex;align-items:center;gap:9px;cursor:pointer;}
+  .brand .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);
+    box-shadow:0 0 12px 1px var(--accent);display:inline-block;}
+  .navlink{padding:8px 13px;border-radius:8px;color:var(--muted);cursor:pointer;font-size:13.5px;font-weight:500;
+    border:1px solid transparent;white-space:nowrap;transition:color .15s,background .15s;}
+  .navlink:hover{color:var(--txt);}
+  .navlink.on{color:var(--txt);background:var(--panel2);
+    box-shadow:inset 0 0 0 1px var(--line-hi),0 1px 0 0 var(--accent);}
+  .navspacer{flex:1;}
+  .navbtn{background:transparent;border:1px solid var(--line-hi);color:var(--muted);border-radius:8px;
+    padding:7px 13px;cursor:pointer;font-family:var(--sans);font-size:13px;font-weight:500;transition:all .15s;}
+  .navbtn:hover{border-color:var(--accent);color:var(--txt);}
+  .navbtn .badge{background:var(--accent);color:var(--bg);border-radius:10px;padding:0 6px;font-size:11px;
+    font-weight:600;margin-left:5px;}
+  .navbtn .badge.zero{display:none;}
+  .avatarbtn{width:32px;height:32px;border-radius:50%;border:none;cursor:pointer;margin-left:8px;flex:none;
+    background:linear-gradient(135deg,var(--accent),#8a6a20);color:#13110B;font-weight:700;font-size:12px;
+    font-family:var(--sans);display:grid;place-items:center;}
+  .avatarbtn:hover{filter:brightness(1.12);}
+
+  .wrap{max-width:1560px;margin:0 auto;padding:26px 32px 100px;}
+  .page{display:none;} .page.on{display:block;animation:fadein .3s ease;}
+  @keyframes fadein{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+  .page-head{display:flex;align-items:center;gap:14px;margin-bottom:20px;flex-wrap:wrap;}
+  .page-head h1{font-family:var(--disp);font-size:28px;font-weight:800;letter-spacing:-0.025em;margin:0;}
+  .page-head .count{color:var(--muted);font-size:12px;font-family:var(--mono);}
+  .page-head .ph-actions{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+
+  /* buttons + inputs */
+  .btn{background:var(--accent);border:1px solid var(--accent);color:#13110B;border-radius:9px;
+    padding:9px 16px;font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer;transition:all .15s;
+    letter-spacing:-0.01em;}
+  .btn:hover{background:var(--accent-soft);border-color:var(--accent-soft);box-shadow:0 0 16px -4px var(--accent);}
+  .btn:disabled{opacity:.5;cursor:default;box-shadow:none;}
+  .btn.ghost{background:transparent;border-color:var(--line-hi);color:var(--muted);font-weight:500;}
+  .btn.ghost:hover{border-color:var(--txt);color:var(--txt);background:transparent;box-shadow:none;}
+  .btn.danger{background:transparent;border-color:var(--bad);color:var(--bad);}
+  .btn.danger:hover{background:var(--bad);color:#fff;box-shadow:none;}
+  .btn.sm{padding:5px 12px;font-size:12px;}
+  input[type=text],input[type=number],input[type=password],select{
+    background:var(--panel2);color:var(--txt);border:1px solid var(--line-hi);border-radius:8px;
+    padding:9px 12px;font-family:var(--sans);font-size:13px;transition:border .15s,box-shadow .15s;}
+  input:focus,select:focus{outline:none;border-color:var(--accent);
+    box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent);}
+  label.fld{display:block;font-size:11px;font-weight:500;color:var(--muted);margin:14px 0 5px;
+    text-transform:uppercase;letter-spacing:.06em;}
+
+  /* ── poster primitives ── */
+  .pcard{position:relative;aspect-ratio:2/3;border-radius:10px;overflow:hidden;background:var(--panel2);
+    border:1px solid var(--line);transition:transform .18s,box-shadow .18s,border-color .18s;cursor:pointer;}
+  .pcard:hover{transform:translateY(-4px);border-color:var(--line-hi);box-shadow:0 14px 34px -12px rgba(0,0,0,.75);}
+  .pcard .art{position:absolute;inset:0;background:var(--panel2) center/cover no-repeat;display:grid;
+    place-items:center;padding:12px;text-align:center;font-family:var(--disp);font-weight:800;
+    letter-spacing:-0.02em;color:color-mix(in srgb,var(--txt) 75%,transparent);font-size:15px;line-height:1.2;}
+  .pcard .shade{position:absolute;inset:auto 0 0 0;height:58%;
+    background:linear-gradient(180deg,transparent,#08090BE6 78%);}
+  body.theme-light .pcard .shade{background:linear-gradient(180deg,transparent,#101215CC 85%);}
+  .pcard .pmeta{position:absolute;left:10px;right:10px;bottom:9px;z-index:2;}
+  .pcard .pt{font-weight:600;font-size:12.5px;letter-spacing:-0.01em;text-shadow:0 1px 6px #000;color:#F2F0EB;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .pcard .py{font-family:var(--mono);font-size:10.5px;color:#B9BDC4;}
+  .havebar{position:absolute;left:0;right:0;bottom:0;height:3px;background:#ffffff1c;z-index:3;}
+  .havebar i{display:block;height:100%;background:var(--accent);}
+  .havebar i.full{background:var(--good);}
+  .pchip2{position:absolute;top:8px;left:8px;z-index:3;font-family:var(--mono);font-size:9.5px;letter-spacing:.07em;
+    text-transform:uppercase;padding:3px 8px;border-radius:99px;backdrop-filter:blur(6px);border:1px solid #ffffff22;}
+  .pchip2.mon{background:#C8A24B2E;color:var(--accent-soft);}
+  .pchip2.full{background:#5BB97E2E;color:var(--good);}
+  .pchip2.paused{background:#8A8F982E;color:#B9BDC4;}
+  .pchip2.want{background:#E06B5E2E;color:var(--bad);}
+  .quick{position:absolute;top:8px;right:8px;z-index:4;display:flex;flex-direction:column;gap:6px;
+    opacity:0;transform:translateY(-4px);transition:all .18s;}
+  .pcard:hover .quick{opacity:1;transform:none;}
+  .quick button{width:30px;height:30px;border-radius:8px;border:1px solid #ffffff2b;background:#101215D9;
+    color:#E8E6E1;cursor:pointer;font-size:13px;backdrop-filter:blur(8px);}
+  .quick button:hover{border-color:var(--accent);color:var(--accent-soft);}
+  .pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px;}
+  .rail{display:grid;grid-auto-flow:column;grid-auto-columns:128px;gap:12px;overflow-x:auto;
+    padding:2px 2px 10px;scrollbar-width:thin;}
+  .rail .pcard .art{font-size:12px;}
+  .rail .pcard .pt{font-size:11.5px;}
+
+  /* ── dashboard tiles ── */
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:12px;margin-bottom:8px;}
+  .tile{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:15px 17px 13px;}
+  .tile.span2{grid-column:span 2;}
+  .tile .k{font-family:var(--mono);font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);}
+  .tile .v{font-family:var(--disp);font-size:25px;font-weight:800;letter-spacing:-0.02em;margin-top:5px;
+    font-variant-numeric:tabular-nums;display:flex;align-items:baseline;gap:7px;line-height:1.1;}
+  .tile .v small{font-family:var(--sans);font-size:12px;font-weight:500;color:var(--muted);}
+  .tile .v.good{color:var(--good);} .tile .v.warn{color:var(--accent-soft);} .tile .v.bad{color:var(--bad);}
+  .tile .foot{font-size:11.5px;color:var(--muted);margin-top:4px;}
+  .tile .foot b{color:var(--txt);font-weight:600;}
+  .spill{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;}
+  .spill i{width:7px;height:7px;border-radius:50%;display:inline-block;}
+  .spill.ok{color:var(--good);} .spill.ok i{background:var(--good);box-shadow:0 0 8px var(--good);}
+  .spill.err{color:var(--bad);} .spill.err i{background:var(--bad);}
+  .storagebar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:10px;}
+  .storagebar i{display:block;height:100%;border-radius:3px;transition:width .5s;
+    background:linear-gradient(90deg,var(--accent),var(--accent-soft));}
+  .storagebar i.warn{background:var(--warn);} .storagebar i.bad{background:var(--bad);}
+  .sec{display:flex;align-items:baseline;gap:10px;margin:24px 0 12px;}
+  .sec h2{font-family:var(--disp);font-size:16px;font-weight:800;letter-spacing:-0.02em;margin:0;}
+  .sec .n{font-family:var(--mono);font-size:11px;color:var(--muted);}
+  .sec .more{margin-left:auto;font-size:12px;color:var(--muted);cursor:pointer;}
+  .sec .more:hover{color:var(--accent-soft);}
+
+  /* downloads list */
+  .dl{display:flex;flex-direction:column;gap:8px;}
+  .dlrow{display:flex;align-items:center;gap:14px;background:var(--panel);border:1px solid var(--line);
+    border-radius:var(--radius);padding:10px 16px 10px 10px;}
+  .dlrow .mini{width:38px;height:56px;border-radius:6px;flex:none;display:grid;place-items:center;
+    font-family:var(--disp);font-weight:800;font-size:13px;color:#fffdf7bb;background:var(--panel2) center/cover no-repeat;}
+  .dlrow .info{flex:1;min-width:0;}
+  .dlrow .name{font-weight:600;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .dlrow .det{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:2px;}
+  .dlrow .det .stall{color:var(--warn);}
+  .pbar{height:4px;border-radius:2px;background:var(--line);overflow:hidden;margin-top:7px;}
+  .pbar i{display:block;height:100%;border-radius:2px;background:var(--accent);transition:width .5s;}
+  .pbar i.stall{background:var(--warn);}
+  .dlrow .pct{font-family:var(--mono);font-size:13px;width:60px;text-align:right;flex:none;}
+  .dlrow .act{flex:none;display:flex;gap:6px;}
+  .dlrow .act button{width:28px;height:28px;border-radius:7px;border:1px solid var(--line-hi);background:transparent;
+    color:var(--muted);cursor:pointer;}
+  .dlrow .act button:hover{color:var(--txt);border-color:var(--accent);}
+  .dempty{color:var(--muted);font-size:13px;text-align:center;padding:22px;background:var(--panel);
+    border:1px solid var(--line);border-radius:var(--radius);}
+  .drecent-row{display:flex;align-items:center;gap:10px;padding:6px 0;font-size:13px;border-bottom:1px solid var(--line);}
+  .drecent-row:last-child{border-bottom:none;}
+  .drecent-ev{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.04em;
+    padding:1px 7px;border-radius:10px;border:1px solid var(--line-hi);color:var(--muted);flex-shrink:0;}
+  .drecent-ev.completed,.drecent-ev.sorted{color:var(--good);border-color:color-mix(in srgb,var(--good) 40%,transparent);}
+  .drecent-ev.added{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent);}
+  .drecent-ev.failed,.drecent-ev.removed,.drecent-ev.stalled{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,transparent);}
+  .drecent-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .dcard{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 18px;}
+  .dlink{color:var(--accent);cursor:pointer;}
+  .dlink:hover{color:var(--accent-soft);}
+
+  /* ── toolbar (shows/movies grids) ── */
+  .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:16px;flex-wrap:wrap;}
+  .toolbar input[type=text]{min-width:200px;}
+  .seg{display:flex;background:var(--panel);border:1px solid var(--line-hi);border-radius:8px;overflow:hidden;}
+  .seg button{background:transparent;border:0;color:var(--muted);font-size:12.5px;font-weight:500;
+    padding:8px 13px;cursor:pointer;font-family:var(--sans);}
+  .seg button.on{background:var(--panel2);color:var(--txt);box-shadow:inset 0 -2px 0 var(--accent);}
+  .gridfoot{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:14px;}
+
+  /* ── detail hero ── */
+  .hero{position:relative;border-radius:16px;overflow:hidden;border:1px solid var(--line);min-height:300px;
+    display:flex;align-items:flex-end;background:var(--panel);}
+  .hero .bg{position:absolute;inset:0;background:var(--panel2) center 20%/cover no-repeat;}
+  .hero .veil{position:absolute;inset:0;background:linear-gradient(180deg,var(--veil0) 0%,var(--veil1) 55%,var(--veil2) 100%);}
+  .hero-in{position:relative;z-index:2;display:flex;gap:24px;padding:26px;width:100%;align-items:flex-end;}
+  .hero .bigposter{width:165px;flex:none;aspect-ratio:2/3;border-radius:12px;overflow:hidden;
+    border:1px solid #ffffff2a;box-shadow:0 18px 44px -12px #000;background:var(--panel2) center/cover no-repeat;
+    display:grid;place-items:center;font-family:var(--disp);font-weight:800;font-size:16px;text-align:center;
+    padding:0;color:color-mix(in srgb,var(--txt) 70%,transparent);}
+  .hero h1{font-family:var(--disp);font-size:36px;font-weight:800;letter-spacing:-0.03em;margin:0 0 6px;
+    text-shadow:0 2px 18px rgba(0,0,0,.6);}
+  .hero .facts{display:flex;gap:13px;flex-wrap:wrap;font-family:var(--mono);font-size:12px;
+    color:color-mix(in srgb,var(--txt) 80%,transparent);margin-bottom:9px;align-items:center;}
+  .hero .facts b{color:var(--accent-soft);font-weight:500;}
+  .genre{border:1px solid color-mix(in srgb,var(--txt) 25%,transparent);border-radius:99px;padding:2px 10px;
+    font-size:11px;font-family:var(--sans);}
+  .hero .overview{max-width:720px;font-size:13.5px;color:color-mix(in srgb,var(--txt) 82%,transparent);
+    line-height:1.6;margin:0 0 14px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+  .hero .actions{display:flex;gap:9px;flex-wrap:wrap;align-items:center;}
+  select.hsel{background:color-mix(in srgb,var(--panel) 85%,transparent);color:var(--txt);
+    border:1px solid var(--line-hi);border-radius:9px;padding:8px 12px;font-size:13px;font-family:var(--sans);
+    backdrop-filter:blur(8px);}
+
+  /* completion strip */
+  .compbar{display:flex;align-items:center;gap:16px;background:var(--panel);border:1px solid var(--line);
+    border-radius:var(--radius);padding:13px 18px;margin:14px 0 20px;flex-wrap:wrap;}
+  .compbar .big{font-family:var(--disp);font-size:22px;font-weight:800;font-variant-numeric:tabular-nums;}
+  .compbar .lbl{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);}
+  .compbar .bar{flex:1;min-width:160px;height:8px;border-radius:4px;background:var(--line);overflow:hidden;display:flex;}
+  .compbar .bar i{height:100%;}
+  .compbar .bar .bhave{background:var(--good);}
+  .legend{display:flex;gap:14px;font-size:11.5px;color:var(--muted);flex-wrap:wrap;}
+  .legend span{display:inline-flex;align-items:center;gap:6px;}
+  .legend b{width:8px;height:8px;border-radius:2px;display:inline-block;}
+
+  /* seasons accordion */
+  .season{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:10px;overflow:hidden;}
+  .season-h{display:flex;align-items:center;gap:14px;padding:12px 18px;cursor:pointer;user-select:none;flex-wrap:wrap;}
+  .season-h:hover{background:var(--panel2);}
+  .season-h .name{font-family:var(--disp);font-weight:800;font-size:15px;letter-spacing:-0.01em;}
+  .season-h .mini{flex:1;max-width:220px;min-width:90px;height:5px;border-radius:3px;background:var(--line);overflow:hidden;}
+  .season-h .mini i{display:block;height:100%;background:var(--good);}
+  .season-h .mini i.part{background:var(--accent);}
+  .season-h .stat{font-family:var(--mono);font-size:11.5px;color:var(--muted);}
+  .season-h .chev{margin-left:auto;color:var(--muted);transition:transform .2s;}
+  .season.open .chev{transform:rotate(90deg);}
+  .season-b{display:none;border-top:1px solid var(--line);}
+  .season.open .season-b{display:block;}
+  .eprow{display:flex;align-items:center;gap:12px;padding:8px 18px;border-bottom:1px solid var(--line);font-size:13px;}
+  .eprow:last-child{border-bottom:0;}
+  .eprow:hover{background:var(--panel2);}
+  .eprow .num{font-family:var(--mono);color:var(--muted);width:42px;flex:none;font-size:12px;}
+  .eprow .et{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .eprow .date{font-family:var(--mono);font-size:11px;color:var(--muted);width:86px;text-align:right;flex:none;}
+  .stpill{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;border-radius:99px;
+    padding:2px 9px;flex:none;width:76px;text-align:center;}
+  .stpill.have{background:color-mix(in srgb,var(--good) 14%,transparent);color:var(--good);}
+  .stpill.miss{background:color-mix(in srgb,var(--bad) 14%,transparent);color:var(--bad);}
+  .stpill.unair{background:color-mix(in srgb,var(--muted) 14%,transparent);color:var(--muted);}
+  .eprow .q{font-family:var(--mono);font-size:10.5px;color:var(--muted);width:44px;text-align:right;flex:none;}
+  .stpill.grab{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent-soft);}
+  /* calendar */
+  .calday{font-family:var(--disp);font-size:15px;font-weight:800;letter-spacing:-0.01em;margin:20px 0 8px;
+    display:flex;align-items:baseline;gap:10px;}
+  .calday:first-child{margin-top:0;}
+  .calday .cd{font-family:var(--mono);font-size:11px;color:var(--muted);font-weight:400;}
+  .calday.today{color:var(--accent-soft);}
+  .calrow{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:8px 14px 8px 8px;margin-bottom:6px;cursor:pointer;transition:border-color .15s;}
+  .calrow:hover{border-color:var(--line-hi);}
+  .calrow .mini{width:30px;height:45px;border-radius:5px;flex:none;background:var(--panel2) center/cover no-repeat;
+    display:grid;place-items:center;font-family:var(--disp);font-weight:800;font-size:11px;color:#fffdf7aa;}
+  .calrow .ct{font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .calrow .ce{font-family:var(--mono);font-size:11px;color:var(--muted);}
+  .calrow .cn{flex:1;min-width:0;}
+  .calempty{color:var(--muted);font-size:12.5px;padding:4px 2px 0;}
+  .ep-search{border:1px solid var(--line-hi);background:transparent;color:var(--muted);border-radius:6px;
+    font-size:12px;padding:2px 9px;cursor:pointer;flex:none;opacity:0;transition:opacity .12s,color .12s,border-color .12s;}
+  .eprow:hover .ep-search{opacity:1;}
+  .eprow.is-missing .ep-search{opacity:.75;color:var(--accent-soft);border-color:color-mix(in srgb,var(--accent) 45%,transparent);}
+  .ep-search:hover{color:var(--accent-soft);border-color:var(--accent);opacity:1;}
+  .rel-why{font-family:var(--mono);font-size:10px;color:var(--bad);}
+  .rel-pass{font-family:var(--mono);font-size:10px;color:var(--good);}
+  @media (max-width:760px){.ep-search{opacity:.75;}}
+
+  /* ── search page ── */
+  form.bar{display:flex;gap:8px;margin:0 0 8px;flex-wrap:wrap;position:relative;}
+  .searchwrap{flex:1 1 280px;min-width:0;position:relative;}
+  .searchwrap input{width:100%;}
+  .mode-toggle{display:flex;gap:6px;margin:0 0 12px;}
+  .mode-toggle .mode{background:var(--panel);border:1px solid var(--line-hi);color:var(--muted);
+    border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;}
+  .mode-toggle .mode.on{background:var(--accent);border-color:var(--accent);color:#13110B;}
+  .filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0;font-size:12px;}
+  .filters label{color:var(--muted);display:flex;align-items:center;gap:5px;}
+  .filters input[type=number]{width:70px;}
+  table{width:100%;border-collapse:collapse;margin-top:8px;}
+  th{text-align:left;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;
+    padding:6px 10px;border-bottom:1px solid var(--line);}
+  td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top;font-size:13px;}
+  tr:hover td{background:var(--panel);}
+  td.title{word-break:break-word;}
+  .tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;}
+  .tag{font-size:10px;padding:1px 6px;border-radius:3px;border:1px solid var(--line-hi);color:var(--muted);}
+  .tag.res{color:var(--accent);} .tag.src{color:var(--good);} .tag.ext{color:var(--muted);}
+  .tag.ctype{font-weight:600;}
+  .tag.ctype.game{color:var(--purple);} .tag.ctype.movie{color:var(--accent);} .tag.ctype.tv{color:var(--good);}
+  .tag.platform{background:var(--panel2);}
+  .health{display:inline-block;width:60px;height:5px;background:var(--line);border-radius:3px;overflow:hidden;vertical-align:middle;}
+  .health i{display:block;height:100%;background:var(--good);}
+  .addbtn{background:var(--accent);border:1px solid var(--accent);color:#13110B;border-radius:5px;
+    padding:5px 12px;cursor:pointer;font-family:var(--mono);font-size:12px;font-weight:600;}
+  .addbtn:hover{filter:brightness(1.1);}
+
+  /* generic cards (profiles, subs, requests, movie file block) */
+  .prof-card{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:12px 14px;margin-bottom:10px;}
+  .prof-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;}
+  .prof-meta{display:flex;flex-wrap:wrap;gap:5px;align-items:center;font-size:12px;}
+  .prof-meta .muted{color:var(--muted);}
+  .link-btn{background:none;border:none;color:var(--accent);cursor:pointer;font-family:var(--sans);
+    font-size:12px;font-weight:500;padding:0;}
+  .link-btn:hover{color:var(--accent-soft);}
+  .link-btn.danger{color:var(--bad);}
+  .pill{font-size:10px;padding:2px 8px;border-radius:20px;border:1px solid var(--line-hi);font-family:var(--mono);
+    text-transform:uppercase;letter-spacing:.04em;}
+  .pill.have{background:color-mix(in srgb,var(--good) 15%,transparent);color:var(--good);border-color:color-mix(in srgb,var(--good) 30%,transparent);}
+  .pill.want{background:color-mix(in srgb,var(--warn) 15%,transparent);color:var(--warn);border-color:color-mix(in srgb,var(--warn) 30%,transparent);}
+  .reqsection-label{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.08em;
+    color:var(--muted);margin:20px 0 10px;}
+  .reqcard{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px 16px;
+    margin-bottom:10px;display:flex;align-items:center;gap:14px;transition:border-color .15s;}
+  .reqcard:hover{border-color:var(--line-hi);}
+  .reqart{width:46px;height:69px;border-radius:6px;flex-shrink:0;background:var(--panel2) center/cover no-repeat;
+    display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px;
+    box-shadow:0 2px 8px -3px rgba(0,0,0,.5);}
+  .reqbody{flex:1;min-width:0;}
+  .reqtitle{font-family:var(--disp);font-weight:600;font-size:16px;letter-spacing:-0.01em;}
+  .reqsub{display:flex;align-items:center;gap:8px;margin-top:4px;font-size:12px;flex-wrap:wrap;}
+  .reqacts{display:flex;align-items:center;gap:8px;flex-shrink:0;}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;}
+  .chip{background:var(--panel2);border:1px solid var(--line-hi);border-radius:14px;padding:4px 12px;
+    font-size:12px;cursor:pointer;color:var(--muted);user-select:none;}
+  .chip.on{background:var(--accent);border-color:var(--accent);color:#13110B;}
+  .switch{position:relative;display:inline-block;width:34px;height:18px;vertical-align:middle;}
+  .switch input{opacity:0;width:0;height:0;}
+  .switch span{position:absolute;cursor:pointer;inset:0;background:var(--line-hi);border-radius:18px;transition:.2s;}
+  .switch span:before{content:"";position:absolute;height:12px;width:12px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.2s;}
+  .switch input:checked+span{background:var(--accent);}
+  .switch input:checked+span:before{transform:translateX(16px);}
+  .empty{color:var(--muted);padding:30px 0;text-align:center;}
+  .muted{color:var(--muted);} .hint{font-size:11px;color:var(--muted);margin-top:4px;}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:0 12px;}
+
+  /* settings tabs + path chips */
+  .set-tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:16px;flex-wrap:wrap;}
+  .set-tab{background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);
+    font-family:var(--sans);font-size:13px;font-weight:500;padding:8px 12px;cursor:pointer;margin-bottom:-1px;}
+  .set-tab:hover{color:var(--txt);}
+  .set-tab.on{color:var(--txt);border-bottom-color:var(--accent);}
+  .set-sec{display:none;}
+  .set-sec.on{display:block;animation:fadein .2s ease;}
+  .pchip{font-family:var(--mono);font-size:10px;padding:1px 7px;border-radius:10px;border:1px solid var(--line-hi);
+    margin-left:6px;vertical-align:middle;}
+  .pchip.ok{color:var(--good);border-color:color-mix(in srgb,var(--good) 40%,transparent);}
+  .pchip.warn{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent);}
+  .pchip.bad{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,transparent);}
+  .pchip.muted{color:var(--muted);}
+  .hl-row{display:grid;grid-template-columns:86px 70px 108px 1fr;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12px;align-items:baseline;}
+  .hl-row .t{color:var(--muted);font-size:10.5px;font-family:var(--mono);white-space:nowrap;}
+  .hl-row .k{font-family:var(--mono);font-size:11px;}
+  .hl-row .why{color:var(--muted);font-size:11px;margin-top:3px;}
+  .hl-row .rel{word-break:break-word;}
+  .ih-row{display:grid;grid-template-columns:1fr 70px 70px 1.3fr;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:12px;align-items:baseline;}
+  .ih-row.h{color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;}
+  .set-warn{background:color-mix(in srgb,var(--accent) 10%,transparent);
+    border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);border-radius:9px;
+    padding:11px 13px;font-size:12px;color:var(--txt);margin-bottom:14px;line-height:1.5;}
+
+  /* users */
+  .usercard{display:flex;align-items:center;gap:14px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:10px;padding:12px 14px;margin-bottom:9px;flex-wrap:wrap;}
+  .useravatar{width:42px;height:42px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;
+    justify-content:center;font-family:var(--disp);font-weight:600;font-size:15px;background:var(--panel);
+    border:1.5px solid var(--line-hi);color:var(--txt);}
+  .userinfo{flex:1;min-width:140px;}
+  .username{font-family:var(--disp);font-weight:600;font-size:15px;display:flex;align-items:center;gap:8px;}
+  .youtag{font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--accent);
+    border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);border-radius:8px;padding:1px 6px;}
+  .usermeta{display:flex;align-items:center;gap:9px;margin-top:5px;flex-wrap:wrap;}
+  .trustbadge{font-family:var(--mono);font-size:10px;color:var(--accent);}
+  .useracts{display:flex;flex-wrap:wrap;gap:12px;justify-content:flex-end;flex-shrink:0;}
+  body.role-user .remove,body.role-user [data-act="remove"],body.role-user .huntbtn{display:none !important;}
+  body.role-user .admin-only{display:none !important;}
+
+  /* fix-match rows */
+  .fix-row{display:flex;gap:12px;padding:10px;border:1px solid var(--line);border-radius:8px;margin-bottom:8px;align-items:center;cursor:pointer;}
+  .fix-row:hover{border-color:var(--line-hi);background:var(--panel);}
+  .fix-row img{width:46px;height:69px;object-fit:cover;border-radius:4px;flex-shrink:0;background:#222;}
+  .fix-row .fr-t{font-weight:600;}
+  .fix-row .fr-o{font-size:12px;color:var(--muted);margin-top:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+
+  /* terminal file browser */
+  .fb-term{font-family:var(--mono);font-size:13px;background:var(--bg);color:var(--txt);border-radius:var(--radius);overflow:hidden;}
+  .fb-bar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel2);}
+  .fb-bar .fb-up{background:var(--panel);border:1px solid var(--line-hi);color:var(--muted);padding:3px 10px;border-radius:6px;cursor:pointer;font-family:inherit;}
+  .fb-bar .fb-up:hover{border-color:var(--accent);color:var(--txt);}
+  .fb-bar .fb-up:disabled{opacity:.4;cursor:default;}
+  .fb-path{flex:1;color:var(--accent);overflow-x:auto;white-space:nowrap;}
+  .fb-mk{background:none;border:1px solid var(--line-hi);color:var(--muted);padding:3px 10px;border-radius:6px;cursor:pointer;font-family:inherit;}
+  .fb-mk:hover{border-color:var(--accent);color:var(--accent);}
+  .fb-list{max-height:50vh;overflow-y:auto;padding:6px 0;}
+  .fb-row{display:flex;align-items:center;gap:10px;padding:6px 14px;cursor:pointer;}
+  .fb-row:hover{background:var(--panel2);}
+  .fb-row .ic{width:16px;text-align:center;}
+  .fb-row .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .fb-row.dir .nm{color:var(--link);}
+  .fb-row.video .nm{color:var(--good);}
+  .fb-row .sz{color:var(--muted);font-size:11px;}
+  .fb-row .pick{background:var(--accent);border:none;color:#13110B;padding:3px 10px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:11px;font-weight:600;opacity:0;}
+  .fb-row:hover .pick{opacity:1;}
+  .fb-row .pick:hover{background:var(--accent-soft);}
+  .fb-foot{padding:9px 14px;border-top:1px solid var(--line);background:var(--panel2);color:var(--muted);font-size:11px;min-height:18px;}
+  .fb-foot.armed{color:var(--accent);}
+
+  /* activity drawer */
+  .drawer{position:fixed;top:0;right:0;bottom:0;width:420px;max-width:92vw;background:var(--bg);
+    border-left:1px solid var(--line-hi);z-index:80;transform:translateX(100%);transition:transform .2s;
+    display:flex;flex-direction:column;}
+  .drawer.show{transform:translateX(0);}
+  .drawer-head{display:flex;align-items:center;gap:10px;padding:16px 18px;border-bottom:1px solid var(--line);}
+  .drawer-head h2{font-size:15px;margin:0;font-family:var(--disp);}
+  .drawer-tabs{display:flex;gap:6px;margin-left:8px;}
+  .drawer-tabs button{background:none;border:none;color:var(--muted);cursor:pointer;font-family:var(--mono);font-size:12px;padding:4px 8px;border-radius:5px;}
+  .drawer-tabs button.on{background:var(--panel2);color:var(--txt);}
+  .drawer-close{margin-left:auto;background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;}
+  .drawer-body{flex:1;overflow-y:auto;padding:14px 18px;}
+  .xfer{padding:9px 0;border-bottom:1px solid var(--line);font-size:12px;}
+  .xfer .xt{word-break:break-word;margin-bottom:4px;}
+  .xfer .xbar{height:5px;background:var(--line);border-radius:3px;overflow:hidden;margin:4px 0;}
+  .xfer .xbar i{display:block;height:100%;background:var(--accent);}
+  .xfer .xmeta{color:var(--muted);display:flex;gap:10px;flex-wrap:wrap;}
+  .xfer .xsize{color:var(--muted);font-family:var(--mono);font-size:10.5px;margin-top:4px;}
+  .xfer .xact{margin-top:5px;display:flex;gap:8px;}
+  .xfer .xflag{color:var(--bad);font-size:11.5px;margin:2px 0 4px;line-height:1.35;}
+  .hist-row{display:flex;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:12px;align-items:baseline;}
+  .hist-row .ht{color:var(--muted);font-size:10px;white-space:nowrap;}
+  .hist-row .he{font-size:10px;padding:1px 6px;border-radius:3px;border:1px solid var(--line-hi);white-space:nowrap;}
+  .hist-row .hn{flex:1;word-break:break-word;}
+  .stat-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;margin-bottom:16px;}
+  .stat-card{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:12px;}
+  .stat-card .num{font-size:20px;font-weight:600;font-family:var(--disp);} .stat-card .lbl{font-size:10px;color:var(--muted);margin-top:2px;}
+
+  /* toast + modal */
+  .toast{position:fixed;bottom:20px;left:50%;visibility:hidden;transform:translateX(-50%) translateY(80px);
+    background:var(--panel);border:1px solid var(--line-hi);border-radius:8px;padding:11px 18px;
+    font-size:13px;z-index:200;transition:transform .25s;box-shadow:0 8px 30px rgba(0,0,0,.5);}
+  .toast.show{visibility:visible;transform:translateX(-50%) translateY(0);}
+  .toast.err{border-color:var(--bad);color:var(--bad);}
+  .modal-overlay{position:fixed;inset:0;background:rgba(5,8,12,.78);backdrop-filter:blur(3px);
+    z-index:150;display:none;align-items:center;justify-content:center;padding:20px;}
+  .modal-overlay.show{display:flex;}
+  .modal{width:600px;max-width:96vw;max-height:90vh;background:var(--bg);border:1px solid var(--line-hi);
+    border-radius:14px;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.6);}
+  .modal-head{display:flex;align-items:center;padding:18px 22px;border-bottom:1px solid var(--line);}
+  .modal-head h2{font-size:16px;margin:0;font-family:var(--disp);}
+  .modal-close{margin-left:auto;background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;}
+  .modal-body{overflow-y:auto;padding:18px 22px;flex:1;}
+  /* poster grid inside modals (add/request search) */
+  .poster-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px;margin-top:8px;}
+  .poster-grid .pcard .art{font-size:12px;}
+
+  /* mobile */
+  .botnav{display:none;}
+  .iconbtn{font-size:15px;line-height:1;padding:7px 11px;}
+  @media (max-width:900px){.rail{grid-auto-columns:108px;}.tile.span2{grid-column:span 1;}}
+  @media (max-width:760px){
+    .topnav{padding:0 14px;height:56px;gap:2px;}
+    .topnav .navlink{display:none;}
+    .topnav #activityBtn,.topnav #filesBtn,.topnav #settingsBtn,.topnav #usersBtn{display:none;}
+    .topnav .navspacer{flex:1;}
+    .brand{font-size:20px;margin-right:0;}
+    .wrap{padding:18px 14px 96px;}
+    .page-head h1{font-size:23px;}
+    .page-head .ph-actions{margin-left:0;width:100%;}
+    .pgrid{grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;}
+    .hero-in{flex-direction:column;align-items:flex-start;gap:14px;padding:18px;}
+    .hero .bigposter{width:104px;}
+    .hero h1{font-size:24px;}
+    .dlrow .pct{display:none;}
+    .eprow .date{display:none;}
+    td.trk,th.trk{display:none;}
+    .botnav{display:flex;position:fixed;bottom:0;left:0;right:0;z-index:60;
+      background:color-mix(in srgb,var(--panel) 94%,transparent);backdrop-filter:blur(14px);
+      border-top:1px solid var(--line);padding:6px 4px env(safe-area-inset-bottom,6px);}
+    .botlink{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 2px;
+      color:var(--muted);cursor:pointer;border-radius:10px;transition:color .15s;}
+    .botlink i{font-size:19px;font-style:normal;line-height:1;}
+    .botlink b{font-size:10px;font-weight:500;letter-spacing:.01em;}
+    .botlink.on{color:var(--accent);}
+  }
+  .sheet{display:none;position:fixed;inset:0;z-index:70;background:rgba(0,0,0,.5);backdrop-filter:blur(2px);}
+  .sheet.show{display:block;}
+  .sheet-panel{position:absolute;bottom:0;left:0;right:0;background:var(--panel);border-top:1px solid var(--line-hi);
+    border-radius:18px 18px 0 0;padding:10px 14px calc(18px + env(safe-area-inset-bottom,0));
+    animation:sheetup .25s ease;}
+  @keyframes sheetup{from{transform:translateY(100%);}to{transform:none;}}
+  .sheet-grab{width:38px;height:4px;background:var(--line-hi);border-radius:2px;margin:4px auto 12px;}
+  .sheet-item{display:flex;align-items:center;gap:12px;padding:13px 8px;font-size:15px;cursor:pointer;
+    border-bottom:1px solid var(--line);}
+  .sheet-item:last-child{border-bottom:none;}
+</style>
+</head>
+<body>
+
+<nav class="topnav">
+  <span class="brand" id="brandHome"><span class="dot"></span>Faucet</span>
+  <span class="navlink on" data-page="dashboard">Dashboard</span>
+  <span class="navlink" data-page="search">Search</span>
+  <span class="navlink" data-page="shows">Shows</span>
+  <span class="navlink" data-page="movies">Movies</span>
+  <span class="navlink" data-page="discover">Discover</span>
+  <span class="navlink" data-page="calendar">Calendar</span>
+  <span class="navlink" data-page="subs">Auto-grab</span>
+  <span class="navlink" data-page="profiles">Profiles</span>
+  <span class="navspacer"></span>
+  <button class="navbtn iconbtn" id="themeBtn" title="Toggle light/dark">◐</button>
+  <button class="navbtn" id="activityBtn">Activity <span class="badge zero" id="activeCount">0</span></button>
+  <button class="navbtn admin-only" id="filesBtn">Files</button>
+  <button class="navbtn" id="settingsBtn">Settings</button>
+  <button class="navbtn" id="usersBtn" style="display:none">Users</button>
+  <button class="avatarbtn" id="accountBtn" title="Account">?</button>
+</nav>
+
+<!-- mobile "More" sheet -->
+<div class="sheet" id="moreSheet">
+  <div class="sheet-panel">
+    <div class="sheet-grab"></div>
+    <div class="sheet-item" data-page="discover">✦ Discover</div>
+    <div class="sheet-item" data-page="calendar">▦ Calendar</div>
+    <div class="sheet-item" data-page="profiles">◈ Profiles</div>
+    <div class="sheet-item" data-page="subs">⟳ Auto-grab</div>
+    <div class="sheet-item" id="msActivity">≡ Activity</div>
+    <div class="sheet-item admin-only" id="msFiles">📁 Files</div>
+    <div class="sheet-item" id="msSettings">⚙ Settings</div>
+    <div class="sheet-item" id="msUsers" style="display:none">👥 Users</div>
+    <div class="sheet-item" id="msAccount">○ Account</div>
+    <div class="sheet-item" id="msTheme">◐ Toggle theme</div>
+  </div>
+</div>
+
+<!-- mobile bottom tab bar -->
+<nav class="botnav" id="botnav">
+  <span class="botlink on" data-page="dashboard"><i>◳</i><b>Home</b></span>
+  <span class="botlink" data-page="shows"><i>▤</i><b>Shows</b></span>
+  <span class="botlink" data-page="movies"><i>▦</i><b>Movies</b></span>
+  <span class="botlink" data-page="search"><i>⌕</i><b>Search</b></span>
+  <span class="botlink" id="botMore"><i>⋯</i><b>More</b></span>
+</nav>
+
+<div class="wrap">
+
+  <!-- ============ DASHBOARD ============ -->
+  <section class="page on" id="page-dashboard">
+    <div class="page-head"><h1>Overview</h1><span class="count" id="dashClock"></span></div>
+    <div id="dashBody"><div class="muted">loading…</div></div>
+    <div id="dashRails"></div>
+  </section>
+
+  <!-- ============ SEARCH ============ -->
+  <section class="page" id="page-search">
+    <div class="page-head"><h1>Search</h1></div>
+    <div class="mode-toggle" id="modeToggle" hidden>
+      <button class="mode on" data-mode="title">by title</button>
+      <button class="mode" data-mode="release">by release</button>
+    </div>
+    <form class="bar" id="searchForm">
+      <div class="searchwrap">
+        <input type="text" id="q" placeholder="search by title… e.g. dune" autocomplete="off">
+        <div class="history" id="history"></div>
+      </div>
+      <select id="cat">
+        <option value="all">all</option><option value="movies">movies</option>
+        <option value="tv">tv</option><option value="games">games</option>
+        <option value="console">console</option><option value="pc">pc</option>
+        <option value="music">music</option><option value="books">books</option>
+      </select>
+      <button class="btn" id="goBtn" type="submit">search</button>
+    </form>
+    <div class="filters" id="filters" hidden>
+      <label>min seed <input type="number" id="fSeed" value="0" min="0"></label>
+      <label>res <select id="fRes"><option value="">any</option><option>2160p</option><option>1080p</option><option>720p</option><option>480p</option></select></label>
+      <label>source <select id="fSrc"><option value="">any</option><option>BluRay</option><option>WEB-DL</option><option>WEBRip</option><option>HDTV</option><option>REMUX</option></select></label>
+    </div>
+    <div id="status" class="muted" style="font-size:12px;min-height:18px;"></div>
+    <div class="pgrid" id="posterGrid" hidden></div>
+    <table id="resultsTable" hidden>
+      <thead><tr><th>title</th><th>size</th><th>health</th><th class="trk">tracker</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="empty" id="searchEmpty" hidden></div>
+  </section>
+
+  <!-- ============ SHOWS ============ -->
+  <section class="page" id="page-shows">
+    <div class="page-head">
+      <h1>Shows</h1><span class="count" id="showsCount"></span>
+      <div class="ph-actions">
+        <button class="btn ghost" id="showsReport" title="What didn't parse">scan report</button>
+        <button class="btn ghost" id="showsImport">import library</button>
+        <button class="btn ghost" id="showsScan">scan + hunt</button>
+        <button class="btn" id="showsAdd">+ add show</button>
+      </div>
+    </div>
+    <div class="toolbar">
+      <input type="text" id="showsFilter" placeholder="Filter shows…">
+      <div class="seg" id="showsSeg">
+        <button class="on" data-f="all">All</button><button data-f="missing">Missing</button>
+        <button data-f="complete">Complete</button><button data-f="paused">Paused</button>
+      </div>
+      <div class="seg" id="showsSort">
+        <button class="on" data-s="az">A–Z</button><button data-s="pct">% owned</button><button data-s="new">Newest</button>
+      </div>
+    </div>
+    <div class="pgrid" id="showsGrid"></div>
+    <div class="empty" id="showsEmpty" hidden>No monitored shows yet. Add one and Faucet tracks its episodes, scans your library, and hunts the missing ones.</div>
+  </section>
+
+  <!-- ============ MOVIES ============ -->
+  <section class="page" id="page-movies">
+    <div class="page-head">
+      <h1>Movies</h1><span class="count" id="moviesCount"></span>
+      <div class="ph-actions">
+        <button class="btn ghost" id="moviesImport">import library</button>
+        <button class="btn ghost" id="moviesScan">scan + hunt</button>
+        <button class="btn" id="moviesAdd">+ add movie</button>
+      </div>
+    </div>
+    <div class="toolbar">
+      <input type="text" id="moviesFilter" placeholder="Filter movies…">
+      <div class="seg" id="moviesSeg">
+        <button class="on" data-f="all">All</button><button data-f="have">In library</button><button data-f="want">Wanted</button>
+      </div>
+    </div>
+    <div class="pgrid" id="moviesGrid"></div>
+    <div class="empty" id="moviesEmpty" hidden>No monitored movies yet. Add one and Faucet will grab it if it's not already in your library.</div>
+  </section>
+
+  <!-- ============ SHOW DETAIL ============ -->
+  <section class="page" id="page-showdetail">
+    <div style="margin-bottom:14px"><button class="btn ghost" id="sdBack">← shows</button></div>
+    <div id="sdHero"></div>
+    <div id="sdBody"></div>
+  </section>
+
+  <!-- ============ MOVIE DETAIL ============ -->
+  <section class="page" id="page-moviedetail">
+    <div style="margin-bottom:14px"><button class="btn ghost" id="mdBack">← movies</button></div>
+    <div id="mdHero"></div>
+    <div id="mdBody"></div>
+  </section>
+
+  <!-- ============ DISCOVER ============ -->
+  <section class="page" id="page-discover">
+    <div class="page-head">
+      <h1>Discover</h1><span class="count" id="discCount"></span>
+    </div>
+    <div class="toolbar">
+      <div class="seg" id="discSeg">
+        <button class="on" data-d="trending:tv">Trending TV</button>
+        <button data-d="trending:movie">Trending Movies</button>
+        <button data-d="popular:tv">Popular TV</button>
+        <button data-d="popular:movie">Popular Movies</button>
+        <button data-d="upcoming:movie">Upcoming</button>
+      </div>
+    </div>
+    <div class="pgrid" id="discGrid"></div>
+    <div class="empty" id="discEmpty" hidden>Discover needs a TMDb key — set one in Settings.</div>
+  </section>
+
+  <!-- ============ CALENDAR ============ -->
+  <section class="page" id="page-calendar">
+    <div class="page-head">
+      <h1>Calendar</h1><span class="count" id="calCount"></span>
+    </div>
+    <div id="calBody"><div class="muted">loading…</div></div>
+  </section>
+
+  <!-- ============ AUTO-GRAB ============ -->
+  <section class="page" id="page-subs">
+    <div class="page-head">
+      <h1>Auto-grab</h1><span class="count" id="subsCount"></span>
+      <div class="ph-actions">
+        <button class="btn ghost" id="subsCheck">check now</button>
+        <button class="btn" id="subsNew">+ follow</button>
+      </div>
+    </div>
+    <div id="subsStatus" class="hint" style="margin-bottom:12px;"></div>
+    <div id="subsList"></div>
+    <div class="empty" id="subsEmpty" hidden>No subscriptions. Follow a search query to auto-grab new releases on a timer.</div>
+  </section>
+
+  <!-- ============ PROFILES ============ -->
+  <section class="page" id="page-profiles">
+    <div class="page-head">
+      <h1>Quality profiles</h1><span class="count" id="profCount"></span>
+      <div class="ph-actions"><button class="btn" id="profNew">+ new profile</button></div>
+    </div>
+    <div id="profList"></div>
+  </section>
+
+</div>
+
+<!-- activity drawer -->
+<div class="drawer" id="drawer">
+  <div class="drawer-head">
+    <h2>Activity</h2>
+    <div class="drawer-tabs">
+      <button class="on" data-tab="transfers" id="tabXfer">Transfers</button>
+      <button data-tab="events" id="tabEvents">Events</button>
+      <button data-tab="stats" id="tabStats">Stats</button>
+    </div>
+    <button class="drawer-close" id="drawerClose">×</button>
+  </div>
+  <div class="drawer-body" id="drawerBody"></div>
+</div>
+
+<!-- file browser modal -->
+<div class="modal-overlay" id="fbModal">
+  <div class="modal" style="width:760px">
+    <div class="modal-head"><h2>📁 file browser</h2><button class="modal-close" id="fbClose">×</button></div>
+    <div class="modal-body" style="padding:0">
+      <div class="fb-term">
+        <div class="fb-bar">
+          <button class="fb-up" id="fbUp" title="up">..</button>
+          <span class="fb-path" id="fbPath">/</span>
+          <button class="fb-mk" id="fbMkdir" title="new folder">+ dir</button>
+        </div>
+        <div class="fb-list" id="fbList"></div>
+        <div class="fb-foot" id="fbFoot"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- fix-match modal -->
+<div class="modal-overlay" id="fixModal">
+  <div class="modal">
+    <div class="modal-head"><h2>Fix match</h2><button class="modal-close" id="fixClose">×</button></div>
+    <div class="modal-body">
+      <p class="muted" style="margin-top:0">Search for the correct title, then pick it. The library files re-link and counts re-reconcile immediately.</p>
+      <div style="display:flex;gap:8px;margin-bottom:14px">
+        <input id="fixQuery" placeholder="Search TMDb…" style="flex:1">
+        <button class="btn" id="fixSearchBtn">search</button>
+      </div>
+      <div id="fixResults"></div>
+    </div>
+  </div>
+</div>
+
+<!-- generic form modal -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <div class="modal-head"><h2 id="modalTitle"></h2><button class="modal-close" id="modalClose">×</button></div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script>
+// ============ core helpers ============
+const $=id=>document.getElementById(id);
+function toast(msg,kind){const t=$("toast");t.textContent=msg;t.className="toast show"+(kind==="err"?" err":"");setTimeout(()=>t.className="toast",2600);}
+function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));}
+function human(n){if(!n)return"0 B";const u=["B","KB","MB","GB","TB"];let i=0,v=n;while(v>=1024&&i<u.length-1){v/=1024;i++;}return v.toFixed(v<10&&i>0?1:0)+" "+u[i];}
+function csrfToken(){const m=document.cookie.match(/(?:^|;\s*)faucet_csrf=([^;]+)/);return m?decodeURIComponent(m[1]):"";}
+async function jget(u){const r=await fetch(u);if(!r.ok){const d=(await r.json().catch(()=>({}))).detail;throw new Error(d?`${d} (${r.status})`:String(r.status));}return r.json();}
+function ixNote(d){if(!d||!d.indexers||d.indexers<2)return'';const f=(d.indexer_errors||[]);
+  return ` · ${d.indexers} indexers searched${f.length?`, <span title="${esc(f.map(x=>x.indexer+': '+x.error).join('\n'))}" style="color:var(--warn)">${f.length} failed</span>`:''}`;}
+function hiddenNote(n){return n?` · ${n} unsafe result${n===1?'':'s'} hidden (executable files)`:'';}
+async function jsend(u,m,b){const r=await fetch(u,{method:m,headers:{"Content-Type":"application/json","X-CSRF-Token":csrfToken()},body:b?JSON.stringify(b):undefined});if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||r.status);return r.json();}
+// deterministic hue for gradient placeholder art (no poster available)
+function hueOf(s){let h=0;for(const c of String(s||""))h=(h*31+c.charCodeAt(0))>>>0;return h%360;}
+// Only TMDb image URLs ever reach a style attribute or <img>. esc() alone is
+// not enough inside url('...'): the HTML parser decodes &#39; back to a quote
+// before the CSS parser runs, so a crafted "poster" could break out of url().
+const TMDB_IMG=/^https:\/\/image\.tmdb\.org\/t\/p\/[a-z0-9]+\/[A-Za-z0-9_\-]+\.(?:jpg|jpeg|png|webp)$/;
+function safeImg(u){return (typeof u==="string"&&TMDB_IMG.test(u))?u:"";}
+function bgImg(u){const s=safeImg(u);return s?`background-image:url('${s}')`:"";}
+function artStyle(poster,title){
+  if(safeImg(poster))return bgImg(poster);
+  const h=hueOf(title);
+  return `background:linear-gradient(150deg,hsl(${h} 38% 38% / .55),hsl(${h} 30% 18% / .5) 60%,var(--panel2))`;
+}
+
+// ============ navigation ============
+const PAGES=["dashboard","search","shows","movies","discover","calendar","subs","profiles"];
+function nav(page){
+  ["showdetail","moviedetail","requests"].forEach(p=>{const el=$("page-"+p);if(el)el.classList.remove("on");});
+  PAGES.forEach(p=>{ $("page-"+p).classList.toggle("on",p===page);
+    const dl=document.querySelector(`.navlink[data-page="${p}"]`);if(dl)dl.classList.toggle("on",p===page);
+    const bl=document.querySelector(`.botlink[data-page="${p}"]`);if(bl)bl.classList.toggle("on",p===page); });
+  const rl=document.querySelector('.navlink[data-page="requests"]');if(rl)rl.classList.toggle("on",page==="requests");
+  if(page==="dashboard")loadDashboard(true);
+  if(page==="shows")loadShows();
+  if(page==="movies")loadMovies();
+  if(page==="discover")loadDiscover();
+  if(page==="calendar")loadCalendar();
+  if(page==="subs")loadSubs();
+  if(page==="profiles")loadProfiles();
+  window.scrollTo(0,0);
+}
+document.querySelectorAll(".navlink").forEach(l=>l.addEventListener("click",()=>nav(l.dataset.page)));
+document.querySelectorAll(".botlink[data-page]").forEach(l=>l.addEventListener("click",()=>{nav(l.dataset.page);closeMoreSheet();}));
+$("brandHome").addEventListener("click",()=>nav(ME&&ME.role==="admin"?"dashboard":"shows"));
+// "/" focuses search from anywhere
+document.addEventListener("keydown",e=>{
+  if(e.key==="/"&&!e.ctrlKey&&!e.metaKey&&!/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)){
+    e.preventDefault();nav("search");setTimeout(()=>$("q").focus(),50);}});
+
+// theme
+function applyTheme(t){document.body.classList.toggle("theme-light",t==="light");}
+function toggleTheme(){const next=document.body.classList.contains("theme-light")?"dark":"light";
+  try{localStorage.setItem("faucet-theme",next);}catch(_){}applyTheme(next);}
+(function(){let t="dark";try{t=localStorage.getItem("faucet-theme")||"dark";}catch(_){}applyTheme(t);})();
+$("themeBtn")&&$("themeBtn").addEventListener("click",toggleTheme);
+$("msTheme")&&$("msTheme").addEventListener("click",()=>{toggleTheme();closeMoreSheet();});
+
+// mobile sheet
+function openMoreSheet(){$("moreSheet").classList.add("show");}
+function closeMoreSheet(){$("moreSheet").classList.remove("show");}
+$("botMore")&&$("botMore").addEventListener("click",openMoreSheet);
+$("moreSheet")&&$("moreSheet").addEventListener("click",e=>{if(e.target===$("moreSheet"))closeMoreSheet();});
+document.querySelectorAll('.sheet-item[data-page]').forEach(el=>el.addEventListener("click",()=>{nav(el.dataset.page);closeMoreSheet();}));
+$("msActivity")&&$("msActivity").addEventListener("click",()=>{closeMoreSheet();$("activityBtn").click();});
+$("msFiles")&&$("msFiles").addEventListener("click",()=>{closeMoreSheet();$("filesBtn").click();});
+$("msSettings")&&$("msSettings").addEventListener("click",()=>{closeMoreSheet();$("settingsBtn").click();});
+$("msUsers")&&$("msUsers").addEventListener("click",()=>{closeMoreSheet();$("usersBtn").click();});
+$("msAccount")&&$("msAccount").addEventListener("click",()=>{closeMoreSheet();$("accountBtn").click();});
+
+// ============ search ============
+let allResults=[],searchMode="release",metaEnabled=false;
+function setMode(m){searchMode=m;document.querySelectorAll("#modeToggle .mode").forEach(b=>b.classList.toggle("on",b.dataset.mode===m));
+  $("posterGrid").hidden=true;$("posterGrid").innerHTML="";$("resultsTable").hidden=true;$("rows").innerHTML="";$("filters").hidden=true;$("searchEmpty").hidden=true;
+  $("q").placeholder=m==="title"?"search by title… e.g. dune":"search by release… e.g. dune 2024 1080p";}
+document.querySelectorAll("#modeToggle .mode").forEach(b=>b.addEventListener("click",()=>setMode(b.dataset.mode)));
+$("searchForm").addEventListener("submit",e=>{e.preventDefault();doSearch();});
+async function doSearch(){
+  if(searchMode==="title"&&metaEnabled)return doTitleSearch();
+  const q=$("q").value.trim();if(!q)return;
+  $("goBtn").disabled=true;$("status").textContent="searching…";$("posterGrid").hidden=true;$("searchEmpty").hidden=true;
+  try{
+    const d=await jget(`/api/search?q=${encodeURIComponent(q)}&cat=${$("cat").value}&limit=150`);
+    allResults=d.results||[];
+    if(!allResults.length){$("status").textContent="";$("resultsTable").hidden=true;$("searchEmpty").hidden=false;$("searchEmpty").textContent="No results. Try fewer words or a different category."+hiddenNote(d.hidden);return;}
+    $("filters").hidden=false;applyFilters();
+    $("status").textContent=`${allResults.length} results`+hiddenNote(d.hidden);
+  }catch(err){$("status").textContent="";$("searchEmpty").hidden=false;$("searchEmpty").textContent="Search failed: "+err.message;}
+  finally{$("goBtn").disabled=false;}
+}
+async function doTitleSearch(){
+  const q=$("q").value.trim();if(!q)return;
+  $("goBtn").disabled=true;$("status").textContent="searching titles…";$("resultsTable").hidden=true;$("searchEmpty").hidden=true;$("filters").hidden=true;
+  try{
+    const d=await jget(`/api/meta/search?q=${encodeURIComponent(q)}`);
+    if(!d.results||!d.results.length){$("status").textContent="";$("posterGrid").hidden=true;$("searchEmpty").hidden=false;$("searchEmpty").textContent="No titles found.";return;}
+    renderPosters(d.results);$("status").textContent=`${d.results.length} titles · pick one to find releases`;
+  }catch(err){$("status").textContent="";$("searchEmpty").hidden=false;$("searchEmpty").textContent="Title search failed.";}
+  finally{$("goBtn").disabled=false;}
+}
+function renderPosters(results){
+  const g=$("posterGrid");g.hidden=false;
+  g.innerHTML=results.map(r=>`<div class="pcard" data-q="${esc(r.search_query)}">
+    <div class="art" style="${artStyle(r.poster,r.title)}">${r.poster?'':esc(r.title)}</div>
+    <div class="shade"></div>
+    <div class="pmeta"><div class="pt">${esc(r.title)}</div><div class="py">${esc(r.year||'')} · ${esc(r.media_type)}</div></div></div>`).join("");
+  g.querySelectorAll(".pcard").forEach(p=>p.addEventListener("click",()=>{$("q").value=p.dataset.q;setMode("release");doSearch();}));
+}
+function applyFilters(){
+  const seed=+$("fSeed").value||0,res=$("fRes").value,src=$("fSrc").value;
+  const v=allResults.filter(r=>r.seeders>=seed&&(!res||(r.badges&&r.badges.res===res))&&(!src||(r.badges&&r.badges.source===src)));
+  renderRows(v);
+}
+["fSeed","fRes","fSrc"].forEach(id=>$(id).addEventListener("input",applyFilters));
+function typeBadge(r){if(!r||!r.ctype)return"";let h=`<span class="tag ctype ${esc(r.ctype)}">${esc(r.ctype)}</span>`;if(r.platform)h+=`<span class="tag platform">${esc(r.platform)}</span>`;return h;}
+function badgeHtml(b){if(!b)return"";let h="";if(b.res)h+=`<span class="tag res">${esc(b.res)}</span>`;if(b.source)h+=`<span class="tag src">${esc(b.source)}</span>`;if(b.ext)h+=`<span class="tag ext">${esc(b.ext)}</span>`;return h?`<div class="tags">${h}</div>`:"";}
+function healthHtml(r){const t=r.seeders+(r.peers||0),p=t?Math.round(r.seeders/t*100):0;return `<span class="health" title="${r.seeders} seed / ${r.peers||0} peers"><i style="width:${p}%"></i></span> ${r.seeders}`;}
+function renderRows(list){
+  $("resultsTable").hidden=false;$("posterGrid").hidden=true;
+  $("rows").innerHTML=list.map((r,i)=>`<tr>
+    <td class="title">${esc(r.title)}${typeBadge(r)}${badgeHtml(r.badges)}</td>
+    <td>${esc(r.size_h||human(r.size))}</td><td>${healthHtml(r)}</td>
+    <td class="trk">${esc(r.tracker||'')}</td>
+    <td><button class="addbtn" data-add="${i}">add</button></td></tr>`).join("");
+  $("rows").querySelectorAll("[data-add]").forEach(b=>b.addEventListener("click",()=>addTorrent(list[+b.dataset.add],b)));
+}
+async function addTorrent(r,btn){
+  btn.disabled=true;btn.textContent="adding…";
+  try{await jsend("/api/add","POST",{magnet:r.href,title:r.title});toast("Added: "+r.title.slice(0,40));btn.textContent="added";refreshDock();}
+  catch(err){btn.disabled=false;btn.textContent="add";toast("Add failed: "+err.message,"err");}
+}
+async function refreshMeta(){
+  try{const d=await jget("/api/meta/search?q=test");metaEnabled=!!d.enabled;}catch(_){metaEnabled=false;}
+  $("modeToggle").hidden=!metaEnabled;if(metaEnabled&&searchMode==="release")setMode("title");
+}
+
+// ============ dashboard ============
+function etaH(s){ if(!s||s<0)return''; if(s<60)return s+'s'; if(s<3600)return Math.round(s/60)+'m';
+  return Math.floor(s/3600)+'h '+Math.round((s%3600)/60)+'m'; }
+function tile(k,v,foot,cls){return `<div class="tile"><div class="k">${k}</div>
+  <div class="v ${cls||''}">${v}</div>${foot?`<div class="foot">${foot}</div>`:''}</div>`;}
+async function loadDashboard(withRails){
+  const host=$("dashBody"); if(!host)return;
+  let d;
+  try{ d=await jget("/api/dashboard"); }
+  catch(e){ host.innerHTML=`<div class="empty">Couldn't load the overview.</div>`; return; }
+  const dl=(d.transfers&&d.transfers.downloading)||0;
+  if($("activeCount")){$("activeCount").textContent=dl;$("activeCount").className="badge"+(dl?"":" zero");}
+
+  const disk=d.disk, tr=d.transfers||{}, lib=d.library||{}, rq=d.requests||{}, us=d.users||{};
+  const dpct=disk?disk.pct_used:0;
+  const diskCls=dpct>90?"bad":dpct>78?"warn":"";
+  const epPct=lib.episodes_total?Math.round(lib.episodes_have/lib.episodes_total*100):0;
+
+  let html=(d.warnings||[]).map(w=>`<div class="set-warn" style="margin-bottom:10px">⚠ ${esc(w)}</div>`).join("")+`<div class="tiles">
+    <div class="tile span2"><div class="k">Storage</div>
+      <div class="v">${disk?esc(disk.used_h):'—'} <small>${disk?'of '+esc(disk.total_h)+' · '+dpct+'%':'unavailable'}</small></div>
+      <div class="storagebar"><i class="${diskCls}" style="width:${dpct}%"></i></div>
+      <div class="foot">${disk?esc(disk.free_h)+' free':''}</div></div>
+    <div class="tile"><div class="k">Services</div>
+      <div class="v" style="font-size:14px;flex-direction:column;align-items:flex-start;gap:6px">
+        <span class="spill ${(d.indexer&&d.indexer.configured)?'ok':'err'}"><i></i>${(d.indexer&&d.indexer.configured)?'Indexer':'Indexer not configured'}</span>
+        <span class="spill ${tr.client_ok?'ok':'err'}"><i></i>${tr.client_ok?'Client':'Client offline'}</span>
+      </div><div class="foot"><span class="dlink" data-go="indexers">indexer health →</span></div></div>
+    ${tile("Throughput",`${esc(tr.down_h||'0 B/s')} <small>↓</small>`,`<b>${esc(tr.up_h||'0 B/s')}</b> ↑ · ${tr.downloading||0} active · ${tr.seeding||0} seeding`)}
+    ${tile("Library",`${lib.shows||0} <small>shows</small>`,`<b>${lib.movies||0}</b> movies · <b>${lib.episodes_have||0}</b>/${lib.episodes_total||0} eps (${epPct}%)`)}
+    ${tile("Wanted",lib.wanted||0,rq.pending?`<span class="dlink" data-go="requests"><b>${rq.pending}</b> pending request${rq.pending===1?'':'s'} →</span>`:'requests all clear',lib.wanted?'warn':'good')}
+    ${tile("Members",us.active||0,us.pending?`<span class="dlink" data-go="users"><b>${us.pending}</b> awaiting approval →</span>`:`${us.admins||0} admin${us.admins===1?'':'s'}`,us.pending?'warn':'')}
+  </div>`;
+
+  html+=`<div class="sec"><h2>Downloading</h2><span class="n">${tr.active_count||0} active</span><span class="more" data-go="activity">Activity →</span></div>`;
+  if(tr.active&&tr.active.length){
+    html+=`<div class="dl">`+tr.active.map(a=>{
+      const stalled=(a.status==='downloading'&&!a.down_rate&&a.percent>0);
+      return `<div class="dlrow">
+        <div class="mini" style="${artStyle(null,a.name)}">${esc((a.name||'?').replace(/^www\.[^\s]+\s*[-–]\s*/i,'').slice(0,2).toUpperCase())}</div>
+        <div class="info">
+          <div class="name">${esc(a.name)}</div>
+          <div class="det">${stalled?'<span class="stall">⚠ no peers — stall handler will retry a different release</span>':
+            `${esc(human(a.size*a.percent/100))} of ${esc(a.size_h)} · ${esc(a.down_h)}${a.eta>0?' · '+etaH(a.eta)+' left':''}`}</div>
+          <div class="pbar"><i class="${stalled?'stall':''}" style="width:${a.percent}%"></i></div>
+        </div>
+        <div class="pct" ${stalled?'style="color:var(--warn)"':''}>${a.percent}%</div>
+      </div>`;}).join("")+`</div>`;
+  }else{
+    html+=`<div class="dempty">${tr.client_ok?'Nothing downloading right now.':'Download client offline — transfers unavailable.'}</div>`;
+  }
+  if(d.recent&&d.recent.length){
+    html+=`<div class="sec"><h2>Recent</h2><span class="more" data-go="activity">History →</span></div><div class="dcard">`+
+      d.recent.map(r=>`<div class="drecent-row"><span class="drecent-ev ${esc(r.event)}">${esc(r.event)}</span>
+        <span class="drecent-title">${esc(r.title||'—')}</span>
+        <span class="muted">${r.size_h&&r.size_h!=='0 B'?esc(r.size_h):''}</span></div>`).join("")+`</div>`;
+  }
+  host.innerHTML=html;
+  host.querySelectorAll("[data-go]").forEach(el=>el.addEventListener("click",()=>{
+    const g=el.dataset.go;
+    if(g==="requests")navRequests();
+    else if(g==="users"&&$("usersBtn"))$("usersBtn").click();
+    else if(g==="activity")$("activityBtn").click();
+    else if(g==="indexers")openIndexerHealth();
+  }));
+  if($("dashClock"))$("dashClock").textContent=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+  if(withRails)loadDashRails();
+}
+// poster rails: monitored shows with missing eps ("hunting next") — cached, cheap
+let railsTs=0;
+async function loadDashRails(){
+  const host=$("dashRails");if(!host)return;
+  if(Date.now()-railsTs<60000&&host.innerHTML)return;
+  try{
+    const series=(await jget("/api/series")).series||[];
+    const hunting=series.filter(s=>s.monitor_mode!=='none'&&s.wanted>0)
+      .sort((a,b)=>b.wanted-a.wanted).slice(0,12);
+    const recent=series.slice().sort((a,b)=>String(b.added_ts||'').localeCompare(String(a.added_ts||''))).slice(0,12);
+    const card=s=>`<div class="pcard" data-sid="${s.id}">
+      <div class="art" style="${artStyle(s.poster,s.title)}">${s.poster?'':esc(s.title)}</div>
+      <div class="shade"></div>
+      <div class="pmeta"><div class="pt">${esc(s.title)}</div>
+        <div class="py">${s.wanted?`${s.wanted} wanted`:`${s.have}/${s.total}`}</div></div>
+      <div class="havebar"><i class="${s.total&&s.have>=s.total?'full':''}" style="width:${s.total?Math.min(100,Math.round(s.have/s.total*100)):0}%"></i></div>
+    </div>`;
+    let html="";
+    if(hunting.length)html+=`<div class="sec"><h2>Hunting next</h2><span class="n">${hunting.reduce((a,s)=>a+s.wanted,0)} wanted</span><span class="more" data-nav="shows">Shows →</span></div>
+      <div class="rail">${hunting.map(card).join("")}</div>`;
+    if(recent.length)html+=`<div class="sec"><h2>Recently added shows</h2><span class="more" data-nav="shows">All →</span></div>
+      <div class="rail">${recent.map(card).join("")}</div>`;
+    host.innerHTML=html;railsTs=Date.now();
+    host.querySelectorAll(".pcard").forEach(p=>p.addEventListener("click",()=>openShowDetail(+p.dataset.sid)));
+    host.querySelectorAll("[data-nav]").forEach(el=>el.addEventListener("click",()=>nav(el.dataset.nav)));
+  }catch(_){host.innerHTML="";}
+}
+
+// ============ shows ============
+let showsData=[],profilesCache=[],showsFilterState={f:"all",s:"az",q:""};
+async function loadShows(){
+  $("showsGrid").innerHTML="<div class='muted'>loading…</div>";
+  try{
+    const admin = ME && ME.role==="admin";
+    showsData = await jget("/api/series").then(d=>d.series||[]);
+    if(admin){ try{ profilesCache = await jget("/api/profiles").then(d=>d.profiles||[]); }catch(_){ profilesCache=[]; } }
+    renderShows();}catch(_){$("showsGrid").innerHTML="<div class='empty'>Couldn't load shows.</div>";}
+}
+function showChip(s){
+  if(s.monitor_mode==='none')return ['paused','paused'];
+  if(s.total>0&&s.have>=s.total)return ['full','complete'];
+  if(s.monitor_mode==='future')return ['mon','future'];
+  return ['mon','monitored'];
+}
+function renderShows(){
+  const {f,s:sort,q}=showsFilterState;
+  let list=showsData.slice();
+  if(q)list=list.filter(x=>x.title.toLowerCase().includes(q.toLowerCase()));
+  if(f==="missing")list=list.filter(x=>x.monitor_mode!=='none'&&x.total>0&&x.have<x.total);
+  if(f==="complete")list=list.filter(x=>x.total>0&&x.have>=x.total);
+  if(f==="paused")list=list.filter(x=>x.monitor_mode==='none');
+  if(sort==="az")list.sort((a,b)=>a.title.localeCompare(b.title));
+  if(sort==="pct")list.sort((a,b)=>(a.total?a.have/a.total:1)-(b.total?b.have/b.total:1));
+  if(sort==="new")list.sort((a,b)=>String(b.added_ts||'').localeCompare(String(a.added_ts||'')));
+  const eps=showsData.reduce((a,s)=>a+(s.have||0),0),tot=showsData.reduce((a,s)=>a+(s.total||0),0);
+  $("showsCount").textContent=showsData.length?`${showsData.length} monitored · ${eps}/${tot} episodes on disk`:"";
+  $("showsEmpty").hidden=showsData.length>0;
+  $("showsGrid").innerHTML=list.map(s=>{
+    const pct=s.total?Math.min(100,Math.round(s.have/s.total*100)):0;
+    const [cc,cl]=showChip(s);
+    return `<div class="pcard" data-sid="${s.id}">
+      <div class="art" style="${artStyle(s.poster,s.title)}">${s.poster?'':esc(s.title)}</div>
+      <div class="shade"></div>
+      <span class="pchip2 ${cc}">${cl}</span>
+      <div class="quick">
+        <button class="huntbtn" title="Hunt missing" data-hunt="${s.id}">⌕</button>
+      </div>
+      <div class="pmeta"><div class="pt">${esc(s.title)}</div>
+        <div class="py">${s.year||''}${s.total?` · ${s.have}/${s.total}`:''}${s.wanted?` · ${s.wanted} wanted`:''}</div></div>
+      <div class="havebar"><i class="${pct>=100?'full':''}" style="width:${pct}%"></i></div>
+    </div>`;}).join("")||"<div class='empty'>Nothing matches this filter.</div>";
+  $("showsGrid").querySelectorAll("[data-hunt]").forEach(b=>b.addEventListener("click",async e=>{
+    e.stopPropagation();b.textContent="…";
+    try{const r=await jsend(`/api/series/${b.dataset.hunt}/hunt`,"POST");toast(`Grabbed ${r.grabbed||0} (cap applies).`);}
+    catch(_){toast("Hunt failed","err");}
+    b.textContent="⌕";}));
+  $("showsGrid").querySelectorAll(".pcard").forEach(card=>card.addEventListener("click",e=>{
+    if(e.target.closest("[data-hunt]"))return;
+    const id=+card.dataset.sid;if(id)openShowDetail(id);
+  }));
+}
+$("showsFilter").addEventListener("input",()=>{showsFilterState.q=$("showsFilter").value;renderShows();});
+$("showsSeg").querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{
+  $("showsSeg").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));
+  showsFilterState.f=b.dataset.f;renderShows();}));
+$("showsSort").querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{
+  $("showsSort").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));
+  showsFilterState.s=b.dataset.s;renderShows();}));
+
+// ── show detail ──
+let sdCurrentId=null;
+function showPage(page){PAGES.concat(["showdetail","moviedetail"]).forEach(p=>{const el=$("page-"+p);if(el)el.classList.toggle("on",p===page);});}
+function fillProfileSelect(sel,current){
+  if(!sel)return;
+  sel.innerHTML=`<option value="">— global default profile —</option>`+
+    profilesCache.map(p=>`<option value="${p.id}" ${p.id===current?'selected':''}>profile: ${esc(p.name)}</option>`).join("");
+}
+async function openShowDetail(sid){
+  sdCurrentId=sid;showPage("showdetail");
+  document.querySelectorAll(".navlink").forEach(l=>l.classList.toggle("on",l.dataset.page==="shows"));
+  $("sdHero").innerHTML="";$("sdBody").innerHTML="<div class='muted'>loading…</div>";
+  window.scrollTo(0,0);
+  if(ME&&ME.role==="admin"&&!profilesCache.length){try{profilesCache=await jget("/api/profiles").then(d=>d.profiles||[]);}catch(_){}}
+  let d;
+  try{ d=await jget(`/api/series/${sid}/episodes`); }
+  catch(_){$("sdBody").innerHTML="<div class='empty'>Couldn't load episodes.</div>";return;}
+  const s=d.series;
+  let meta={};
+  try{ if(s.tmdb_id)meta=await jget(`/api/meta/details/tv/${s.tmdb_id}`)||{}; }catch(_){}
+  const missing=Math.max(0,(d.total||0)-(d.have||0));
+  const pct=d.total?Math.round(d.have/d.total*100):0;
+  $("sdHero").innerHTML=`
+  <div class="hero">
+    <div class="bg" style="${safeImg(meta.backdrop)?bgImg(meta.backdrop):artStyle(null,s.title)}"></div>
+    <div class="veil"></div>
+    <div class="hero-in">
+      <div class="bigposter" style="${artStyle(s.poster||meta.poster,s.title)}">${(s.poster||meta.poster)?'':esc(s.title)}</div>
+      <div style="flex:1;min-width:0">
+        <h1>${esc(s.title)}</h1>
+        <div class="facts">
+          ${s.year?`<span><b>${s.year}</b></span>`:''}
+          ${meta.seasons?`<span>${meta.seasons} season${meta.seasons===1?'':'s'}</span>`:''}
+          <span>${d.total||0} episodes</span>
+          ${meta.rating?`<span>★ ${meta.rating}</span>`:''}
+          ${(meta.genres||[]).slice(0,3).map(g=>`<span class="genre">${esc(g)}</span>`).join("")}
+        </div>
+        ${meta.overview?`<p class="overview">${esc(meta.overview)}</p>`:''}
+        <div class="actions">
+          <button class="btn huntbtn" id="sdHunt">⌕ Hunt missing${missing?` (${missing})`:''}</button>
+          <select class="hsel" id="sdMonitor">
+            <option value="all">monitor: all episodes</option>
+            <option value="future">monitor: future only</option>
+            <option value="none">monitor: paused</option>
+          </select>
+          <select class="hsel admin-only" id="sdStatus">
+            <option value="monitored">status: monitored</option>
+            <option value="in_library">status: in library</option>
+            <option value="ignored">status: ignored</option>
+          </select>
+          <select class="hsel admin-only" id="sdProfile"></select>
+          <button class="btn ghost admin-only" id="sdLog">hunt log</button>
+          <button class="btn ghost admin-only" id="sdFixMatch">fix match</button>
+          <button class="btn ghost admin-only" id="sdFixLoc">fix location</button>
+          <button class="btn danger admin-only" id="sdRemove">remove</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="compbar">
+    <div><div class="big">${pct}<span style="font-size:13px;color:var(--muted)">%</span></div><div class="lbl">complete</div></div>
+    <div class="bar"><i class="bhave" style="width:${pct}%"></i></div>
+    <div class="legend">
+      <span><b style="background:var(--good)"></b>${d.have||0} on disk</span>
+      <span><b style="background:var(--line-hi)"></b>${missing} missing</span>
+    </div>
+  </div>`;
+  $("sdMonitor").value=s.monitor_mode||"all";
+  if($("sdStatus"))$("sdStatus").value=s.lib_status||"monitored";
+  fillProfileSelect($("sdProfile"),s.profile_id);
+  // seasons accordion — newest first, first incomplete season open
+  const seasons=d.seasons.slice().sort((a,b)=>b.season-a.season);
+  let opened=false;
+  $("sdBody").innerHTML=seasons.map(se=>{
+    const spct=se.total?Math.round(se.have/se.total*100):0;
+    const open=!opened&&se.total>0&&se.have<se.total?(opened=true,"open"):"";
+    return `<div class="season ${open}">
+      <div class="season-h" data-acc="1">
+        <span class="name">Season ${se.season}</span>
+        <span class="mini"><i class="${spct<100?'part':''}" style="width:${spct}%"></i></span>
+        <span class="stat">${se.have} / ${se.total}${se.total&&se.have>=se.total?' · complete':se.total?` · ${se.total-se.have} missing`:''}</span>
+        <button class="ep-search admin-only" title="Search season packs" data-sps="${se.season}">⌛ pack</button>
+        <span class="chev">›</span>
+      </div>
+      <div class="season-b">${se.episodes.map(e=>`
+        <div class="eprow ${!e.have&&e.aired?'is-missing':''}">
+          <span class="num">E${String(e.episode).padStart(2,'0')}</span>
+          <span class="et">${esc(e.title||'')}</span>
+          <span class="q">${e.have?esc(e.quality||'✓'):''}</span>
+          <span class="stpill ${e.have?'have':e.aired?'miss':'unair'}">${e.have?'on disk':e.aired?'missing':'unaired'}</span>
+          <span class="date">${esc(e.air_date||'TBA')}</span>
+          ${e.aired?`<button class="ep-search admin-only" title="Search releases for this episode"
+            data-eps="${se.season}" data-epe="${e.episode}" data-ept="${esc(e.title||'')}">⌛</button>`:''}
+        </div>`).join("")}</div>
+    </div>`;}).join("")||"<div class='empty'>No episode data. Make sure a TMDb key is set, then scan.</div>";
+  $("sdBody").querySelectorAll("[data-acc]").forEach(h=>h.addEventListener("click",()=>h.parentElement.classList.toggle("open")));
+  $("sdBody").querySelectorAll(".ep-search[data-eps]").forEach(b=>b.addEventListener("click",e=>{
+    e.stopPropagation();
+    openEpisodeSearch(sid,s.title,+b.dataset.eps,+b.dataset.epe,b.dataset.ept);
+  }));
+  $("sdBody").querySelectorAll("[data-sps]").forEach(b=>b.addEventListener("click",e=>{
+    e.stopPropagation();
+    openSeasonSearch(sid,s.title,+b.dataset.sps);
+  }));
+  // wire hero controls
+  $("sdHunt").addEventListener("click",async()=>{
+    $("sdHunt").disabled=true;$("sdHunt").textContent="hunting…";
+    try{const r=await jsend(`/api/series/${sid}/hunt`,"POST");toast(`Grabbed ${r.grabbed||0} (cap applies).`);openShowDetail(sid);}
+    catch(_){toast("Hunt failed","err");$("sdHunt").disabled=false;$("sdHunt").textContent="⌕ Hunt missing";}
+  });
+  $("sdMonitor").addEventListener("change",async()=>{
+    try{await jsend(`/api/series/${sid}/monitor?mode=${$("sdMonitor").value}`,"POST");toast("Monitoring updated.");openShowDetail(sid);}
+    catch(_){toast("Couldn't update","err");}
+  });
+  $("sdStatus")&&$("sdStatus").addEventListener("change",async()=>{
+    try{await jsend(`/api/admin/title/show/${sid}/status`,"POST",{status:$("sdStatus").value});toast("Status updated.");}
+    catch(_){toast("Couldn't update status","err");}
+  });
+  $("sdProfile")&&$("sdProfile").addEventListener("change",async()=>{
+    try{await jsend(`/api/series/${sid}/profile?profile_id=${$("sdProfile").value||0}`,"POST");toast("Profile updated.");}
+    catch(_){toast("Couldn't update profile","err");}
+  });
+  $("sdFixMatch")&&$("sdFixMatch").addEventListener("click",()=>openFixMatch("show",sid,s.title));
+  $("sdLog")&&$("sdLog").addEventListener("click",()=>openHuntLog("episode",sid,s.title));
+  $("sdFixLoc")&&$("sdFixLoc").addEventListener("click",()=>openFileBrowser(""));
+  $("sdRemove")&&$("sdRemove").addEventListener("click",async()=>{
+    if(!confirm(`Stop monitoring ${s.title}? Files on disk are not touched.`))return;
+    try{await jsend(`/api/series/${sid}`,"DELETE");toast("Removed.");showPage("shows");loadShows();}
+    catch(_){toast("Couldn't remove","err");}
+  });
+}
+$("sdBack").addEventListener("click",()=>{showPage("shows");document.querySelectorAll(".navlink").forEach(l=>l.classList.toggle("on",l.dataset.page==="shows"));loadShows();});
+
+// ── per-episode interactive search (the Sonarr hourglass) ──
+async function openEpisodeSearch(sid,showTitle,season,episode,epTitle){
+  const tag=`S${String(season).padStart(2,'0')}E${String(episode).padStart(2,'0')}`;
+  openModal(`${showTitle} · ${tag}`,`
+    <div class="muted" style="margin-top:0;font-size:12.5px">${esc(epTitle||'')}</div>
+    <div id="epsum"></div>
+    <div id="epsr" style="margin-top:12px"><div class="muted">searching the indexer…</div></div>`);
+  episodeHuntSummary(sid,season,episode).then(h=>{if($("epsum"))$("epsum").innerHTML=h;});
+  let d;
+  try{ d=await jget(`/api/series/${sid}/episodes/${season}/${episode}/releases`); }
+  catch(e){ $("epsr").innerHTML=`<div class='empty'>Search failed: ${esc(e.message)}</div>`; return; }
+  const rel=d.releases||[];
+  if(!rel.length){
+    $("epsr").innerHTML=`<div class='empty'>No matching releases found (${d.considered||0} results checked — non-matching titles and season packs are filtered out${hiddenNote(d.hidden)}${ixNote(d)}). Try again later; new releases appear over time.</div>`;
+    return;
+  }
+  $("epsr").innerHTML=`
+    <div class="hint" style="margin-bottom:8px">${rel.length} verified release${rel.length===1?'':'s'} for this exact episode
+      ${d.profile?` · ranked by profile <b>${esc(d.profile)}</b>`:' · ranked by seeders'}${hiddenNote(d.hidden)}${ixNote(d)}</div>
+    <table><thead><tr><th>release</th><th>size</th><th>health</th><th></th></tr></thead>
+    <tbody>${rel.map((r,i)=>`<tr>
+      <td class="title">${esc(r.title)}${badgeHtml(r.badges)}
+        ${r._passes?'':`<div class="rel-why">✕ profile: ${esc(r._why||'rejected')}</div>`}</td>
+      <td>${esc(r.size_h||human(r.size))}</td>
+      <td>${healthHtml(r)}</td>
+      <td><button class="addbtn" data-eg="${i}">grab</button></td></tr>`).join("")}</tbody></table>`;
+  $("epsr").querySelectorAll("[data-eg]").forEach(b=>b.addEventListener("click",async()=>{
+    const r=rel[+b.dataset.eg];
+    b.disabled=true;b.textContent="grabbing…";
+    try{
+      await jsend(`/api/series/${sid}/episodes/${season}/${episode}/grab`,"POST",{magnet:r.href,title:r.title});
+      toast(`Grabbed ${tag}: ${r.title.slice(0,44)}`);b.textContent="grabbed";refreshDock();
+    }catch(e){b.disabled=false;b.textContent="grab";toast("Grab failed: "+e.message,"err");}
+  }));
+}
+
+// ── season-pack interactive search ──
+async function openSeasonSearch(sid,showTitle,season){
+  const tag=`Season ${season}`;
+  openModal(`${showTitle} · ${tag} packs`,`<div id="spsr"><div class="muted">searching the indexer…</div></div>`);
+  let d;
+  try{ d=await jget(`/api/series/${sid}/seasons/${season}/releases`); }
+  catch(e){ $("spsr").innerHTML=`<div class='empty'>Search failed: ${esc(e.message)}</div>`; return; }
+  const rel=d.releases||[];
+  if(!rel.length){
+    $("spsr").innerHTML=`<div class='empty'>No verified season packs found (${d.considered||0} results checked${hiddenNote(d.hidden)}${ixNote(d)}).</div>`;return;
+  }
+  $("spsr").innerHTML=`
+    <div class="hint" style="margin-bottom:8px">${rel.length} verified pack${rel.length===1?'':'s'} for S${String(season).padStart(2,'0')}
+      ${d.profile?` · ranked by profile <b>${esc(d.profile)}</b>`:''}${hiddenNote(d.hidden)}${ixNote(d)}</div>
+    <table><thead><tr><th>release</th><th>size</th><th>health</th><th></th></tr></thead>
+    <tbody>${rel.map((r,i)=>`<tr>
+      <td class="title">${esc(r.title)}${badgeHtml(r.badges)}
+        ${r._passes?'':`<div class="rel-why">✕ profile: ${esc(r._why||'rejected')}</div>`}</td>
+      <td>${esc(r.size_h||human(r.size))}</td><td>${healthHtml(r)}</td>
+      <td><button class="addbtn" data-sg="${i}">grab</button></td></tr>`).join("")}</tbody></table>`;
+  $("spsr").querySelectorAll("[data-sg]").forEach(b=>b.addEventListener("click",async()=>{
+    const r=rel[+b.dataset.sg];
+    b.disabled=true;b.textContent="grabbing…";
+    try{
+      await jsend(`/api/series/${sid}/seasons/${season}/grab`,"POST",{magnet:r.href,title:r.title});
+      toast(`Grabbed ${tag} pack`);b.textContent="grabbed";refreshDock();
+    }catch(e){b.disabled=false;b.textContent="grab";toast("Grab failed: "+e.message,"err");}
+  }));
+}
+
+// ── Fix Match modal (shared shows + movies) ──
+let fixKind=null,fixId=null;
+function openFixMatch(kind,id,seedTitle){
+  fixKind=kind;fixId=id;
+  $("fixQuery").value=(seedTitle||"").replace(/\s*\(\d{4}\).*/,"").trim();
+  $("fixResults").innerHTML="";
+  $("fixModal").classList.add("show");
+  runFixSearch();
+  $("fixQuery").focus();
+}
+function closeFixMatch(){$("fixModal").classList.remove("show");fixKind=fixId=null;}
+async function runFixSearch(){
+  const q=$("fixQuery").value.trim();if(!q||!fixKind)return;
+  $("fixResults").innerHTML="<div class='muted'>searching…</div>";
+  try{
+    const d=await jget(`/api/admin/match-search?kind=${fixKind}&q=${encodeURIComponent(q)}`);
+    const rows=(d.results||[]);
+    if(!rows.length){$("fixResults").innerHTML="<div class='muted'>No matches.</div>";return;}
+    $("fixResults").innerHTML=rows.map(r=>`
+      <div class="fix-row" data-tmdb="${r.tmdb_id}">
+        <img src="${safeImg(r.poster)}" onerror="this.style.visibility='hidden'">
+        <div><div class="fr-t">${esc(r.title)} ${r.year?`<span class="muted">(${r.year})</span>`:''}</div>
+          <div class="fr-o">${esc(r.overview||'')}</div></div>
+      </div>`).join("");
+    $("fixResults").querySelectorAll(".fix-row").forEach(row=>row.addEventListener("click",()=>applyFixMatch(+row.dataset.tmdb)));
+  }catch(_){$("fixResults").innerHTML="<div class='muted'>Search failed.</div>";}
+}
+async function applyFixMatch(tmdbId){
+  if(!fixKind||!fixId)return;
+  $("fixResults").innerHTML="<div class='muted'>re-linking…</div>";
+  try{
+    const r=await jsend(`/api/admin/title/${fixKind}/${fixId}/fixmatch`,"POST",{tmdb_id:tmdbId});
+    if(r.error){toast(r.error,"err");runFixSearch();return;}
+    toast(`Re-linked to ${r.title}.`);
+    const k=fixKind,id=fixId;closeFixMatch();
+    if(k==="show")openShowDetail(id);else openMovieDetail(id);
+  }catch(_){toast("Re-link failed","err");}
+}
+$("fixClose")&&$("fixClose").addEventListener("click",closeFixMatch);
+$("fixSearchBtn")&&$("fixSearchBtn").addEventListener("click",runFixSearch);
+$("fixQuery")&&$("fixQuery").addEventListener("keydown",e=>{if(e.key==="Enter")runFixSearch();});
+$("fixModal")&&$("fixModal").addEventListener("click",e=>{if(e.target===$("fixModal"))closeFixMatch();});
+
+// ── Terminal file browser ──
+let fbCwd="",fbArmed=null,fbSelectMovie=null;
+function openFileBrowser(seedPath){fbArmed=null;fbSelectMovie=null;fbCwd=seedPath||"";$("fbModal").classList.add("show");fbLoad(fbCwd);}
+function openFilePicker(movieId,seedPath){fbArmed=null;fbSelectMovie=movieId;fbCwd=seedPath||"";$("fbModal").classList.add("show");fbLoad(fbCwd);}
+function closeFileBrowser(){$("fbModal").classList.remove("show");fbArmed=null;fbSelectMovie=null;}
+async function fbLoad(path){
+  $("fbList").innerHTML="<div style='padding:14px;color:#5a6b80'>loading…</div>";
+  try{
+    const d=await jget(`/api/admin/files/list?path=${encodeURIComponent(path)}`);
+    if(d.error){$("fbList").innerHTML=`<div style='padding:14px;color:#e06b6b'>${esc(d.error)}</div>`;return;}
+    fbCwd=d.cwd||"";
+    $("fbPath").textContent="/"+(d.cwd||"");
+    $("fbUp").disabled=!!d.at_root;
+    $("fbUp").onclick=()=>{if(d.parent!==null&&d.parent!==undefined)fbLoad(d.parent);};
+    $("fbList").innerHTML=(d.entries||[]).map(e=>{
+      const ic=e.kind==='dir'?'📁':e.kind==='video'?'🎬':'📄';
+      const sz=e.kind==='dir'?'':human(e.size||0);
+      let actBtn='';
+      if(e.kind!=='dir'){
+        if(fbSelectMovie&&e.kind==='video')actBtn=`<button class="pick" data-sel="${esc(e.rel)}" data-nm="${esc(e.name)}">use this</button>`;
+        else if(!fbSelectMovie)actBtn=`<button class="pick" data-pick="${esc(e.rel)}" data-nm="${esc(e.name)}">move</button>`;
+      }
+      return `<div class="fb-row ${e.kind}" data-rel="${esc(e.rel)}" data-kind="${e.kind}">
+        <span class="ic">${ic}</span><span class="nm">${esc(e.name)}</span>
+        <span class="sz">${sz}</span>${actBtn}</div>`;
+    }).join("")||"<div style='padding:14px;color:#5a6b80'>empty</div>";
+    $("fbList").querySelectorAll(".fb-row.dir").forEach(row=>row.addEventListener("click",e=>{
+      if(e.target.closest("[data-pick],[data-sel]"))return;fbLoad(row.dataset.rel);}));
+    $("fbList").querySelectorAll("[data-pick]").forEach(b=>b.addEventListener("click",e=>{
+      e.stopPropagation();fbArmed={rel:b.dataset.pick,name:b.dataset.nm};fbUpdateFoot();}));
+    $("fbList").querySelectorAll("[data-sel]").forEach(b=>b.addEventListener("click",async e=>{
+      e.stopPropagation();await fbSelectFile(b.dataset.sel,b.dataset.nm);}));
+    fbUpdateFoot();
+  }catch(_){$("fbList").innerHTML="<div style='padding:14px;color:#e06b6b'>Couldn't list directory.</div>";}
+}
+function fbUpdateFoot(){
+  const f=$("fbFoot");
+  if(fbSelectMovie){f.classList.add("armed");
+    f.innerHTML=`▶ pick the file for this movie — click <b>use this</b> on the right video file.`;return;}
+  if(fbArmed){f.classList.add("armed");
+    f.innerHTML=`▶ moving <b>${esc(fbArmed.name)}</b> — navigate to a folder, then <button class="fb-mk" id="fbDrop">drop here</button> <button class="fb-mk" id="fbCancel">cancel</button>`;
+    $("fbDrop").onclick=fbDoMove;$("fbCancel").onclick=()=>{fbArmed=null;fbUpdateFoot();};}
+  else{f.classList.remove("armed");f.textContent="click \"move\" on a file, then navigate to its destination folder.";}
+}
+async function fbSelectFile(rel,name){
+  if(!fbSelectMovie)return;
+  try{
+    const r=await jsend(`/api/admin/movie/${fbSelectMovie}/link-file`,"POST",{rel});
+    if(r.error){toast(r.error,"err");return;}
+    toast(`Linked: ${name}`);
+    const mid=fbSelectMovie;closeFileBrowser();openMovieDetail(mid);
+  }catch(_){toast("Couldn't link file","err");}
+}
+async function fbDoMove(){
+  if(!fbArmed)return;
+  try{
+    const r=await jsend("/api/admin/files/move","POST",{src:fbArmed.rel,dest_dir:fbCwd,name:fbArmed.name});
+    if(r.error){toast(r.error,"err");return;}
+    toast(`Moved to /${r.dest}`);fbArmed=null;fbLoad(fbCwd);
+  }catch(_){toast("Move failed","err");}
+}
+async function fbMkdir(){
+  const name=prompt("New folder name:");if(!name)return;
+  try{const r=await jsend("/api/admin/files/mkdir","POST",{parent:fbCwd,name});
+    if(r.error){toast(r.error,"err");return;}fbLoad(fbCwd);}
+  catch(_){toast("Couldn't create folder","err");}
+}
+$("fbClose")&&$("fbClose").addEventListener("click",closeFileBrowser);
+$("fbMkdir")&&$("fbMkdir").addEventListener("click",fbMkdir);
+$("fbModal")&&$("fbModal").addEventListener("click",e=>{if(e.target===$("fbModal"))closeFileBrowser();});
+$("filesBtn")&&$("filesBtn").addEventListener("click",()=>openFileBrowser(""));
+$("showsAdd").addEventListener("click",()=>addMediaForm("show"));
+$("showsScan").addEventListener("click",()=>scanHunt("show"));
+$("showsReport").addEventListener("click",openScanReport);
+async function doImport(btn,after){
+  if(!confirm("Scan your library folders and auto-monitor every show and movie found? This matches each against TMDb and may take a minute for a large library."))return;
+  btn.disabled=true;btn.textContent="importing…";
+  try{const r=await jsend("/api/library/import","POST");
+    if(r.error){toast(r.error,"err");}
+    else{toast(`Imported ${r.shows_imported} shows, ${r.movies_imported} movies (${(r.unmatched||[]).length} unmatched).`);after();}
+  }catch(_){toast("Import failed","err");}
+  finally{btn.disabled=false;btn.textContent="import library";}
+}
+$("showsImport").addEventListener("click",()=>doImport($("showsImport"),loadShows));
+
+// ============ movies ============
+let moviesData=[],moviesFilterState={f:"all",q:""};
+async function loadMovies(){
+  $("moviesGrid").innerHTML="<div class='muted'>loading…</div>";
+  try{
+    const admin = ME && ME.role==="admin";
+    moviesData = await jget("/api/movies").then(d=>d.movies||[]);
+    if(admin){ try{ profilesCache = await jget("/api/profiles").then(d=>d.profiles||[]); }catch(_){ profilesCache=[]; } }
+    renderMovies();}catch(_){$("moviesGrid").innerHTML="<div class='empty'>Couldn't load movies.</div>";}
+}
+function renderMovies(){
+  const {f,q}=moviesFilterState;
+  let list=moviesData.slice().sort((a,b)=>a.title.localeCompare(b.title));
+  if(q)list=list.filter(x=>x.title.toLowerCase().includes(q.toLowerCase()));
+  if(f==="have")list=list.filter(x=>x.status==='have');
+  if(f==="want")list=list.filter(x=>x.status!=='have');
+  const have=moviesData.filter(m=>m.status==='have').length;
+  $("moviesCount").textContent=moviesData.length?`${moviesData.length} monitored · ${have} on disk`:"";
+  $("moviesEmpty").hidden=moviesData.length>0;
+  $("moviesGrid").innerHTML=list.map(m=>`<div class="pcard" data-mid="${m.id}">
+      <div class="art" style="${artStyle(m.poster,m.title)}">${m.poster?'':esc(m.title)}</div>
+      <div class="shade"></div>
+      <span class="pchip2 ${m.status==='have'?(m.want_reason==='upgrade'?'mon':'full'):'want'}">${m.status==='have'?(m.want_reason==='upgrade'?'upgrading':'in library'):'wanted'}</span>
+      <div class="pmeta"><div class="pt">${esc(m.title)}</div><div class="py">${m.year||''}</div></div>
+      <div class="havebar"><i class="${m.status==='have'?'full':''}" style="width:${m.status==='have'?100:0}%"></i></div>
+    </div>`).join("")||"<div class='empty'>Nothing matches this filter.</div>";
+  $("moviesGrid").querySelectorAll(".pcard").forEach(card=>card.addEventListener("click",()=>{
+    const id=+card.dataset.mid;if(id)openMovieDetail(id);}));
+}
+$("moviesFilter").addEventListener("input",()=>{moviesFilterState.q=$("moviesFilter").value;renderMovies();});
+$("moviesSeg").querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{
+  $("moviesSeg").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));
+  moviesFilterState.f=b.dataset.f;renderMovies();}));
+
+// ── movie detail ──
+let mdCurrentId=null;
+async function openMovieDetail(mid){
+  mdCurrentId=mid;showPage("moviedetail");
+  document.querySelectorAll(".navlink").forEach(l=>l.classList.toggle("on",l.dataset.page==="movies"));
+  $("mdHero").innerHTML="";$("mdBody").innerHTML="<div class='muted'>loading…</div>";
+  window.scrollTo(0,0);
+  if(ME&&ME.role==="admin"&&!profilesCache.length){try{profilesCache=await jget("/api/profiles").then(d=>d.profiles||[]);}catch(_){}}
+  let d;
+  try{ d=await jget(`/api/movies/${mid}/detail`); }
+  catch(_){$("mdBody").innerHTML="<div class='empty'>Couldn't load movie.</div>";return;}
+  const m=d.movie,f=d.file,meta=d.meta||{};
+  const have=!!f||m.lib_status==='in_library';
+  $("mdHero").innerHTML=`
+  <div class="hero">
+    <div class="bg" style="${safeImg(meta.backdrop)?bgImg(meta.backdrop):artStyle(null,m.title)}"></div>
+    <div class="veil"></div>
+    <div class="hero-in">
+      <div class="bigposter" style="${artStyle(m.poster||meta.poster,m.title)}">${(m.poster||meta.poster)?'':esc(m.title)}</div>
+      <div style="flex:1;min-width:0">
+        <h1>${esc(m.title)}</h1>
+        <div class="facts">
+          ${m.year?`<span><b>${m.year}</b></span>`:''}
+          ${meta.runtime?`<span>${meta.runtime} min</span>`:''}
+          ${meta.rating?`<span>★ ${meta.rating}</span>`:''}
+          <span class="pill ${have?'have':'want'}">${have?'in library':'wanted'}</span>
+          ${(meta.genres||[]).slice(0,3).map(g=>`<span class="genre">${esc(g)}</span>`).join("")}
+        </div>
+        ${meta.overview?`<p class="overview">${esc(meta.overview)}</p>`:''}
+        <div class="actions">
+          <button class="btn huntbtn" id="mdSearch">⌕ Search releases</button>
+          <select class="hsel admin-only" id="mdStatus">
+            <option value="monitored">status: monitored</option>
+            <option value="in_library">status: in library</option>
+            <option value="ignored">status: ignored</option>
+          </select>
+          <select class="hsel admin-only" id="mdProfile"></select>
+          <button class="btn ghost admin-only" id="mdLog">hunt log</button>
+          <button class="btn ghost admin-only" id="mdFixMatch">fix match</button>
+          <button class="btn ghost admin-only" id="mdFixLoc">fix location</button>
+          <button class="btn danger admin-only" id="mdRemove">remove</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+  if($("mdStatus"))$("mdStatus").value=m.lib_status||"monitored";
+  fillProfileSelect($("mdProfile"),m.profile_id);
+  const fileBlock=f?`<div class="prof-card"><b>File on disk</b>
+    <div class="prof-meta" style="margin-top:6px"><span class="pill have">have</span>
+    ${f.quality?`<span class="tag res">${esc(f.quality)}</span>`:'<span class="muted">unknown quality</span>'}
+    ${f.source==='CAM'?'<span class="tag" style="color:var(--bad);border-color:var(--bad)">CAM — will be upgraded</span>':''}
+    <span class="muted">· ${human(f.size||0)}</span></div>
+    <div class="hint" style="margin-top:6px;word-break:break-all">${esc(f.path||'')}</div></div>`
+    :(m.lib_status==='in_library'
+      ?`<div class="prof-card"><b>In library</b> <span class="pill have">have</span>
+        <div class="hint">Marked as in library by an admin (no file auto-matched — Fix Match if the title is wrong).</div></div>`
+      :`<div class="prof-card"><b>Not in library</b> <span class="pill want">wanted</span>
+        <div class="hint">The hunter grabs this automatically, or use "Search releases" to pick one now.</div></div>`);
+  $("mdBody").innerHTML=fileBlock+`<div id="mdResults" style="margin-top:16px"></div>`;
+  // wire controls
+  $("mdStatus")&&$("mdStatus").addEventListener("change",async()=>{
+    try{await jsend(`/api/admin/title/movie/${mid}/status`,"POST",{status:$("mdStatus").value});toast("Status updated.");openMovieDetail(mid);}
+    catch(_){toast("Couldn't update status","err");}
+  });
+  $("mdProfile")&&$("mdProfile").addEventListener("change",async()=>{
+    try{await jsend(`/api/movies/${mid}/profile?profile_id=${$("mdProfile").value||0}`,"POST");toast("Profile updated.");}
+    catch(_){toast("Couldn't update profile","err");}
+  });
+  $("mdFixMatch")&&$("mdFixMatch").addEventListener("click",()=>openFixMatch("movie",mid,m.title));
+  $("mdLog")&&$("mdLog").addEventListener("click",()=>openHuntLog("movie",mid,m.title));
+  $("mdFixLoc")&&$("mdFixLoc").addEventListener("click",()=>openFilePicker(mid,""));
+  $("mdRemove")&&$("mdRemove").addEventListener("click",async()=>{
+    if(!confirm(`Stop monitoring ${m.title}? Files on disk are not touched.`))return;
+    try{await jsend(`/api/movies/${mid}`,"DELETE");toast("Removed.");showPage("movies");loadMovies();}
+    catch(_){toast("Couldn't remove","err");}
+  });
+  $("mdSearch").addEventListener("click",async()=>{
+    $("mdSearch").disabled=true;$("mdSearch").textContent="searching…";
+    try{
+      const q=m.title+(m.year?` ${m.year}`:"");
+      const sr=await jget(`/api/search?q=${encodeURIComponent(q)}&cat=movies&limit=40`);
+      const list=sr.results||[];
+      $("mdResults").innerHTML=`<h2 style="font-size:15px;margin:0 0 8px;font-family:var(--disp)">Releases for "${esc(q)}"</h2>`+
+        (list.length?`<table><thead><tr><th>title</th><th>size</th><th>health</th><th></th></tr></thead><tbody>`+
+        list.map((r,i)=>`<tr><td class="title">${esc(r.title)}${badgeHtml(r.badges)}</td>
+          <td>${esc(r.size_h||human(r.size))}</td><td>${healthHtml(r)}</td>
+          <td><button class="addbtn" data-madd="${i}">add</button></td></tr>`).join("")+`</tbody></table>`
+        :"<div class='empty'>No releases found.</div>");
+      window._mdReleases=list;
+      $("mdResults").querySelectorAll("[data-madd]").forEach(b=>b.addEventListener("click",()=>addTorrent(window._mdReleases[+b.dataset.madd],b)));
+    }catch(_){toast("Search failed","err");}
+    finally{$("mdSearch").disabled=false;$("mdSearch").textContent="⌕ Search releases";}
+  });
+}
+$("mdBack").addEventListener("click",()=>{showPage("movies");document.querySelectorAll(".navlink").forEach(l=>l.classList.toggle("on",l.dataset.page==="movies"));loadMovies();});
+$("moviesAdd").addEventListener("click",()=>addMediaForm("movie"));
+$("moviesScan").addEventListener("click",()=>scanHunt("movie"));
+$("moviesImport").addEventListener("click",()=>doImport($("moviesImport"),loadMovies));
+
+async function scanHunt(kind){
+  const btn=kind==="show"?$("showsScan"):$("moviesScan");btn.disabled=true;btn.textContent="scanning…";
+  try{await jsend("/api/library/scan?force=true","POST");await jsend("/api/library/reconcile","POST");const chk=await jsend("/api/subscriptions/check","POST");
+    toast(`Reconciled · grabbed ${chk.grabbed||0}.`);kind==="show"?loadShows():loadMovies();}
+  catch(_){toast("Scan failed","err");}
+  finally{btn.disabled=false;btn.textContent="scan + hunt";}
+}
+
+// add show/movie via TMDb poster search (shared modal)
+function addMediaForm(kind){
+  const admin = ME && ME.role==="admin";
+  const opts=`<option value="">no profile (best-seeded)</option>`+profilesCache.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join("");
+  openModal(admin?(kind==="show"?"Add show":"Add movie"):(kind==="show"?"Request a show":"Request a movie"),`
+    <label class="fld">Search ${kind==="show"?"a show":"a movie"} (TMDb)</label>
+    <input type="text" id="am_q" placeholder="${kind==="show"?'e.g. the office':'e.g. dune'}" autocomplete="off" style="width:100%">
+    ${admin?`<label class="fld">Quality profile</label><select id="am_prof" style="width:100%">${opts}</select>`:`<div class="muted" style="font-size:12px;margin-top:8px">Pick a title to request it. An admin reviews requests unless you're trusted.</div>`}
+    <div id="am_results" class="poster-grid" style="margin-top:10px"></div>`);
+  let t=null;
+  $("am_q").addEventListener("input",()=>{clearTimeout(t);t=setTimeout(()=>amSearch(kind),400);});
+  $("am_q").focus();
+}
+async function amSearch(kind){
+  const q=$("am_q").value.trim();if(!q){$("am_results").innerHTML="";return;}
+  try{const d=await jget(`/api/meta/search?q=${encodeURIComponent(q)}&kind=${kind==="show"?"tv":"movie"}`);
+    const want=kind==="show"?"tv":"movie";
+    const items=(d.results||[]).filter(r=>r.media_type===want);
+    if(!items.length){$("am_results").innerHTML="<div class='muted'>No results (need a TMDb key in Settings).</div>";return;}
+    $("am_results").innerHTML=items.map(r=>`<div class="pcard" data-tmdb="${r.tmdb_id}" data-title="${esc(r.title)}" data-year="${esc(r.year||'')}" data-poster="${esc(r.poster||'')}">
+      <div class="art" style="${artStyle(r.poster,r.title)}">${r.poster?'':esc(r.title)}</div>
+      <div class="shade"></div>
+      <div class="pmeta"><div class="pt">${esc(r.title)}</div><div class="py">${esc(r.year||'')}</div></div></div>`).join("");
+    $("am_results").querySelectorAll(".pcard").forEach(p=>p.addEventListener("click",()=>amAdd(kind,p.dataset)));
+  }catch(_){$("am_results").innerHTML="<div class='muted'>Search failed.</div>";}
+}
+async function amAdd(kind,d){
+  const admin = ME && ME.role==="admin";
+  if(!admin){
+    try{
+      const res=await jsend("/api/requests","POST",{media_type:kind==="show"?"tv":"movie",tmdb_id:+d.tmdb,title:d.title,year:d.year?+d.year:null,poster:d.poster||null});
+      if(res.status==="already_available") toast(`${d.title} is already in the library.`);
+      else if(res.status==="already_requested") toast(`${d.title} was already requested.`);
+      else if(res.status==="auto_approved") toast(`Requested — auto-approved and being added.`);
+      else toast(`Requested ${d.title}. An admin will review it.`);
+      closeModal();
+    }catch(e){toast(e.message||"Couldn't request","err");}
+    return;
+  }
+  const body={tmdb_id:+d.tmdb,title:d.title,year:d.year?+d.year:null,poster:d.poster||null,profile_id:$("am_prof")&&$("am_prof").value?+$("am_prof").value:null};
+  try{await jsend(kind==="show"?"/api/series":"/api/movies","POST",body);toast(`Now monitoring ${d.title}.`);closeModal();kind==="show"?loadShows():loadMovies();}
+  catch(_){toast("Couldn't add","err");}
+}
+
+// ============ discover ============
+let discState={kind:"tv",list:"trending"};
+async function loadDiscover(){
+  $("discGrid").innerHTML="<div class='muted'>loading…</div>";
+  try{
+    const d=await jget(`/api/meta/discover?kind=${discState.kind}&list=${discState.list}`);
+    if(!d.enabled){$("discGrid").innerHTML="";$("discEmpty").hidden=false;return;}
+    $("discEmpty").hidden=true;
+    const items=d.results||[];
+    $("discCount").textContent=items.length?`${items.length} titles`:"";
+    $("discGrid").innerHTML=items.map((r,i)=>`<div class="pcard" data-di="${i}">
+      <div class="art" style="${artStyle(r.poster,r.title)}">${r.poster?'':esc(r.title)}</div>
+      <div class="shade"></div>
+      ${r.in_library?'<span class="pchip2 full">in library</span>':''}
+      <div class="pmeta"><div class="pt">${esc(r.title)}</div>
+        <div class="py">${r.year||''}${r.rating?` · ★ ${r.rating}`:''}</div></div>
+    </div>`).join("")||"<div class='empty'>Nothing returned for this list.</div>";
+    $("discGrid").querySelectorAll(".pcard").forEach(p=>p.addEventListener("click",()=>{
+      const r=items[+p.dataset.di];
+      if(r.in_library){
+        if(r.media_type==="tv")openShowDetail(r.library_id);else openMovieDetail(r.library_id);
+        return;
+      }
+      const admin=ME&&ME.role==="admin";
+      const kind=r.media_type==="tv"?"show":"movie";
+      if(admin&&!confirm(`Monitor "${r.title}"${r.year?` (${r.year})`:''}? It'll use the global default profile.`))return;
+      amAdd(kind,{tmdb:String(r.tmdb_id),title:r.title,year:r.year?String(r.year):"",poster:r.poster||""})
+        .then(()=>loadDiscover());
+    }));
+  }catch(_){$("discGrid").innerHTML="<div class='empty'>Couldn't load Discover.</div>";}
+}
+$("discSeg").querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{
+  $("discSeg").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));
+  const [list,kind]=b.dataset.d.split(":");
+  discState={kind,list};loadDiscover();
+}));
+
+// ============ calendar ============
+async function loadCalendar(){
+  $("calBody").innerHTML="<div class='muted'>loading…</div>";
+  let d;
+  try{ d=await jget("/api/calendar?past=7&days=14"); }
+  catch(_){$("calBody").innerHTML="<div class='empty'>Couldn't load the calendar.</div>";return;}
+  const eps=d.episodes||[];
+  $("calCount").textContent=eps.length?`${eps.length} episodes · ${d.from} → ${d.to}`:"";
+  if(!eps.length){$("calBody").innerHTML="<div class='empty'>Nothing airing in this window across your monitored shows.</div>";return;}
+  const byDate={};
+  eps.forEach(e=>{(byDate[e.date]=byDate[e.date]||[]).push(e);});
+  const today=d.today;
+  const dayLabel=ds=>{
+    const dt=new Date(ds+"T12:00:00");
+    const names=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+    const base=`${names[dt.getDay()]} · ${ds.slice(5)}`;
+    if(ds===today)return "Today";
+    const t=new Date(today+"T12:00:00"),diff=Math.round((dt-t)/86400000);
+    if(diff===1)return "Tomorrow"; if(diff===-1)return "Yesterday";
+    return base;
+  };
+  const pill=st=>st==="have"?'<span class="stpill have">on disk</span>'
+    :st==="grabbed"?'<span class="stpill grab">grabbed</span>'
+    :st==="missing"?'<span class="stpill miss">missing</span>'
+    :'<span class="stpill unair">upcoming</span>';
+  $("calBody").innerHTML=Object.keys(byDate).sort().map(ds=>`
+    <div class="calday ${ds===today?'today':''}">${dayLabel(ds)} <span class="cd">${ds}</span></div>
+    ${byDate[ds].map(e=>`<div class="calrow" data-sid="${e.series_id}">
+      <div class="mini" style="${artStyle(e.poster,e.title)}">${e.poster?'':esc(e.title.slice(0,2).toUpperCase())}</div>
+      <div class="cn"><div class="ct">${esc(e.title)}</div>
+        <div class="ce">S${String(e.season).padStart(2,'0')}E${String(e.episode).padStart(2,'0')}${e.ep_title?` · ${esc(e.ep_title)}`:''}</div></div>
+      ${pill(e.status)}
+    </div>`).join("")}`).join("");
+  $("calBody").querySelectorAll(".calrow").forEach(r=>r.addEventListener("click",()=>openShowDetail(+r.dataset.sid)));
+}
+
+// ============ subscriptions ============
+let subsData=[];
+async function loadSubs(){
+  $("subsList").innerHTML="<div class='muted'>loading…</div>";
+  try{[subsData,profilesCache]=await Promise.all([jget("/api/subscriptions").then(d=>d.subscriptions||[]),jget("/api/profiles").then(d=>d.profiles||[])]);
+    renderSubs();const st=await jget("/api/subscriptions/status");const mins=Math.round((st.interval_seconds||0)/60);
+    const last=st.last_run&&st.last_run.ts?`last check ${st.last_run.ts.replace('T',' ').slice(5,16)} (${st.last_run.grabbed} grabbed)`:"no checks yet";
+    $("subsStatus").textContent=`auto-checks every ${mins} min · ${last}`;
+  }catch(_){$("subsList").innerHTML="<div class='empty'>Couldn't load.</div>";}
+}
+function renderSubs(){
+  $("subsCount").textContent=subsData.length?`${subsData.length} active`:"";
+  $("subsEmpty").hidden=subsData.length>0;
+  $("subsList").innerHTML=subsData.map(s=>{const prof=profilesCache.find(p=>p.id===s.profile_id);
+    return `<div class="prof-card"><div class="prof-head"><b>${esc(s.title)}</b>
+      <span><label class="switch"><input type="checkbox" data-tog="${s.id}" ${s.enabled?'checked':''}><span></span></label>
+      <button class="link-btn danger" data-sdel="${s.id}" style="margin-left:10px">delete</button></span></div>
+      <div class="prof-meta"><span class="muted">query:</span> <code>${esc(s.query)}</code> <span class="muted">· ${prof?esc(prof.name):'best-seeded'}</span></div></div>`;}).join("");
+  $("subsList").querySelectorAll("[data-sdel]").forEach(b=>b.addEventListener("click",async()=>{await jsend(`/api/subscriptions/${b.dataset.sdel}`,"DELETE");toast("Deleted.");loadSubs();}));
+  $("subsList").querySelectorAll("[data-tog]").forEach(b=>b.addEventListener("change",async()=>{const s=subsData.find(x=>x.id==b.dataset.tog);await jsend(`/api/subscriptions/${b.dataset.tog}`,"PUT",{title:s.title,query:s.query,media_type:s.media_type,profile_id:s.profile_id,enabled:b.checked});}));
+}
+$("subsNew").addEventListener("click",()=>{
+  const opts=`<option value="">best-seeded</option>`+profilesCache.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join("");
+  openModal("Follow a search",`<label class="fld">Name</label><input type="text" id="sf_t" placeholder="e.g. The Office" style="width:100%">
+    <label class="fld">Search query</label><input type="text" id="sf_q" placeholder="e.g. the office s03" style="width:100%">
+    <label class="fld">Quality profile</label><select id="sf_p" style="width:100%">${opts}</select>
+    <div style="margin-top:14px"><button class="btn" id="sf_save">create</button></div>
+    <div class="hint" style="margin-top:8px">Faucet searches this on a timer and grabs the best new release matching your profile.</div>`);
+  $("sf_save").addEventListener("click",async()=>{const t=$("sf_t").value.trim();if(!t){toast("Name required","err");return;}
+    await jsend("/api/subscriptions","POST",{title:t,query:$("sf_q").value.trim()||t,media_type:"tv",profile_id:$("sf_p").value?+$("sf_p").value:null,enabled:true});
+    toast("Subscription saved.");closeModal();loadSubs();});
+});
+$("subsCheck").addEventListener("click",async()=>{$("subsCheck").disabled=true;$("subsCheck").textContent="checking…";
+  try{const r=await jsend("/api/subscriptions/check","POST");toast(`Checked ${r.checked} · grabbed ${r.grabbed}.`);loadSubs();}
+  catch(_){toast("Check failed","err");}finally{$("subsCheck").disabled=false;$("subsCheck").textContent="check now";}});
+
+// ============ profiles ============
+const ALL_RES=["2160p","1080p","720p","480p"],ALL_SRC=["REMUX","BluRay","WEB-DL","WEBRip","HDTV","DVDRip"];
+let profData=[];
+async function loadProfiles(){
+  $("profList").innerHTML="<div class='muted'>loading…</div>";
+  try{profData=await jget("/api/profiles").then(d=>d.profiles||[]);renderProfiles();}
+  catch(_){$("profList").innerHTML="<div class='empty'>Couldn't load.</div>";}
+}
+function renderProfiles(){
+  $("profCount").textContent=profData.length?`${profData.length}`:"";
+  $("profList").innerHTML=profData.map(p=>`<div class="prof-card"><div class="prof-head"><b>${esc(p.name)}</b>
+    <span><button class="link-btn" data-pe="${p.id}">edit</button> <button class="link-btn danger" data-pd="${p.id}" style="margin-left:8px">delete</button></span></div>
+    <div class="prof-meta">${(p.resolutions||[]).map(r=>`<span class="tag res">${esc(r)}</span>`).join("")||'<span class="muted">any res</span>'}
+      ${(p.sources||[]).map(s=>`<span class="tag src">${esc(s)}</span>`).join("")}
+      <span class="muted">· ${p.min_seeders}+ seeders${p.max_size_gb?` · ≤${p.max_size_gb}GB`:''}</span></div></div>`).join("");
+  $("profList").querySelectorAll("[data-pe]").forEach(b=>b.addEventListener("click",()=>profForm(profData.find(p=>p.id==b.dataset.pe))));
+  $("profList").querySelectorAll("[data-pd]").forEach(b=>b.addEventListener("click",async()=>{await jsend(`/api/profiles/${b.dataset.pd}`,"DELETE");toast("Deleted.");loadProfiles();}));
+}
+$("profNew").addEventListener("click",()=>profForm(null));
+function profForm(p){
+  p=p||{name:"",min_seeders:1,resolutions:[],sources:[],max_size_gb:0,language:"en"};
+  const LANGS=[["en","English"],["any","Any language"],["es","Spanish"],["fr","French"],["de","German"],["it","Italian"],["ru","Russian"],["ja","Japanese"],["ko","Korean"],["zh","Chinese"],["pt","Portuguese"],["hi","Hindi"],["nl","Dutch"]];
+  openModal(p.id?"Edit profile":"New profile",`
+    <label class="fld">Name</label><input type="text" id="pf_name" value="${esc(p.name)}" placeholder="e.g. 1080p WEB" style="width:100%">
+    <label class="fld">Resolutions (preference order)</label><div class="chips" id="pf_res">${ALL_RES.map(r=>`<span class="chip ${p.resolutions.includes(r)?'on':''}" data-v="${r}">${r}</span>`).join("")}</div>
+    <label class="fld">Sources (preference order)</label><div class="chips" id="pf_src">${ALL_SRC.map(s=>`<span class="chip ${p.sources.includes(s)?'on':''}" data-v="${s}">${s}</span>`).join("")}</div>
+    <label class="fld">Preferred language</label><select id="pf_lang" style="width:100%">${LANGS.map(([v,n])=>`<option value="${v}" ${(p.language||'en')===v?'selected':''}>${n}</option>`).join("")}</select>
+    <div class="row2"><div><label class="fld">Min seeders</label><input type="number" id="pf_seed" min="0" value="${p.min_seeders}" style="width:100%"></div>
+    <div><label class="fld">Max size GB (0=none)</label><input type="number" id="pf_max" min="0" step="0.5" value="${p.max_size_gb}" style="width:100%"></div></div>
+    <div style="margin-top:14px"><button class="btn" id="pf_save">${p.id?'save':'create'}</button></div>`);
+  document.querySelectorAll("#modalBody .chip").forEach(c=>c.addEventListener("click",()=>c.classList.toggle("on")));
+  $("pf_save").addEventListener("click",async()=>{const body={name:$("pf_name").value.trim(),
+    resolutions:[...$("pf_res").querySelectorAll(".chip.on")].map(c=>c.dataset.v),
+    sources:[...$("pf_src").querySelectorAll(".chip.on")].map(c=>c.dataset.v),
+    language:$("pf_lang").value,
+    min_seeders:+$("pf_seed").value||0,max_size_gb:+$("pf_max").value||0,min_size_gb:0};
+    if(!body.name){toast("Name required","err");return;}
+    await jsend(p.id?`/api/profiles/${p.id}`:"/api/profiles",p.id?"PUT":"POST",body);toast("Saved.");closeModal();loadProfiles();});
+}
+
+// ============ activity drawer ============
+let drawerTab="transfers",dockTimer=null;
+function openDrawer(){$("drawer").classList.add("show");refreshDock();dockTimer=setInterval(refreshDock,4000);}
+function closeDrawer(){$("drawer").classList.remove("show");if(dockTimer){clearInterval(dockTimer);dockTimer=null;}}
+$("activityBtn").addEventListener("click",openDrawer);
+$("drawerClose").addEventListener("click",closeDrawer);
+document.querySelectorAll(".drawer-tabs button").forEach(b=>b.addEventListener("click",()=>{drawerTab=b.dataset.tab;
+  document.querySelectorAll(".drawer-tabs button").forEach(x=>x.classList.toggle("on",x===b));refreshDock();}));
+async function refreshDock(){
+  if(!$("drawer").classList.contains("show"))return;
+  if(drawerTab==="transfers"){
+    try{const d=await jget("/api/transfers");const xs=d.transfers||[];
+      $("drawerBody").innerHTML=xs.length?xs.map(x=>{const pct=Math.round(x.percent||0);
+        return `<div class="xfer"><div class="xt">${esc(x.name)}</div>${x.flag?`<div class="xflag">⚠ paused — suspicious: ${esc(x.flag)}. Don't open these files; remove it unless you're sure.</div>`:''}<div class="xbar"><i style="width:${pct}%"></i></div>
+          <div class="xmeta"><span>${pct}%</span><span>${esc(x.status||'')}</span><span>↓${esc(x.down_h||'0/s')}</span></div>
+          ${x.size?`<div class="xsize">${esc(human(x.size*(x.percent||0)/100))} of ${esc(x.size_h)}</div>`:''}
+          <div class="xact"><button class="link-btn" data-pause="${x.id}">${x.status==='downloading'?'pause':'resume'}</button>
+          <button class="link-btn danger" data-rm="${x.id}">remove</button></div></div>`;}).join(""):"<div class='empty'>No active transfers.</div>";
+      $("drawerBody").querySelectorAll("[data-rm]").forEach(b=>b.addEventListener("click",async()=>{await jsend(`/api/torrent/${b.dataset.rm}`,"POST",{action:"remove"});refreshDock();}));
+      $("drawerBody").querySelectorAll("[data-pause]").forEach(b=>b.addEventListener("click",async()=>{const act=b.textContent==="pause"?"pause":"resume";await jsend(`/api/torrent/${b.dataset.pause}`,"POST",{action:act});refreshDock();}));
+    }catch(_){$("drawerBody").innerHTML="<div class='empty'>Couldn't load.</div>";}
+  }else if(drawerTab==="events"){
+    try{const d=await jget("/api/events");const evs=d.events||[];
+      $("drawerBody").innerHTML=evs.length?evs.slice().reverse().map(e=>`<div class="hist-row"><span class="he">${esc(e.event)}</span><span class="hn">${esc(e.name||'')}</span></div>`).join(""):"<div class='empty'>No events yet. They appear when downloads finish and get sorted.</div>";
+    }catch(_){$("drawerBody").innerHTML="<div class='empty'>Couldn't load.</div>";}
+  }else{
+    try{const[st,hi]=await Promise.all([jget("/api/history/stats"),jget("/api/history?limit=60")]);
+      const cards=`<div class="stat-cards">
+        <div class="stat-card"><div class="num">${st.completed_count||0}</div><div class="lbl">completed</div></div>
+        <div class="stat-card"><div class="num">${esc(st.completed_bytes_h||'0 B')}</div><div class="lbl">downloaded</div></div>
+        <div class="stat-card"><div class="num">${(st.by_event&&st.by_event.sorted)||0}</div><div class="lbl">sorted</div></div>
+        <div class="stat-card"><div class="num">${(st.by_event&&st.by_event.added)||0}</div><div class="lbl">grabbed</div></div></div>`;
+      const rows=(hi.history||[]).map(h=>`<div class="hist-row"><span class="ht">${esc((h.ts||'').replace('T',' ').slice(5,16))}</span><span class="he">${esc(h.event)}</span><span class="hn">${esc(h.title||h.detail||'')}</span></div>`).join("")||"<div class='muted'>No history yet.</div>";
+      $("drawerBody").innerHTML=cards+rows;
+    }catch(_){$("drawerBody").innerHTML="<div class='empty'>Couldn't load.</div>";}
+  }
+}
+$("settingsBtn").addEventListener("click",async()=>{
+  if(ME&&ME.role==="admin"&&!profilesCache.length){try{profilesCache=await jget("/api/profiles").then(d=>d.profiles||[]);}catch(_){}}
+  const s=await jget("/api/settings");const env=s.env||{};const ps=s.path_status||{};
+  const langOpts=[["en","English"],["any","Any language"],["es","Spanish"],["fr","French"],["de","German"],["it","Italian"],["ru","Russian"],["ja","Japanese"],["ko","Korean"],["zh","Chinese"],["pt","Portuguese"],["hi","Hindi"],["nl","Dutch"]];
+  // a path field with a live status chip
+  const pathField=(id,key,label,hint)=>{
+    const st=ps[key]||{};
+    let chip='<span class="pchip muted">not set</span>';
+    if(st.set&&st.exists&&st.writable)chip='<span class="pchip ok">✓ mounted &amp; writable</span>';
+    else if(st.set&&st.exists)chip='<span class="pchip warn">exists, read-only</span>';
+    else if(st.set)chip='<span class="pchip bad">✕ not found in container</span>';
+    return `<label class="fld">${label} ${chip}</label>
+      <input type="text" id="${id}" value="${esc(env[key]||'')}" style="width:100%" placeholder="${hint||''}">`;
+  };
+  openModal("Settings",`
+    <div class="set-tabs">
+      <button class="set-tab on" data-sec="conn">Connections</button>
+      <button class="set-tab" data-sec="meta">Metadata</button>
+      <button class="set-tab" data-sec="behave">Behavior</button>
+      <button class="set-tab" data-sec="adv">Advanced</button>
+    </div>
+
+    <div class="set-sec on" data-sec="conn">
+      <label class="fld">Jackett URL</label><input type="text" id="st_jurl" value="${esc(env.JACKETT_URL||'')}" style="width:100%" placeholder="http://10.0.0.17:9117">
+      <label class="fld">Jackett API key ${env.JACKETT_API_KEY_SET?'<span class="pchip ok">✓ set</span>':'<span class="pchip bad">✕ not set</span>'}</label>
+      <input type="password" id="st_jkey" value="" autocomplete="off" placeholder="${env.JACKETT_API_KEY_SET?'•••••• (unchanged)':'paste from the Jackett dashboard (top right)'}" style="width:100%">
+      <label class="fld">Jackett indexer</label><input type="text" id="st_jidx" value="${esc(env.JACKETT_INDEXER||'all')}" style="width:100%" placeholder="all">
+      <div class="row2"><div><label class="fld">Download client</label>
+        <select id="st_client" style="width:100%">${['transmission','qbittorrent','deluge'].map(k=>`<option ${env.DOWNLOAD_CLIENT===k?'selected':''}>${k}</option>`).join('')}</select></div>
+        <div><label class="fld">Client RPC URL</label><input type="text" id="st_curl" value="${esc(env.CLIENT_URL||'')}" style="width:100%"></div></div>
+      <div class="row2"><div><label class="fld">Client user</label><input type="text" id="st_cuser" value="${esc(env.CLIENT_USER||'')}" style="width:100%"></div>
+        <div><label class="fld">Client password ${env.CLIENT_PASS_SET?'<span class="pchip ok">✓ set</span>':'<span class="pchip muted">none</span>'}</label>
+        <input type="password" id="st_cpass" value="" placeholder="${env.CLIENT_PASS_SET?'•••••• (unchanged)':'set password'}" style="width:100%"></div></div>
+      <div style="margin-top:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <button class="btn ghost" id="st_test">Test connections</button>
+        <span class="muted" style="font-size:11.5px">checks Jackett + the download client live</span>
+      </div>
+      <div id="st_testres" style="margin-top:12px;display:none"></div>
+    </div>
+
+    <div class="set-sec" data-sec="meta">
+      <label class="fld">TMDb API key ${s.tmdb_enabled?'<span class="pchip ok">● enabled</span>':'<span class="pchip muted">○ disabled</span>'}</label>
+      <input type="password" id="st_tmdb" value="" autocomplete="off" placeholder="${env.TMDB_KEY_SET?'•••••••• saved — type a new key to replace it':'paste TMDb key for title search + posters'}" style="width:100%">
+      <label class="fld">App title</label><input type="text" id="st_title" value="${esc(env.APP_TITLE||'Faucet')}" style="width:100%">
+      <label class="fld">Default preferred language <span class="muted">(when a title has no profile)</span></label>
+      <select id="st_lang" style="width:100%">${langOpts.map(([v,n])=>`<option value="${v}" ${(s.db&&s.db.default_language||'en')===v?'selected':''}>${n}</option>`).join('')}</select>
+      <label class="fld">Default quality profile <span class="muted">(for titles with no profile of their own)</span></label>
+      <select id="st_defprof" style="width:100%"><option value="">none (best-seeded)</option>${(profilesCache||[]).map(p=>`<option value="${p.id}" ${String(s.db&&s.db.default_profile_id||'')===String(p.id)?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
+    </div>
+
+    <div class="set-sec" data-sec="behave">
+      <label class="fld">Auto-remove finished torrents</label>
+      <select id="st_rem" style="width:100%"><option value="0" ${env.REMOVE_ON_COMPLETE!=='1'?'selected':''}>off</option><option value="1" ${env.REMOVE_ON_COMPLETE==='1'?'selected':''}>on</option></select>
+      <div class="row2"><div><label class="fld">Search result limit</label><input type="number" id="st_slimit" value="${esc(env.SEARCH_LIMIT||'150')}" style="width:100%"></div>
+        <div><label class="fld">Request timeout (s)</label><input type="number" id="st_timeout" value="${esc(env.REQUEST_TIMEOUT||'30')}" style="width:100%"></div></div>
+      <label class="fld">Wait before hunting new episodes (days after air date) <span class="muted">(0 = on the air date; early "releases" are usually fakes)</span></label>
+      <input type="number" id="st_airdelay" min="0" max="30" value="${esc(env.AIR_DELAY_DAYS||'1')}" style="width:100%">
+      <label class="fld">"Big download" warning threshold (GB)</label><input type="number" id="st_bigdl" value="${esc(env.BIG_DOWNLOAD_GB||'20')}" style="width:100%">
+      <label class="fld">Notification URLs <span class="muted">(comma-separated, Apprise-style)</span></label>
+      <input type="text" id="st_notify" value="${esc(env.NOTIFY_URLS||'')}" style="width:100%">
+      <label class="fld">Notify on <span class="muted">(comma-separated: completed, sorted, failed, added, suspicious)</span></label>
+      <input type="text" id="st_notifyon" value="${esc(env.NOTIFY_ON||'completed,sorted,failed')}" style="width:100%">
+    </div>
+
+    <div class="set-sec" data-sec="adv">
+      <div class="set-warn">⚠ These paths are <b>container paths</b> — they must match what you've mounted into Faucet. Changing them can break library scanning and downloads, and takes effect on the next restart. The status chip shows whether each path is actually reachable right now.</div>
+      ${pathField("st_lib","LIBRARY_ROOT","Library root","/library")}
+      ${pathField("st_dldir","DOWNLOAD_DIR","Download directory","/downloads")}
+      ${pathField("st_disk","DISK_PATH","Disk-usage path (for the dashboard gauge)","/downloads")}
+      ${pathField("st_browse","BROWSE_ROOT","File-browser root","/nas")}
+      <label class="fld" style="margin-top:16px">Database</label>
+      <div class="hint" id="st_dbinfo">…</div>
+      <a class="btn ghost" href="/api/settings/backup" download style="display:inline-block;margin-top:8px;text-decoration:none">download backup</a>
+      <div class="hint" style="margin-top:6px">A consistent snapshot of <code>cascade.db</code> (sessions and the TMDb cache left out). To restore: stop Faucet, replace <code>cascade.db</code> in the config volume, start it.</div>
+      <div class="set-warn" style="margin-top:14px">The session secret, database path, and listen port stay in your Docker stack — they can't be changed here by design.</div>
+    </div>
+
+    <div style="margin-top:18px;display:flex;align-items:center;gap:12px">
+      <button class="btn" id="st_save">save changes</button>
+      <span class="muted" id="st_savehint" style="font-size:12px"></span>
+    </div>`);
+  jget("/api/settings/storage").then(d=>{if($("st_dbinfo"))$("st_dbinfo").textContent=
+    `${human(d.bytes)} · ${d.free_pct}% free pages`+(d.tables&&d.tables.length?` · largest: ${d.tables.slice(0,3).map(t=>`${t.name} ${human(t.bytes)}`).join(", ")}`:"");}).catch(()=>{});
+  // tab switching
+  $("modalBody").querySelectorAll(".set-tab").forEach(t=>t.addEventListener("click",()=>{
+    const sec=t.dataset.sec;
+    $("modalBody").querySelectorAll(".set-tab").forEach(x=>x.classList.toggle("on",x===t));
+    $("modalBody").querySelectorAll(".set-sec").forEach(x=>x.classList.toggle("on",x.dataset.sec===sec));
+  }));
+  $("st_test").addEventListener("click",async()=>{
+    const btn=$("st_test"); btn.disabled=true; btn.textContent="testing…";
+    const res=$("st_testres"); res.style.display="block";
+    res.innerHTML='<span class="muted" style="font-size:12px">checking…</span>';
+    // send currently-typed values; null fields fall back to saved config server-side
+    const pw=$("st_cpass").value;
+    const payload={
+      jackett_url:$("st_jurl").value.trim(), jackett_api_key:$("st_jkey").value.trim()||null, jackett_indexer:$("st_jidx").value.trim(),
+      client_kind:$("st_client").value, client_url:$("st_curl").value.trim(),
+      client_user:$("st_cuser").value.trim(), client_pass:pw||null,
+    };
+    try{
+      const r=await jsend("/api/settings/test","POST",payload);
+      const row=(label,o)=>{ const ok=o&&o.ok;
+        return `<div style="display:flex;align-items:center;gap:8px;padding:7px 0">
+          <span class="pchip ${ok?'ok':'bad'}">${ok?'✓ ok':'✕ fail'}</span>
+          <b style="font-size:12.5px">${label}</b>
+          <span class="muted" style="font-size:12px">${esc((o&&o.msg)||'')}</span></div>`; };
+      res.innerHTML=row("Indexer (Jackett)",r.indexer)+row("Download client",r.client);
+    }catch(e){ res.innerHTML=`<span class="pchip bad">✕</span> <span class="muted" style="font-size:12px">${esc(e.message||'test failed')}</span>`; }
+    finally{ btn.disabled=false; btn.textContent="Test connections"; }
+  });
+  $("st_save").addEventListener("click",async()=>{
+    const vals={
+      default_language:$("st_lang").value, default_profile_id:$("st_defprof").value||"",
+      JACKETT_URL:$("st_jurl").value.trim(), JACKETT_INDEXER:$("st_jidx").value.trim(),
+      DOWNLOAD_CLIENT:$("st_client").value, CLIENT_URL:$("st_curl").value.trim(),
+      CLIENT_USER:$("st_cuser").value.trim(),
+      APP_TITLE:$("st_title").value.trim(),
+      REMOVE_ON_COMPLETE:$("st_rem").value, SEARCH_LIMIT:$("st_slimit").value,
+      REQUEST_TIMEOUT:$("st_timeout").value, BIG_DOWNLOAD_GB:$("st_bigdl").value,
+      NOTIFY_URLS:$("st_notify").value.trim(), NOTIFY_ON:$("st_notifyon").value.trim(),
+      AIR_DELAY_DAYS:$("st_airdelay").value,
+      LIBRARY_ROOT:$("st_lib").value.trim(), DOWNLOAD_DIR:$("st_dldir").value.trim(),
+      DISK_PATH:$("st_disk").value.trim(), BROWSE_ROOT:$("st_browse").value.trim(),
+    };
+    // only send password if the admin actually typed a new one
+    const pw=$("st_cpass").value; if(pw)vals.CLIENT_PASS=pw;
+    const jk=$("st_jkey").value.trim(); if(jk)vals.JACKETT_API_KEY=jk;
+    const tk=$("st_tmdb").value.trim(); if(tk)vals.tmdb_key=tk;
+    try{
+      const r=await jsend("/api/settings","PATCH",{values:vals});
+      if(r.warnings&&r.warnings.length){
+        toast("Saved with warnings — check paths.","warn");
+        $("st_savehint").innerHTML=r.warnings.map(w=>`⚠ ${esc(w)}`).join("<br>");
+      }else{
+        toast(r.needs_restart?"Saved. Some changes apply after restart.":"Settings saved.");
+        closeModal();
+      }
+      refreshMeta();
+    }catch(e){ toast(e.message||"Couldn't save","err"); }
+  });
+});
+
+// ============ hunt log / indexer health / duplicates (ops visibility) ============
+const REASON_LABEL={blocklisted:"already tried",wrong_title:"wrong title",pack:"pack / not this item",
+  not_upgrade:"not better than owned",seeders:"too few seeders",size:"size limits",resolution:"resolution",
+  cam:"cam/telesync",language:"language",profile:"profile"};
+function reasonsText(r){const e=Object.entries(r||{}).sort((a,b)=>b[1]-a[1]);
+  return e.map(([k,n])=>`${n} ${REASON_LABEL[k]||k}`).join(" · ");}
+function shortTs(ts){return ts?esc(ts.replace("T"," ").slice(5,16)):"";}
+function outcomePill(o){const m={grabbed:["ok","grabbed"],miss:["muted","nothing usable"],
+  error:["bad","search failed"],add_failed:["bad","client refused"]};const [c,l]=m[o]||["muted",o];
+  return `<span class="pchip ${c}" style="margin-left:0;white-space:nowrap">${l}</span>`;}
+function itemTag(e){return e.kind==="movie"?"":e.kind==="pack"?`S${String(e.season).padStart(2,'0')} pack`
+  :`S${String(e.season).padStart(2,'0')}E${String(e.episode).padStart(2,'0')}`;}
+function huntRows(entries){
+  if(!entries.length)return "<div class='empty'>No hunt attempts recorded yet. They appear after the next scheduler tick searches for this.</div>";
+  return entries.map(e=>`<div class="hl-row">
+    <span class="t">${shortTs(e.ts)}</span><span class="k">${itemTag(e)}</span><span>${outcomePill(e.outcome)}</span>
+    <div><div class="rel">${e.release?esc(e.release):e.outcome==="error"?'':`<span class="muted">${e.results||0} result${e.results===1?'':'s'}</span>`}
+      ${e.release?`<span class="muted"> · ${esc(e.tracker||'?')} · ${e.seeders??'?'} seeders</span>`:''}</div>
+      ${reasonsText(e.reasons)?`<div class="why">rejected: ${esc(reasonsText(e.reasons))}</div>`:''}
+      ${e.detail?`<div class="why">${esc(e.detail)}</div>`:''}
+      ${e.outcome==="miss"&&e.next_search?`<div class="why">next search ${shortTs(e.next_search)}</div>`:''}</div>
+  </div>`).join("");}
+async function openHuntLog(kind,id,title){
+  openModal(`Hunt log · ${title}`,`<div class="muted">loading…</div>`);
+  let d;try{d=await jget(`/api/wanted/log?kind=${kind}&series_id=${id}&limit=200`);}
+  catch(e){$("modalBody").innerHTML=`<div class='empty'>Couldn't load: ${esc(e.message)}</div>`;return;}
+  const w=d.wants||[];const backed=w.filter(x=>x.status==="wanted"&&x.next_search);
+  $("modalBody").innerHTML=`<div class="hint" style="margin-bottom:8px">${w.length} open want${w.length===1?'':'s'}
+    ${w.length?` · ${w.filter(x=>x.status==='grabbed').length} grabbed · ${backed.length} waiting on backoff`:''}.
+    Every search the hunter ran in the last two weeks, newest first.</div>${huntRows(d.entries||[])}`;
+}
+async function episodeHuntSummary(sid,season,episode){
+  try{const d=await jget(`/api/wanted/log?kind=episode&series_id=${sid}&season=${season}&episode=${episode}&limit=3`);
+    const w=(d.wants||[])[0];const last=(d.entries||[])[0];
+    if(!w&&!last)return "";
+    let s=w?`want: <b>${esc(w.status)}</b> (${esc(w.reason||'')})${w.search_count?` · ${w.search_count} fruitless search${w.search_count===1?'':'es'}`:''}${w.status==='wanted'&&w.next_search?` · next ${shortTs(w.next_search)}`:''}`:"no open want";
+    if(last)s+=` · last hunt ${shortTs(last.ts)}: ${last.release?esc(last.release):`${last.results||0} results`}${reasonsText(last.reasons)?` — ${esc(reasonsText(last.reasons))}`:''}`;
+    return `<div class="hint" style="margin:6px 0 0">${s}</div>`;
+  }catch(_){return "";}
+}
+async function openIndexerHealth(){
+  openModal("Indexer health",`<div class="muted">loading…</div>`);
+  const render=d=>{
+    const s=d.search||{},p=d.probe,g=d.grabs||{};
+    const errs=Object.entries(s.errors||{}).map(([k,n])=>`${n}× ${esc(k)}`).join(" · ")||"none";
+    const trk=Object.entries(s.trackers||{}).slice(0,12);
+    const probeRows=p&&p.indexers&&p.indexers.length?p.indexers.map(x=>`<div class="ih-row">
+      <span>${esc(x.name)}</span><span>${x.ok?'<span class="pchip ok" style="margin-left:0">ok</span>':'<span class="pchip bad" style="margin-left:0">fail</span>'}</span>
+      <span class="muted">${x.ms} ms</span><span class="muted">${x.ok?`${x.results} result${x.results===1?'':'s'}`:esc(x.error||'')}</span></div>`).join("")
+      :`<div class='empty'>${p&&p.error?esc(p.error):'Not probed yet.'}</div>`;
+    const grabRows=Object.entries(g).sort((a,b)=>b[1].grabs-a[1].grabs).map(([t,x])=>`<div class="ih-row">
+      <span>${esc(t)}</span><span>${x.grabs} grab${x.grabs===1?'':'s'}</span><span class="muted">${x.completed} done</span>
+      <span>${x.stalled?`<span class="pchip ${x.stall_rate>=.5?'bad':'warn'}" style="margin-left:0">${x.stalled} stalled</span>`:'<span class="muted">no stalls</span>'}
+      ${x.stall_rate!=null?`<span class="muted"> · ${Math.round(x.stall_rate*100)}% stall rate</span>`:''}</span></div>`).join("")
+      ||"<div class='empty'>No hunter grabs in the last 14 days.</div>";
+    $("modalBody").innerHTML=`
+      <label class="fld" style="margin-top:0">Searches · last 24h</label>
+      <div class="hint">${s.searches||0} searches · ${s.failed||0} failed · ${s.empty||0} returned nothing
+        ${s.p50_ms!=null?` · median ${s.p50_ms} ms · p95 ${s.p95_ms} ms`:''}<br>errors: ${errs}</div>
+      ${trk.length?`<div class="hint" style="margin-top:6px">results by tracker: ${trk.map(([t,n])=>`${esc(t)} ${n}`).join(" · ")}</div>`:''}
+      ${(s.indexers||[]).length?`<label class="fld">Per indexer · last 24h</label>
+      <div class="ih-row h"><span>indexer</span><span>searches</span><span>avg</span><span>results · empty · failed</span></div>
+      ${s.indexers.map(x=>{const per=x.searches?x.results/x.searches:0;const dead=x.searches>=5&&!x.results;
+        return `<div class="ih-row"><span>${esc(x.indexer)}</span><span>${x.searches}</span>
+        <span class="muted">${x.avg_ms!=null?(x.avg_ms>=1000?(x.avg_ms/1000).toFixed(1)+' s':x.avg_ms+' ms'):'—'}</span>
+        <span>${dead?'<span class="pchip warn" style="margin-left:0">never returns anything</span>':`${x.results} <span class="muted">(${per.toFixed(1)}/search)</span>`}
+        <span class="muted"> · ${x.empty} empty${x.failed?` · <span style="color:var(--bad)">${x.failed} failed</span>`:''}</span></span></div>`;}).join("")}`:''}
+      <label class="fld">Per-indexer probe ${p&&p.ts?`<span class="muted">· ${shortTs(p.ts)}</span>`:''}</label>
+      <div class="hint" style="margin-bottom:4px">Each Jackett indexer queried on its own. The 'all' endpoint waits for the slowest one, so a single failing tracker shows up as timeouts on every search.</div>
+      <div class="ih-row h"><span>indexer</span><span>status</span><span>latency</span><span>result</span></div>${probeRows}
+      <button class="btn ghost" id="ihProbe" style="margin-top:10px">probe now</button>
+      <label class="fld">Hunter grabs by tracker · last 14 days</label>
+      <div class="hint" style="margin-bottom:4px">Trackers whose grabs mostly stall are ranked lower automatically.</div>${grabRows}`;
+    if(d.probing){$("ihProbe").disabled=true;$("ihProbe").textContent="probing… (Cloudflare-protected indexers take ~15s each)";}
+    $("ihProbe").addEventListener("click",async()=>{$("ihProbe").disabled=true;$("ihProbe").textContent="probing…";
+      try{await jsend("/api/indexers/probe","POST");poll();}
+      catch(e){toast(e.message||"Probe failed","err");$("ihProbe").disabled=false;$("ihProbe").textContent="probe now";}});
+  };
+  // a probe runs in the background; refresh until it finishes (or the modal closes)
+  const poll=async(n=0)=>{
+    if(!$("ihProbe")||n>100)return;
+    let d;try{d=await jget("/api/indexers/health");}catch(_){return;}
+    if(!$("ihProbe"))return;
+    render(d);
+    if(d.probing)setTimeout(()=>poll(n+1),3000);
+  };
+  try{const d=await jget("/api/indexers/health");render(d);if(d.probing)setTimeout(()=>poll(1),3000);}
+  catch(e){$("modalBody").innerHTML=`<div class='empty'>Couldn't load: ${esc(e.message)}</div>`;}
+}
+function dupesSection(dd){
+  if(!dd||!dd.count)return "";
+  return `<label class="fld">Duplicate copies (${dd.count} · ${human(dd.bytes)})</label>
+    <div class="hint" style="margin-bottom:6px">Files whose episode or movie is already held by a copy at least as good. Retiring moves them (and their subtitles) to <code>_superseded/</code> under the library root, keeping the same folder layout, so it's reversible.</div>
+    <div style="max-height:240px;overflow-y:auto;border:1px solid var(--line);border-radius:7px;padding:8px">
+    ${dd.items.map(x=>`<div class="hist-row"><span class="hn">${esc(x.label)}<div class="muted" style="font-size:10.5px">${esc(x.name)} → keeps ${esc(x.winner_name)}</div></span><span class="he">${esc(x.quality||'?')}</span><span class="ht">${human(x.size)}</span></div>`).join("")}</div>
+    <button class="btn" id="dupRetire" style="margin-top:10px">retire all ${dd.count} to _superseded</button>`;
+}
+
+// ============ scan report (diagnostic) ============
+async function openScanReport(){
+  openModal("Scan report",`<div class="muted">loading…</div>`);
+  try{
+    const r=await jget("/api/library/report");
+    const dd=r.duplicates;
+    if(!r.total&&!(dd&&dd.count)){$("modalBody").innerHTML="<div class='empty'>Everything in your library parsed cleanly — nothing unmatched, no duplicate copies.</div>";return;}
+    const sect=(label,items)=>items.length?`<label class="fld">${label} (${items.length})</label>
+      <div style="max-height:200px;overflow-y:auto;border:1px solid var(--line);border-radius:7px;padding:8px">
+      ${items.map(x=>`<div class="hist-row"><span class="hn">${esc(x.name)}</span><span class="he">${esc(x.reason)}</span></div>`).join("")}</div>`:"";
+    $("modalBody").innerHTML=`${r.total?`<div class="hint" style="margin-bottom:10px">${r.total} file(s) couldn't be matched to a show or movie. These are usually oddly-named files, extras, or featurettes. Rename them to a standard pattern (e.g. <code>Show - S01E02.mkv</code>) and re-scan, or ignore them.</div>`:''}
+      ${sect("Unparsed TV files",r.unparsed_tv)}${sect("Unparsed movie files",r.unparsed_movies)}${dupesSection(dd)}`;
+    $("dupRetire")&&$("dupRetire").addEventListener("click",async()=>{
+      if(!confirm(`Move ${dd.count} duplicate file(s) (${human(dd.bytes)}) to _superseded/? The library keeps the better copy of each.`))return;
+      $("dupRetire").disabled=true;$("dupRetire").textContent="moving…";
+      try{const x=await jsend("/api/library/duplicates/retire","POST",{});
+        toast(`Retired ${x.moved} file(s), ${human(x.bytes)}${x.skipped.length?` · ${x.skipped.length} skipped`:''}.`);openScanReport();}
+      catch(e){toast(e.message||"Retire failed","err");$("dupRetire").disabled=false;}
+    });
+  }catch(_){$("modalBody").innerHTML="<div class='empty'>Couldn't load report.</div>";}
+}
+// ============ auth: account menu + admin users ============
+let ME=null;
+async function loadMe(){
+  try{ const d=await jget("/api/auth/me");
+    if(d.authenticated){ ME=d.user;
+      if($("accountBtn"))$("accountBtn").textContent=(ME.username||"?").slice(0,1).toUpperCase();
+      applyRoleUI();
+    }
+  }catch(_){}
+}
+function applyRoleUI(){
+  const admin = ME && ME.role==="admin";
+  if(admin) startAdminPolling();
+  // admin-only nav surfaces
+  if(admin) $("usersBtn").style.display="";
+  // hide Dashboard, indexer Search, Auto-grab, Profiles from non-admins
+  ["dashboard","search","subs","profiles"].forEach(p=>{
+    const el=document.querySelector(`.navlink[data-page="${p}"]`);
+    if(el) el.style.display = admin ? "" : "none";
+  });
+  if(admin){ try{ nav("dashboard"); }catch(_){} }
+  if(!admin){
+    $("settingsBtn").style.display="none";
+    $("activityBtn").style.display="none";
+  }
+  // everyone gets a Requests nav entry; build it once
+  if(!document.querySelector('.navlink[data-page="requests"]')){
+    const reqLink=document.createElement("span");
+    reqLink.className="navlink"; reqLink.dataset.page="requests";
+    reqLink.textContent= admin ? "Requests" : "My Requests";
+    reqLink.addEventListener("click",()=>navRequests());
+    // insert after Movies
+    const movies=document.querySelector('.navlink[data-page="movies"]');
+    movies.parentNode.insertBefore(reqLink, movies.nextSibling);
+  }
+  // non-admins land on Shows (library browse) instead of indexer Search
+  if(!admin){
+    try{ nav("shows"); }catch(_){}
+    // relabel add -> Request, hide admin-only library management controls
+    const sa=$("showsAdd"), ma=$("moviesAdd");
+    if(sa) sa.textContent="+ Request show";
+    if(ma) ma.textContent="+ Request movie";
+    ["showsReport","showsImport","showsScan","moviesImport","moviesScan"].forEach(id=>{const el=$(id);if(el)el.style.display="none";});
+    // CSS hook to hide remove links and detail hunt controls for users
+    document.body.classList.add("role-user");
+  }
+}
+
+async function navRequests(){
+  document.querySelectorAll(".navlink").forEach(l=>l.classList.toggle("on",l.dataset.page==="requests"));
+  ["dashboard","search","shows","movies","subs","profiles","showdetail","moviedetail"].forEach(p=>{const el=$("page-"+p);if(el)el.classList.remove("on");});
+  let host=$("page-requests");
+  if(!host){ host=document.createElement("section"); host.className="page"; host.id="page-requests";
+    document.querySelector(".wrap").appendChild(host); }
+  host.classList.add("on");
+  host.innerHTML=`<div class="muted">loading…</div>`;
+  const admin = ME && ME.role==="admin";
+  let reqs=[];
+  try{ reqs=(await jget("/api/requests")).requests; }catch(e){ host.innerHTML=`<div class="empty">Couldn't load requests.</div>`; return; }
+  const pending=reqs.filter(r=>r.status==="pending");
+  const resolved=reqs.filter(r=>r.status!=="pending");
+  const statusPill=s=>`<span class="pill ${s==='approved'?'have':(s==='pending'?'want':'')}" ${s==='declined'?'style="color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,transparent)"':''}>${esc(s)}</span>`;
+  const card=r=>`<div class="reqcard">
+    <div class="reqart" style="${bgImg(r.poster)}">${safeImg(r.poster)?'':(r.media_type==='tv'?'TV':'★')}</div>
+    <div class="reqbody">
+      <div class="reqtitle">${esc(r.title)} ${r.year?`<span class="muted">(${r.year})</span>`:""}</div>
+      <div class="reqsub">${statusPill(r.status)}<span class="muted">${esc(r.media_type==='tv'?'series':'movie')} · requested by ${esc(r.user||'?')}</span></div>
+    </div>
+    <div class="reqacts">
+      ${admin && r.status==='pending' ? `
+        <button class="btn sm" data-act="approve" data-id="${r.id}">approve</button>
+        <button class="btn sm ghost" data-act="decline" data-id="${r.id}">decline</button>`:""}
+      ${admin && r.status!=='pending' ? `<button class="link-btn danger" data-clear="${r.id}">clear</button>`:""}
+    </div>
+  </div>`;
+  let html=`<div class="page-head"><h1>${admin?"Requests":"My Requests"}</h1>`;
+  if(admin&&resolved.length)html+=`<div class="ph-actions"><button class="btn ghost" id="reqClearAll">clear all resolved</button></div>`;
+  html+=`</div>`;
+  if(!reqs.length){
+    html+=`<div class="empty">No requests yet. ${admin?"":"Browse Shows or Movies and hit <b>Request</b> on something not in the library."}</div>`;
+  }else{
+    if(pending.length)html+=`<div class="reqsection-label">Pending (${pending.length})</div>`+pending.map(card).join("");
+    if(resolved.length)html+=`<div class="reqsection-label">Resolved (${resolved.length})</div>`+resolved.map(card).join("");
+  }
+  host.innerHTML=html;
+  host.querySelectorAll("button[data-act]").forEach(b=>b.addEventListener("click",async()=>{
+    try{ await jsend(`/api/requests/${b.dataset.id}/${b.dataset.act}`,"POST"); navRequests(); }
+    catch(e){ toast(e.message,"err"); }
+  }));
+  host.querySelectorAll("[data-clear]").forEach(b=>b.addEventListener("click",async()=>{
+    try{ await jsend(`/api/requests/${b.dataset.clear}`,"DELETE"); toast("Cleared."); navRequests(); }
+    catch(e){ toast(e.message,"err"); }
+  }));
+  const ca=$("reqClearAll");
+  if(ca)ca.addEventListener("click",async()=>{
+    if(!confirm(`Clear all ${resolved.length} resolved request(s)?`))return;
+    try{ for(const r of resolved){ await jsend(`/api/requests/${r.id}`,"DELETE"); } toast("Cleared resolved requests."); navRequests(); }
+    catch(e){ toast(e.message,"err"); }
+  });
+}
+$("accountBtn").addEventListener("click",()=>{
+  if(!ME){location.href="/login";return;}
+  openModal("Account",`
+    <div class="muted" style="margin-bottom:14px">Signed in as <b style="color:var(--txt)">${esc(ME.username)}</b> · ${esc(ME.role)}</div>
+    <label class="fld">Change password</label>
+    <input type="password" id="ac_cur" placeholder="Current password" style="width:100%;margin-bottom:8px">
+    <input type="password" id="ac_new" placeholder="New password (min 8 chars)" style="width:100%">
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="btn" id="ac_save">Update password</button>
+      <button class="btn ghost" id="ac_logout">Log out</button>
+    </div>`);
+  $("ac_save").addEventListener("click",async()=>{
+    try{ await jsend("/api/auth/change-password","POST",{current_password:$("ac_cur").value,new_password:$("ac_new").value});
+      toast("Password updated"); closeModal();
+    }catch(e){ toast(e.message,"err"); }
+  });
+  $("ac_logout").addEventListener("click",async()=>{
+    try{ await jsend("/api/auth/logout","POST"); }catch(_){}
+    location.href="/login";
+  });
+});
+
+async function renderUsers(){
+  let users=[];
+  try{ users=(await jget("/api/admin/users")).users; }catch(e){ toast(e.message,"err"); return; }
+  const initials=n=>(n||"?").slice(0,2).toUpperCase();
+  const roleColor=r=>r==='admin'?'var(--accent)':'var(--muted)';
+  const card=u=>{
+    const me=u.id===ME.id;
+    const trusted=!!u.can_autoapprove;
+    return `<div class="usercard">
+      <div class="useravatar" style="border-color:${roleColor(u.role)}">${initials(u.username)}</div>
+      <div class="userinfo">
+        <div class="username">${esc(u.username)}${me?'<span class="youtag">you</span>':''}</div>
+        <div class="usermeta">
+          <span class="pill ${u.status==='active'?'have':(u.status==='pending'?'want':'')}" ${u.status==='disabled'?'style="color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,transparent)"':''}>${esc(u.status)}</span>
+          <span style="color:${roleColor(u.role)};font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.05em">${esc(u.role)}</span>
+          ${trusted?'<span class="trustbadge">⚡ auto-approve</span>':''}
+        </div>
+      </div>
+      <div class="useracts">
+        ${u.status==='pending'?`<button class="link-btn" data-act="status" data-id="${u.id}" data-val="active">approve</button>`:''}
+        ${u.status==='active'&&!me?`<button class="link-btn" data-act="status" data-id="${u.id}" data-val="disabled">disable</button>`:''}
+        ${u.status==='disabled'?`<button class="link-btn" data-act="status" data-id="${u.id}" data-val="active">enable</button>`:''}
+        ${!me?`<button class="link-btn" data-act="role" data-id="${u.id}" data-val="${u.role==='admin'?'user':'admin'}">${u.role==='admin'?'demote':'make admin'}</button>`:''}
+        <button class="link-btn" data-act="autoapprove" data-id="${u.id}" data-val="${trusted?0:1}">${trusted?'require approval':'trust'}</button>
+        <button class="link-btn" data-act="reset" data-id="${u.id}">reset pw</button>
+        ${!me?`<button class="link-btn danger" data-act="delete" data-id="${u.id}">delete</button>`:''}
+      </div>
+    </div>`;};
+  const pending=users.filter(u=>u.status==='pending');
+  const active=users.filter(u=>u.status!=='pending');
+  let body="";
+  if(pending.length)body+=`<div class="reqsection-label">Awaiting approval (${pending.length})</div>`+pending.map(card).join("");
+  body+=`<div class="reqsection-label">Members (${active.length})</div>`+active.map(card).join("");
+  openModal("Users",`${body}
+    <div style="margin-top:18px;border-top:1px solid var(--line);padding-top:16px">
+      <label class="fld">Create user</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input type="text" id="nu_user" placeholder="username" style="flex:1;min-width:120px">
+        <input type="password" id="nu_pass" placeholder="password" style="flex:1;min-width:120px">
+        <select id="nu_role"><option value="user">user</option><option value="admin">admin</option></select>
+        <button class="btn" id="nu_create">Create</button>
+      </div>
+    </div>`);
+  $("modalBody").querySelectorAll("button[data-act]").forEach(a=>a.addEventListener("click",async()=>{
+    const id=a.dataset.id, act=a.dataset.act, val=a.dataset.val;
+    try{
+      if(act==="status") await jsend(`/api/admin/users/${id}/status?status=${val}`,"POST");
+      else if(act==="role") await jsend(`/api/admin/users/${id}/role?role=${val}`,"POST");
+      else if(act==="autoapprove") await jsend(`/api/admin/users/${id}/autoapprove?enabled=${val}`,"POST");
+      else if(act==="delete"){ if(!confirm("Delete this user?"))return; await jsend(`/api/admin/users/${id}`,"DELETE"); }
+      else if(act==="reset"){ const d=await jsend(`/api/admin/users/${id}/reset`,"POST");
+        prompt("Give this one-time reset link to the user:", location.origin+d.reset_path); return; }
+      renderUsers();
+    }catch(e){ toast(e.message,"err"); }
+  }));
+  $("nu_create").addEventListener("click",async()=>{
+    try{ await jsend("/api/admin/users","POST",{username:$("nu_user").value.trim(),password:$("nu_pass").value,role:$("nu_role").value,status:"active"});
+      toast("User created"); renderUsers();
+    }catch(e){ toast(e.message,"err"); }
+  });
+}
+$("usersBtn").addEventListener("click",renderUsers);
+
+// ============ modal helpers ============
+function openModal(title,html){$("modalTitle").textContent=title;$("modalBody").innerHTML=html;$("modal").classList.add("show");}
+function closeModal(){$("modal").classList.remove("show");}
+$("modalClose").addEventListener("click",closeModal);
+$("modal").addEventListener("click",e=>{if(e.target.id==="modal")closeModal();});
+
+// ============ init ============
+loadMe();
+refreshMeta();
+
+// Deep links from the new UI (pages it doesn't have yet open here):
+// /classic#show/12, #movie/5, #page/<name>, #settings, #users, #activity,
+// #files, #report, #indexers
+(function classicDeepLink(){
+  const h=decodeURIComponent((location.hash||"").replace(/^#\/?/,""));
+  if(!h)return;
+  const [kind,arg]=h.split("/");
+  const go=()=>{
+    if(kind==="show"&&arg)openShowDetail(+arg);
+    else if(kind==="movie"&&arg)openMovieDetail(+arg);
+    else if(kind==="page"&&arg==="requests")navRequests();
+    else if(kind==="page"&&arg){const l=document.querySelector(`.navlink[data-page="${CSS.escape(arg)}"]`);if(l)l.click();}
+    else if(kind==="settings")$("settingsBtn").click();
+    else if(kind==="users"&&$("usersBtn"))$("usersBtn").click();
+    else if(kind==="activity")$("activityBtn").click();
+    else if(kind==="files")openFileBrowser("");
+    else if(kind==="report")openScanReport();
+    else if(kind==="indexers")openIndexerHealth();
+  };
+  setTimeout(go,300);
+})();
+
+function startAdminPolling(){
+  // refresh the dashboard whenever it's the active page; always keep the
+  // activity badge fresh via the same call.
+  const tick=()=>{ const onDash=$("page-dashboard")&&$("page-dashboard").classList.contains("on");
+    if(onDash) loadDashboard();
+    else jget("/api/dashboard").then(d=>{const dl=(d.transfers&&d.transfers.downloading)||0;
+      if($("activeCount")){$("activeCount").textContent=dl;$("activeCount").className="badge"+(dl?"":" zero");}}).catch(()=>{}); };
+  tick();
+  if(!window._statsTimer) window._statsTimer=setInterval(tick,3000);
+}
+</script>
+</body>
+</html>
