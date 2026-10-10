@@ -73,26 +73,136 @@ def add_series(tmdb_id: int, title: str, year: int | None, poster: str | None,
     return sid
 
 
-def refresh_episodes(series_id: int) -> int:
-    """Pull the canonical episode list from TMDb into series_episodes."""
+def refresh_episodes(series_id: int, fresh: bool = False) -> int:
+    """Pull the canonical episode list from TMDb into series_episodes.
+
+    With `fresh` (the scheduled refresh) TMDb is re-read rather than served
+    from cache, the season count is re-read too — a show that gains a season
+    after it was added would otherwise never list it — and, for every season
+    TMDb actually answered for, episodes it no longer lists are dropped along
+    with their wants (TMDb renumbers and deletes placeholder episodes; a
+    stale row is a want that can never be satisfied).
+
+    A partial read (some season unreadable) is not recorded as a full
+    refresh: the show comes due again in about an hour.
+    Returns the number of episodes upserted."""
     s = get_series(series_id)
     if not s:
         return 0
-    eps = tmdb.episodes(s["tmdb_id"], s.get("total_seasons") or 0)
+    total = s.get("total_seasons") or 0
+    status = None
+    if fresh:
+        d = tmdb.details(s["tmdb_id"], "tv", fresh=True)
+        status = d.get("status")
+        if d.get("seasons"):
+            total = int(d["seasons"])
     n = 0
+    complete = True
+    if fresh:
+        per_season = ((no, tmdb.season_episodes(s["tmdb_id"], no, fresh=True))
+                      for no in range(1, total + 1))
+    else:
+        # first pull (add / Fix Match): cached reads are fine
+        per_season = [(None, tmdb.episodes(s["tmdb_id"], total))]
+    for season_no, eps in per_season:
+        if eps is None:
+            complete = False
+            continue
+        listed = set()
+        with db.connect() as c:
+            for e in eps:
+                if e.get("episode") is None:
+                    continue
+                listed.add((int(e["season"]), int(e["episode"])))
+                c.execute(
+                    "INSERT INTO series_episodes (series_id, season, episode, title, air_date) "
+                    "VALUES (?,?,?,?,?) ON CONFLICT(series_id, season, episode) DO UPDATE SET "
+                    "title=excluded.title, air_date=excluded.air_date",
+                    (series_id, e["season"], e["episode"], e.get("title", ""),
+                     e.get("air_date", "")))
+                n += 1
+            if season_no is not None and listed:
+                # an empty answer is never trusted for pruning
+                for r in c.execute("SELECT episode FROM series_episodes "
+                                   "WHERE series_id=? AND season=?",
+                                   (series_id, season_no)).fetchall():
+                    if (season_no, r["episode"]) in listed:
+                        continue
+                    c.execute("DELETE FROM series_episodes WHERE series_id=? "
+                              "AND season=? AND episode=?",
+                              (series_id, season_no, r["episode"]))
+                    c.execute("DELETE FROM wanted WHERE kind='episode' AND series_id=? "
+                              "AND season=? AND episode=?",
+                              (series_id, season_no, r["episode"]))
+                    log.info("%s S%02dE%02d no longer listed by TMDb; dropped",
+                             s["title"], season_no, r["episode"])
     with db.connect() as c:
-        for e in eps:
-            if e.get("episode") is None:
-                continue
-            c.execute(
-                "INSERT INTO series_episodes (series_id, season, episode, title, air_date) "
-                "VALUES (?,?,?,?,?) ON CONFLICT(series_id, season, episode) DO UPDATE SET "
-                "title=excluded.title, air_date=excluded.air_date",
-                (series_id, e["season"], e["episode"], e.get("title", ""), e.get("air_date", "")))
-            n += 1
+        if total != (s.get("total_seasons") or 0):
+            log.info("%s: TMDb now lists %d season(s) (was %d)",
+                     s["title"], total, s.get("total_seasons") or 0)
+            c.execute("UPDATE series SET total_seasons=? WHERE id=?", (total, series_id))
+        stamp = datetime.now()
+        if not complete:
+            # partial read: due again in about an hour rather than on every
+            # tick (a season TMDb never serves would otherwise hog a slot)
+            from datetime import timedelta
+            stamp -= timedelta(hours=max(0.0, refresh_interval_hours(status) - 1))
         c.execute("UPDATE series SET last_refresh=? WHERE id=?",
-                  (datetime.now().isoformat(timespec="seconds"), series_id))
+                  (stamp.isoformat(timespec="seconds"), series_id))
     return n
+
+
+def refresh_interval_hours(tmdb_status: str | None) -> float:
+    """How stale a show's episode list may get. Airing shows gain episodes
+    and air dates weekly; ended ones almost never change."""
+    try:
+        active = float(os.environ.get("SERIES_REFRESH_HOURS", "12"))
+    except ValueError:
+        active = 12.0
+    if (tmdb_status or "").lower() in ("ended", "canceled", "cancelled"):
+        return max(active, 24 * 7.0)
+    return active
+
+
+def refresh_stale(limit: int | None = None) -> dict:
+    """Re-pull episode lists for monitored shows whose list is older than
+    their refresh interval, stalest first, at most `limit` per call
+    (SERIES_REFRESH_PER_TICK, default 5) to keep TMDb traffic bounded.
+
+    Before this existed, a show's episode list was fetched once — when it was
+    added — so every episode TMDb announced afterwards (new seasons, newly
+    dated TBA episodes) was invisible to reconcile, the hunter and the
+    calendar."""
+    if limit is None:
+        try:
+            limit = int(os.environ.get("SERIES_REFRESH_PER_TICK", "5"))
+        except ValueError:
+            limit = 5
+    out = {"refreshed": 0, "checked": 0}
+    if limit <= 0 or not tmdb.enabled():
+        return out
+    now = datetime.now()
+    due = []
+    for s in list_series():
+        if not s.get("monitored") or (s.get("monitor_mode") or "all") == "none":
+            continue
+        out["checked"] += 1
+        status = (tmdb.details(s["tmdb_id"], "tv") or {}).get("status")
+        try:
+            last = datetime.fromisoformat(s["last_refresh"]) if s.get("last_refresh") else None
+        except ValueError:
+            last = None
+        age_h = (now - last).total_seconds() / 3600 if last else float("inf")
+        if age_h >= refresh_interval_hours(status):
+            due.append((age_h, s))
+    due.sort(key=lambda x: x[0], reverse=True)
+    for _, s in due[:limit]:
+        try:
+            refresh_episodes(s["id"], fresh=True)
+            out["refreshed"] += 1
+        except Exception as e:                   # noqa: BLE001 - one bad show can't stop the rest
+            log.warning("episode refresh failed for %s: %s", s["title"], e)
+    return out
 
 
 def get_series(series_id: int) -> dict | None:
@@ -218,8 +328,26 @@ def _clear_wanted(series_id: int, season: int, episode: int,
         c.execute(q, (series_id, season, episode))
 
 
+def purge_unmonitored_wants() -> int:
+    """Drop wants (any status) for shows and movies that are no longer
+    monitored or are paused. Ignoring a title sets monitored=0 but used to
+    leave its wants behind, and since reconcile skips unmonitored titles
+    nothing ever cleared them — the hunter kept downloading ignored shows."""
+    with db.connect() as c:
+        n = c.execute(
+            "DELETE FROM wanted WHERE kind='episode' AND series_id IN ("
+            "  SELECT id FROM series WHERE monitored=0 OR monitor_mode='none')").rowcount
+        n += c.execute(
+            "DELETE FROM wanted WHERE kind='movie' AND series_id IN ("
+            "  SELECT id FROM movies WHERE monitored=0)").rowcount
+    if n:
+        log.info("Dropped %d want(s) for unmonitored titles", n)
+    return n
+
+
 def reconcile_all() -> dict:
     total = {"missing": 0, "upgrades": 0, "have": 0, "series": 0}
+    purge_unmonitored_wants()
     for s in list_series():
         if not s.get("monitored"):
             continue

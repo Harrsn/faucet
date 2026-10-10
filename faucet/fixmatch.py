@@ -67,8 +67,8 @@ def set_status(kind: str, item_id: int, status: str) -> dict:
     if status not in VALID_STATUS:
         return {"error": f"invalid status '{status}'"}
     table = "series" if kind == "show" else "movies"
-    # monitored flag stays in sync so existing hunt logic (which reads
-    # `monitored`) skips anything not actively monitored.
+    # monitored flag stays in sync; reconcile and the hunter skip anything not
+    # actively monitored, and its outstanding wants are dropped below.
     monitored = 1 if status == "monitored" else 0
     with db.connect() as c:
         row = c.execute(f"SELECT id FROM {table} WHERE id=?", (item_id,)).fetchone()
@@ -82,6 +82,11 @@ def set_status(kind: str, item_id: int, status: str) -> dict:
         # actual library scan.
         if kind == "movie" and status == "in_library":
             c.execute("UPDATE movies SET status='have' WHERE id=?", (item_id,))
+        if not monitored:
+            # stop hunting it now, not just "eventually": the hunter works off
+            # the wanted table, which knows nothing about lib_status
+            c.execute("DELETE FROM wanted WHERE kind=? AND series_id=?",
+                      ("episode" if kind == "show" else "movie", item_id))
     log.info("set %s %s status -> %s", kind, item_id, status)
     return {"ok": True, "kind": kind, "id": item_id, "status": status}
 

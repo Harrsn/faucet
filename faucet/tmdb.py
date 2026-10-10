@@ -144,46 +144,59 @@ def discover(kind: str = "tv", list_name: str = "trending") -> list[dict]:
     return out
 
 
-def episodes(tmdb_id: int, total_seasons: int) -> list[dict]:
-    """Fetch the full canonical episode list across all seasons.
-    Returns [{season, episode, title, air_date}] — the 'what should exist'
-    data reconciliation diffs against the library. Cached per season."""
+def season_episodes(tmdb_id: int, season_no: int, fresh: bool = False) -> list[dict] | None:
+    """One season's canonical episodes, or None when TMDb couldn't be read.
+
+    None and [] are different answers: [] means TMDb has the season with no
+    episodes yet, None means we don't know. Callers that prune episodes TMDb
+    no longer lists must only do so on a real answer. `fresh` skips the cache
+    read (the result is still cached) so a scheduled refresh sees new
+    episodes and air dates the same day TMDb does."""
     if not enabled():
-        return []
-    out = []
-    for season_no in range(1, (total_seasons or 0) + 1):
-        ck = f"season:{tmdb_id}:{season_no}"
+        return None
+    ck = f"season:{tmdb_id}:{season_no}"
+    if not fresh:
         cached = _cache_get(ck)
         if cached is not None:
-            out.extend(cached)
+            return cached
+    try:
+        data = _get(f"/tv/{tmdb_id}/season/{season_no}", {})
+    except (requests.RequestException, ValueError):
+        return None
+    season_eps = []
+    for ep in data.get("episodes", []):
+        if ep.get("episode_number") is None:
             continue
-        try:
-            data = _get(f"/tv/{tmdb_id}/season/{season_no}", {})
-        except requests.RequestException:
-            continue
-        season_eps = []
-        for ep in data.get("episodes", []):
-            if ep.get("episode_number") is None:
-                continue
-            season_eps.append({
-                "season": ep.get("season_number", season_no),
-                "episode": ep.get("episode_number"),
-                "title": ep.get("name", ""),
-                "air_date": ep.get("air_date") or "",
-            })
-        _cache_put(ck, season_eps)
-        out.extend(season_eps)
+        season_eps.append({
+            "season": ep.get("season_number", season_no),
+            "episode": ep.get("episode_number"),
+            "title": ep.get("name", ""),
+            "air_date": ep.get("air_date") or "",
+        })
+    _cache_put(ck, season_eps)
+    return season_eps
+
+
+def episodes(tmdb_id: int, total_seasons: int, fresh: bool = False) -> list[dict]:
+    """Fetch the full canonical episode list across all seasons.
+    Returns [{season, episode, title, air_date}] — the 'what should exist'
+    data reconciliation diffs against the library. Cached per season; seasons
+    TMDb couldn't serve are skipped."""
+    out = []
+    for season_no in range(1, (total_seasons or 0) + 1):
+        out.extend(season_episodes(tmdb_id, season_no, fresh=fresh) or [])
     return out
 
 
-def details(tmdb_id: int, media_type: str) -> dict:
+def details(tmdb_id: int, media_type: str, fresh: bool = False) -> dict:
     if not enabled():
         return {}
     # v2 cache key: busts pre-1.3 cached entries whose backdrop was low-res
     ck = f"details2:{media_type}:{tmdb_id}"
-    cached = _cache_get(ck)
-    if cached is not None:
-        return cached
+    if not fresh:
+        cached = _cache_get(ck)
+        if cached is not None:
+            return cached
     path = f"/{'movie' if media_type=='movie' else 'tv'}/{tmdb_id}"
     try:
         d = _get(path, {})
@@ -200,6 +213,9 @@ def details(tmdb_id: int, media_type: str) -> dict:
         "rating": round(d.get("vote_average", 0), 1),
         "genres": [g["name"] for g in d.get("genres", [])],
         "seasons": d.get("number_of_seasons"),
+        # TV only: 'Returning Series' | 'Ended' | 'Canceled' | ... (drives how
+        # often the episode list is re-pulled)
+        "status": d.get("status"),
         "runtime": d.get("runtime"),
     }
     _cache_put(ck, out)

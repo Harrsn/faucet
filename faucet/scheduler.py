@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 from datetime import datetime
 
 from . import db
@@ -173,15 +174,97 @@ def _try_season_pack(title, season, profile):
     return ranked[0] if ranked else None
 
 
-def hunt_wanted(series_filter=None, max_override=None) -> dict:
-    """Search for and grab wanted items (missing + upgrades), respecting two
-    caps so an unattended run can't flood the client:
-      MAX_ACTIVE  — don't grab if this many torrents are already downloading
-      MAX_PER_RUN — grab at most this many per cycle
-    Remaining wants stay 'wanted' and get picked up on the next tick.
-    series_filter: if set, only hunt wants for that series id (per-show hunt).
-    max_override: override the per-run cap (used by per-show hunt)."""
+_hunt_lock = threading.Lock()
+_run_lock = threading.Lock()
+
+
+def _int_env(key: str, default: int) -> int:
+    try:
+        return int(os.environ.get(key, str(default)))
+    except ValueError:
+        return default
+
+
+def _hunt_candidates(series_filter=None) -> list[dict]:
+    """The wants a hunt may act on: status 'wanted', belonging to a title that
+    is still monitored (and not paused), each annotated with its episode's
+    air date. Ordered so the most promising searches happen first while the
+    per-tick search budget lasts: never-searched before backed-off, then the
+    most recently aired (new episodes are the ones with live releases)."""
     from . import series as series_mod
+    wanted = series_mod.list_wanted("wanted")
+    with db.connect() as c:
+        live_series = {r["id"] for r in c.execute(
+            "SELECT id FROM series WHERE monitored=1 AND "
+            "COALESCE(monitor_mode, 'all') != 'none'")}
+        live_movies = {r["id"] for r in c.execute(
+            "SELECT id FROM movies WHERE monitored=1")}
+        air = {(r["series_id"], r["season"], r["episode"]): r["air_date"] or ""
+               for r in c.execute("SELECT series_id, season, episode, air_date "
+                                  "FROM series_episodes")}
+    out = []
+    for w in wanted:
+        kind = w.get("kind", "episode")
+        sid = w.get("series_id")
+        if series_filter is not None and (kind == "movie" or sid != series_filter):
+            continue
+        if kind == "movie":
+            if sid not in live_movies:
+                continue
+            # movies have no air date to rank by and are few; keep them at the
+            # front of their search-count tier rather than starved behind a
+            # large episode backlog
+            w["_air"] = ""
+            w["_rank_date"] = "9999-12-31"
+        else:
+            if sid not in live_series:
+                continue
+            w["_air"] = air.get((sid, w.get("season"), w.get("episode")), "")
+        out.append(w)
+    out.sort(key=lambda w: ((w.get("search_count") or 0) > 0,
+                            _neg_date(w.get("_rank_date") or w["_air"])))
+    return out
+
+
+def _neg_date(d: str) -> int:
+    """Sort key that puts later dates first; undated last."""
+    try:
+        return -int(d.replace("-", "")[:8])
+    except ValueError:
+        return 0
+
+
+def _is_recent(air_date: str) -> bool:
+    if not air_date:
+        return False
+    from datetime import date, timedelta
+    days = _int_env("WANT_RECENT_DAYS", 14)
+    return air_date >= (date.today() - timedelta(days=days)).isoformat()
+
+
+def hunt_wanted(series_filter=None, max_override=None) -> dict:
+    """Search for and grab wanted items (missing + upgrades), within caps so an
+    unattended run can't flood the client or the indexer:
+      HUNT_MAX_ACTIVE     don't grab if this many torrents are already downloading
+      HUNT_MAX_PER_RUN    grab at most this many per cycle
+      HUNT_MAX_SEARCHES   indexer queries per cycle (default 40)
+    Wants whose last searches found nothing are backed off (faucet.wants) and
+    skipped until due. Remaining wants stay 'wanted' for the next tick.
+    series_filter: only hunt that series id — a manual "hunt now", which
+    ignores backoff. max_override: override the per-run grab cap."""
+    if not _hunt_lock.acquire(blocking=False):
+        log.info("Hunt skipped: another hunt is already running.")
+        return {"wanted": 0, "grabbed": 0, "details": [],
+                "skipped_reason": "a hunt is already running"}
+    try:
+        return _hunt_wanted(series_filter, max_override)
+    finally:
+        _hunt_lock.release()
+
+
+def _hunt_wanted(series_filter=None, max_override=None) -> dict:
+    from . import series as series_mod
+    from . import wants
     db.init()
 
     if not (_cfg().jackett_url and _cfg().jackett_api_key):
@@ -192,8 +275,11 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
         return {"wanted": 0, "grabbed": 0, "details": [],
                 "skipped_reason": "indexer not configured"}
 
-    max_active = int(os.environ.get("HUNT_MAX_ACTIVE", "5"))
-    max_per_run = max_override if max_override is not None else int(os.environ.get("HUNT_MAX_PER_RUN", "3"))
+    manual = series_filter is not None
+    max_active = _int_env("HUNT_MAX_ACTIVE", 5)
+    max_per_run = (max_override if max_override is not None
+                   else _int_env("HUNT_MAX_PER_RUN", 3))
+    max_searches = _int_env("HUNT_MAX_SEARCHES", 40)
 
     # how many torrents are already downloading right now?
     active = 0
@@ -205,10 +291,10 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
     except Exception:                            # noqa: BLE001
         active = 0
 
-    wanted = series_mod.list_wanted("wanted")
-    if series_filter is not None:
-        wanted = [w for w in wanted if w.get("series_id") == series_filter]
+    wanted = _hunt_candidates(series_filter)
     grabbed = 0
+    searches = 0
+    deferred = 0
     details = []
     if active >= max_active:
         log.info("Hunt skipped: %d already downloading (cap %d).", active, max_active)
@@ -216,6 +302,10 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
                 "skipped_reason": f"{active} active >= cap {max_active}"}
 
     budget = min(max_per_run, max_active - active)
+    now = datetime.now()
+
+    def due(w):
+        return manual or wants.is_due(w, now)
 
     # ── Season-pack pre-pass ──
     # Group MISSING episode-wants by (series, season); when a season is
@@ -227,9 +317,12 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
     #   * ownership check — a pack is only grabbed when at most ~10% of the
     #     season's aired episodes are on disk; owning 8/10 and grabbing a
     #     14 GB pack for the other 2 re-downloads the 8.
+    # A season is only searched for a pack when at least one of its wants is
+    # due, so a fruitless pack search backs off with its episodes.
     covered_episode_wants = set()        # ids of wanted rows a pack will cover
     if budget > 0:
         from collections import defaultdict
+        from . import library as _lib
         by_season = defaultdict(list)
         for w in wanted:
             if w.get("kind", "episode") == "movie":
@@ -243,19 +336,21 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
             # drop stale wants for episodes already on disk (see per-episode
             # ownership check below) so they can't inflate a season into
             # pack-worthiness
-            from . import library as _lib
             if (w.get("series_title") and w.get("episode") is not None
                     and _lib.have_episode(w["series_title"], int(w["season"]),
                                           int(w["episode"]))):
                 with db.connect() as c:
                     c.execute("DELETE FROM wanted WHERE id=?", (w["id"],))
+                w["_gone"] = True
                 continue
             by_season[(w["series_id"], w["season"])].append(w)
         cutoff = series_mod.hunt_cutoff()
         for (sid, season), eps in by_season.items():
-            if grabbed >= budget:
+            if grabbed >= budget or searches >= max_searches:
                 break
             if len(eps) < 2:                 # need 2+ missing to prefer a pack
+                continue
+            if not any(due(w) for w in eps):
                 continue
             title = eps[0].get("series_title") or ""
             if not title:
@@ -270,6 +365,7 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
             owned = max(0, aired - len(eps))
             if aired <= 0 or owned > max(1, aired // 10):
                 continue                     # own too much of it — episode grabs instead
+            searches += 1
             pack = _try_season_pack(title, season, _load_profile_for_series(sid))
             if not pack:
                 continue
@@ -283,11 +379,8 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
                 grabbed += 1
                 db.add_history("added", pack["title"], f"season pack: {title} S{int(season):02d} ({len(eps)} eps)")
                 # mark every wanted episode in this season as grabbed-by-pack
-                with db.connect() as c:
-                    for w in eps:
-                        c.execute("UPDATE wanted SET status='grabbed', last_search=? WHERE id=?",
-                                  (datetime.now().isoformat(timespec="seconds"), w["id"]))
-                        covered_episode_wants.add(w["id"])
+                wants.mark_grabbed([w["id"] for w in eps])
+                covered_episode_wants.update(w["id"] for w in eps)
                 details.append({"want": f"{title} S{int(season):02d} (pack)",
                                 "reason": "pack", "grabbed": pack["title"], "error": None,
                                 "covers": len(eps)})
@@ -304,10 +397,17 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
     for w in wanted:
         if grabbed >= budget:
             break
-        if w.get("id") in covered_episode_wants:
+        if w.get("id") in covered_episode_wants or w.get("_gone"):
+            continue
+        if not due(w):
+            deferred += 1
+            continue
+        if searches >= max_searches:
+            deferred += 1
             continue
         kind = w.get("kind", "episode")
         movie_title, movie_year = None, None
+        owned = None
         if kind == "movie":
             query = w.get("title") or ""
             series_id = w.get("series_id")  # for movies this is the movie id
@@ -347,11 +447,13 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
         if not query:
             continue
         res = {"want": query, "reason": w.get("reason"), "grabbed": None, "error": None}
+        searches += 1
         try:
             results = searchmod.search(
                 _cfg().jackett_url, _cfg().jackett_api_key, _cfg().jackett_indexer,
                 query, "all", _cfg().search_limit, _cfg().request_timeout)
         except searchmod.SearchError as e:
+            # transient (indexer down / timed out): no backoff, retry next tick
             res["error"] = f"search failed: {e}"
             details.append(res)
             search_errors.append(str(e))
@@ -388,6 +490,7 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
                 from . import movies as _mov
                 is_owned, owned_q, owned_cam = _mov.owned_quality(series_id)
             else:
+                from . import library as _lib
                 is_owned = bool(owned)
                 owned_q, owned_cam = _lib.owned_file_quality(
                     owned.get("path"), owned.get("quality")) if owned else (None, False)
@@ -403,6 +506,8 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
         else:
             ranked = _rank_no_profile(fresh)
         if not ranked:
+            res["next_search"] = wants.record_miss(
+                w["id"], w.get("search_count") or 0, _is_recent(w.get("_air", "")))
             details.append(res)
             continue
 
@@ -417,9 +522,7 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
             res["grabbed"] = pick["title"]
             grabbed += 1
             db.add_history("added", pick["title"], f"hunt: {query} ({w.get('reason')})")
-            with db.connect() as c:
-                c.execute("UPDATE wanted SET status='grabbed', last_search=? WHERE id=?",
-                          (datetime.now().isoformat(timespec="seconds"), w["id"]))
+            wants.mark_grabbed(w["id"])
             log.info("Hunt grabbed '%s' for %s", pick["title"], query)
             _notify_grab(pick["title"], query,
                          series_id=None if kind == "movie" else w.get("series_id"),
@@ -433,7 +536,10 @@ def hunt_wanted(series_filter=None, max_override=None) -> dict:
     if search_errors:
         log.warning("Hunt: %d search(es) failed this pass (first: %s)",
                     len(search_errors), search_errors[0])
-    return {"wanted": len(wanted), "grabbed": grabbed, "details": details}
+    log.info("Hunt: %d candidate(s), %d search(es), %d grabbed, %d deferred",
+             len(wanted), searches, grabbed, deferred)
+    return {"wanted": len(wanted), "grabbed": grabbed, "details": details,
+            "searches": searches, "deferred": deferred}
 
 
 def _grab_failed(release: str, context: str, err: Exception) -> None:
@@ -515,7 +621,22 @@ def _load_profile_for_series(series_id):
 
 def run_once() -> dict:
     """One full cycle: check query-subscriptions, then run the library-aware
-    pipeline (scan → reconcile monitored series → hunt wanted)."""
+    pipeline (scan → refresh → reconcile → hunt).
+
+    Serialized: the scheduler tick and the "check now" button both land here,
+    and two overlapping cycles could grab two different releases for the
+    same want. A second caller gets {"skipped_reason": ...} immediately."""
+    if not _run_lock.acquire(blocking=False):
+        log.info("Cycle skipped: another cycle is already running.")
+        return {"checked": 0, "grabbed": 0, "details": [], "library": {},
+                "stalls": {}, "skipped_reason": "a cycle is already running"}
+    try:
+        return _run_once()
+    finally:
+        _run_lock.release()
+
+
+def _run_once() -> dict:
     db.init()
     # 1. legacy query subscriptions
     subs = db.list_subscriptions(enabled_only=True)
@@ -561,14 +682,21 @@ def run_once() -> dict:
     # 4. library-aware pipeline
     lib_summary = {}
     try:
-        from . import library, series as series_mod, movies as movies_mod
+        from . import library, series as series_mod, movies as movies_mod, wants
         library.scan()
+        refresh = series_mod.refresh_stale()
+        requeued = wants.requeue_stale_grabs(series_mod.GRAB_RETRY_HOURS)
+        if requeued:
+            log.info("Re-queued %d grab(s) older than %dh that never landed.",
+                     requeued, series_mod.GRAB_RETRY_HOURS)
         recon = series_mod.reconcile_all()
         movies_mod.reconcile_all()
         hunt = hunt_wanted()
         grabbed += hunt.get("grabbed", 0)
         lib_summary = {"reconcile": recon, "hunt_grabbed": hunt.get("grabbed", 0),
-                       "wanted": hunt.get("wanted", 0)}
+                       "wanted": hunt.get("wanted", 0), "refreshed": refresh,
+                       "requeued": requeued, "searches": hunt.get("searches", 0),
+                       "deferred": hunt.get("deferred", 0)}
     except Exception as e:                       # noqa: BLE001 - never kill the tick
         log.warning("Library pipeline error: %s", e)
         lib_summary = {"error": str(e)}

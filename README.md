@@ -155,6 +155,13 @@ All via environment / `.env`:
 | `SUPERSEDED_ACTION` | `move` | After an upgrade lands, `move` parks the old copy in `LIBRARY_ROOT/_superseded/` (same relative path, reversible); `keep` leaves it in place. |
 | `HUNT_MAX_ACTIVE` | `5` | Skip hunting if this many torrents are already downloading. |
 | `HUNT_MAX_PER_RUN` | `3` | Max grabs per scheduler tick. |
+| `HUNT_MAX_SEARCHES` | `40` | Max indexer queries per scheduler tick (season-pack searches included). |
+| `WANT_BACKOFF_RECENT_HOURS` | `6` | After fruitless searches a want waits 1h, 2h, 4h… before the next one; this caps the wait for episodes that aired within `WANT_RECENT_DAYS`. |
+| `WANT_BACKOFF_MAX_HOURS` | `72` | Cap on that wait for everything else (backlog, movies). |
+| `WANT_RECENT_DAYS` | `14` | How recently an episode must have aired to count as "recent" for backoff. |
+| `GRAB_RETRY_HOURS` | `48` | A grab that hasn't landed on disk after this long goes back to wanted. |
+| `SERIES_REFRESH_HOURS` | `12` | How often a monitored show's episode list is re-read from TMDb (ended/canceled shows: weekly). |
+| `SERIES_REFRESH_PER_TICK` | `5` | Max shows refreshed per scheduler tick. `0` disables refreshing. |
 | `RSS_INTERVAL_SECONDS` | `1800` | How often the scheduler scans/reconciles/hunts. |
 | `SEARCH_LIMIT` | `150` | Max results per search. |
 | `BIG_DOWNLOAD_GB` | `20` | Threshold for the "big download" warning. |

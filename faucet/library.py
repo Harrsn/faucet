@@ -261,33 +261,42 @@ def _scan_tv(root: Path, stats: dict, force: bool = False,
             why = "no show name" if not show else "no season/episode number"
             _record_unparsed(str(f), "tv", why)
             continue
-        if isinstance(episode, list):
-            episode = episode[0]
+        # A multi-episode file ('S01E01E02', 'S01E01-E03') covers every episode
+        # in it. Recording only the first left the rest "missing" forever, so
+        # the hunter kept grabbing episodes that were already on disk.
+        eps = sorted({int(e) for e in episode}) if isinstance(episode, list) else [int(episode)]
+        multi = len(eps) > 1
         with db.connect() as c:
             rec = _recorded_quality(c, str(f), st.st_size)
             quality = rec[0] if rec else (_detect_quality(f.name) or _detect_quality(str(f)))
-            # Keep the BEST file per episode. Last-walked used to win, so an
-            # old 720p copy and its 1080p upgrade flip-flopped between scans
-            # and the upgrade want kept coming back.
-            row = c.execute("SELECT path, quality FROM library_episodes "
-                            "WHERE season=? AND episode=? AND show_name=?",
-                            (int(season), int(episode), show)).fetchone()
-            if (row and row["path"] != str(f)
-                    and os.path.exists(row["path"] or "")):
-                old_rank = _movie_file_rank(row["quality"], False)
-                new_rank = _movie_file_rank(quality, False)
-                if old_rank >= new_rank:
-                    if old_rank > new_rank:
-                        _superseded(Path(row["path"]), f, stats)
-                    stats["episodes"] += 1
-                    continue                      # existing file is at least as good
-                _superseded(f, Path(row["path"]), stats)
-            c.execute(
-                "INSERT INTO library_episodes (show_name, season, episode, quality, path, size, mtime) "
-                "VALUES (?,?,?,?,?,?,?) "
-                "ON CONFLICT(season, episode, show_name) DO UPDATE SET "
-                "quality=excluded.quality, path=excluded.path, size=excluded.size, mtime=excluded.mtime",
-                (show, int(season), int(episode), quality, str(f), st.st_size, st.st_mtime))
+            for ep_no in eps:
+                # Keep the BEST file per episode. Last-walked used to win, so an
+                # old 720p copy and its 1080p upgrade flip-flopped between scans
+                # and the upgrade want kept coming back.
+                row = c.execute("SELECT path, quality FROM library_episodes "
+                                "WHERE season=? AND episode=? AND show_name=?",
+                                (int(season), ep_no, show)).fetchone()
+                if (row and row["path"] != str(f)
+                        and os.path.exists(row["path"] or "")):
+                    old_rank = _movie_file_rank(row["quality"], False)
+                    new_rank = _movie_file_rank(quality, False)
+                    # never retire a multi-episode file: it still holds
+                    # episodes the other copy doesn't
+                    old_multi = c.execute(
+                        "SELECT COUNT(*) AS n FROM library_episodes WHERE path=?",
+                        (row["path"],)).fetchone()["n"] > 1
+                    if old_rank >= new_rank:
+                        if old_rank > new_rank and not multi:
+                            _superseded(Path(row["path"]), f, stats)
+                        continue                  # existing file is at least as good
+                    if not old_multi:
+                        _superseded(f, Path(row["path"]), stats)
+                c.execute(
+                    "INSERT INTO library_episodes (show_name, season, episode, quality, path, size, mtime) "
+                    "VALUES (?,?,?,?,?,?,?) "
+                    "ON CONFLICT(season, episode, show_name) DO UPDATE SET "
+                    "quality=excluded.quality, path=excluded.path, size=excluded.size, mtime=excluded.mtime",
+                    (show, int(season), ep_no, quality, str(f), st.st_size, st.st_mtime))
             c.execute("DELETE FROM scan_unparsed WHERE path=?", (str(f),))
         stats["episodes"] += 1
 
