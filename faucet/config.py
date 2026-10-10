@@ -109,7 +109,9 @@ def _import_once(stored: dict) -> dict:
     from_file = _read_env_file(CONFIG_FILE) if legacy.exists() else {}
     found.update({k: v for k, v in from_file.items() if k in WIZARD_KEYS})   # file won before
     values = {PREFIX + k: v for k, v in found.items()}
-    values[IMPORTED_KEY] = {"keys": sorted(found), "from_file": bool(from_file)}
+    values[IMPORTED_KEY] = {"keys": sorted(found), "from_file": bool(from_file),
+                            "tunables": sorted(set(found) & _tunables.KEYS),
+                            "tunables_done": True}
     _db_write(values)
     if from_file:
         try:
@@ -118,6 +120,32 @@ def _import_once(stored: dict) -> dict:
             log.warning("imported %s but could not rename it: %s", legacy, e)
     if found:
         msg = "Settings imported into the database: " + ", ".join(sorted(found))
+        log.info(msg)
+        pending_messages.append((logging.INFO, msg))
+    stored.update(values)
+    return stored
+
+
+def _import_tunables(stored: dict) -> dict:
+    """1.7 → 1.8: the behaviour settings joined the store. Adopt any the
+    environment sets (the stack's HUNT_MAX_ACTIVE, say) once, like the
+    connection settings were."""
+    found = {}
+    for k in sorted(_tunables.KEYS):
+        if PREFIX + k in stored or not os.environ.get(k):
+            continue
+        try:
+            found[k] = _tunables.validate(k, os.environ[k])
+        except ValueError as e:
+            log.warning("not importing %s: %s", k, e)
+    marker = dict(stored.get(IMPORTED_KEY) or {})
+    marker["tunables"] = sorted(found)
+    marker["tunables_done"] = True
+    values = {PREFIX + k: v for k, v in found.items()}
+    values[IMPORTED_KEY] = marker
+    _db_write(values)
+    if found:
+        msg = "Behaviour settings imported into the database: " + ", ".join(sorted(found))
         log.info(msg)
         pending_messages.append((logging.INFO, msg))
     stored.update(values)
@@ -135,6 +163,8 @@ def _load_persisted(into_env: bool = True) -> dict:
         stored = _db_read()
         if IMPORTED_KEY not in stored:
             stored = _import_once(stored)
+        elif not (stored.get(IMPORTED_KEY) or {}).get("tunables_done"):
+            stored = _import_tunables(stored)
     except (OSError, sqlite3.Error) as e:
         # an unwritable/missing data volume must not stop the app (or a CLI
         # tool) from importing config: fall back to the environment as-is
@@ -231,6 +261,11 @@ WIZARD_KEYS = {
     "UI_THEME",
 }
 
+# Behaviour settings (Settings → General / Hunting / Maintenance). The code
+# reads them from os.environ where they're used; the store pushes them there.
+from . import tunables as _tunables  # noqa: E402 - pure data, no db import
+WIZARD_KEYS |= _tunables.KEYS
+
 # Subset that point at filesystem locations — the editor validates these before
 # saving (existence / writability inside the container) to avoid silent breakage.
 PATH_KEYS = {"LIBRARY_ROOT", "DOWNLOAD_DIR", "DISK_PATH", "BROWSE_ROOT"}
@@ -252,6 +287,9 @@ def save(values: dict) -> None:
     ValueError for an unstorable value before anything is written."""
     updates = {k: _check_value(k, str(v)) for k, v in values.items()
                if k in WIZARD_KEYS and v is not None}
+    for k in list(updates):
+        if k in _tunables.KEYS:
+            updates[k] = _tunables.validate(k, updates[k])
     if not updates:
         return
     _db_write({PREFIX + k: v for k, v in updates.items()})

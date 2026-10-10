@@ -4,6 +4,32 @@
 
 ### Added
 
+- **New UI, step 3b: the rest of Settings.** **General** (default audio
+  language and quality profile, plus everyday behaviour), **Quality
+  profiles** (list and editor), **Users & requests** (approve, disable,
+  roles, auto-approve a member's requests, password-reset links, create
+  accounts), **Hunting**, and **Maintenance & backup** (database size and
+  backup, duplicate files and retiring them, retention). Settings no longer
+  sends anything to the classic UI.
+- **Behaviour settings live in the store.** The hunting, retry, stall,
+  search, refresh and retention values that were environment variables are
+  edited on those pages, validated against sensible ranges, and apply on
+  the next scheduler tick without a restart. Values set in the environment
+  are imported once (an existing store adopts them on first start of this
+  version); after that the environment is ignored for them, with a warning.
+  `GET/PUT /api/settings/tunables`.
+
+### Changed
+
+- Quality profiles are validated (known resolutions and sources, sane
+  ranges, a real language code). Deleting one moves its shows and movies to
+  the default profile, clears it as the default if it was, and the last
+  profile can't be deleted. `GET /api/profiles/options`.
+- The create-account form tells password managers to keep out (Bitwarden
+  used to fill the admin's own credentials into it).
+- `deploy/stack.yml` drops `HUNT_MAX_ACTIVE`, `HUNT_MAX_PER_RUN` (they were
+  the defaults) and the unused `DEFAULT_LANGUAGE`.
+
 - **New UI, step 3a: Settings.** A full Settings page with its own section
   list. **Libraries**: library cards (folder, file count, last scan,
   unreachable / read-only warnings), add and edit with a folder picker over

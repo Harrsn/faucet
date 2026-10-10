@@ -14,7 +14,7 @@ export const links = {
   wanted: "/classic#page/dashboard",
   indexers: "#/settings/integrations",
   settings: "#/settings/libraries",
-  users: "/classic#users",
+  users: "#/settings/users",
 };
 
 export const isClassic = (href) => href.startsWith("/classic");

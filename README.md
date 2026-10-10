@@ -201,7 +201,7 @@ All via environment / `.env`:
 | `CLIENT_IP_HEADERS` | `cf-connecting-ip,x-real-ip,x-forwarded-for` | Which headers carry the client IP, in order (X-Forwarded-For: right-most entry). |
 | `COOKIE_SECURE` | `auto` | `auto` sets the cookie `Secure` flag when the browser connection is HTTPS (directly or per a trusted proxy); `1`/`0` force it. |
 
-Connection, path, behavior, and metadata settings are edited in the in-app **Settings** panel and stored in Faucet's database. Environment variables for them are only read once — on the first start, to import an existing setup — and ignored after that (a startup warning names any such variable). Full list and notification URL formats are in [.env.example](.env.example).
+Connection, path, behavior, hunting, retention and metadata settings are edited in the in-app **Settings** pages and stored in Faucet's database. The variables below still work as a first-start import. Environment variables for them are only read once — on the first start, to import an existing setup — and ignored after that (a startup warning names any such variable). Full list and notification URL formats are in [.env.example](.env.example).
 
 ## Library tidy
 

@@ -25,13 +25,11 @@ services:
       - /opt/cascade-config/faucet.secrets.env
 
     environment:
-      # Not WIZARD_KEYS — the Settings panel cannot write these, so here is
-      # their only home.
+      # Bootstrap and infrastructure only. Hunting, retention and other
+      # behaviour live in Settings now (HUNT_MAX_ACTIVE and HUNT_MAX_PER_RUN
+      # were 5 and 3 here — the defaults — so nothing changes by dropping them).
       EVENTS_FILE: "/config/events.jsonl"
-      HUNT_MAX_ACTIVE: "5"
-      HUNT_MAX_PER_RUN: "3"
       MEDIASORT_MODE: "move"
-      DEFAULT_LANGUAGE: "en"
       # Public traffic arrives Cloudflare Tunnel -> Caddy -> 127.0.0.1:8090 ->
       # docker-proxy, i.e. from this network's gateway. Trust that hop's
       # CF-Connecting-IP / CF-Visitor so login throttling sees the real
