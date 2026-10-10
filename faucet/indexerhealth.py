@@ -84,7 +84,7 @@ def summary(hours: int = 24) -> dict:
     cutoff = (datetime.now() - timedelta(hours=hours)).isoformat(timespec="seconds")
     with db.connect() as c:
         _ensure(c)
-        rows = c.execute("SELECT ok, ms, results, error, trackers FROM search_events "
+        rows = c.execute("SELECT indexer, ok, ms, results, error, trackers FROM search_events "
                          "WHERE ts >= ?", (cutoff,)).fetchall()
     ms = sorted(r["ms"] for r in rows if r["ok"])
     errors: dict[str, int] = {}
@@ -100,8 +100,28 @@ def summary(hours: int = 24) -> dict:
                 trackers[t] = trackers.get(t, 0) + int(n)
         except (ValueError, TypeError, AttributeError):
             pass
+    per: dict = {}
+    for r in rows:
+        d = per.setdefault(r["indexer"] or "all", {"searches": 0, "failed": 0, "empty": 0,
+                                                  "results": 0, "ms": []})
+        d["searches"] += 1
+        if not r["ok"]:
+            d["failed"] += 1
+        else:
+            d["ms"].append(r["ms"])
+            d["results"] += r["results"] or 0
+            if not r["results"]:
+                d["empty"] += 1
+    indexers = []
+    for name, d in per.items():
+        ms_i = sorted(d.pop("ms"))
+        indexers.append({"indexer": name, **d,
+                         "avg_ms": round(sum(ms_i) / len(ms_i)) if ms_i else None,
+                         "p95_ms": _pct(ms_i, 0.95)})
+    # most useful first: results per search, then speed
+    indexers.sort(key=lambda x: (-(x["results"] / max(1, x["searches"])), x["avg_ms"] or 0))
     return {
-        "hours": hours, "searches": len(rows),
+        "hours": hours, "searches": len(rows), "indexers": indexers,
         "failed": sum(1 for r in rows if not r["ok"]),
         "empty": sum(1 for r in rows if r["ok"] and not r["results"]),
         "p50_ms": _pct(ms, 0.5), "p95_ms": _pct(ms, 0.95),
