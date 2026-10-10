@@ -13,7 +13,7 @@ import logging
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -72,7 +72,7 @@ app.include_router(_auth_routes.router)
 
 # Paths reachable without a session. Everything else requires login. This is
 # fail-closed: any new route is protected by default unless added here.
-_PUBLIC_PREFIXES = ("/static/", "/favicon", "/login", "/register", "/reset",
+_PUBLIC_PREFIXES = ("/static/", "/app/", "/favicon", "/login", "/register", "/reset",
                     "/api/auth/", "/health")
 
 
@@ -1744,6 +1744,26 @@ def reset_page():
 _NO_STORE = {"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
              "Pragma": "no-cache"}
 
+APP_DIR = STATIC / "app"
+
+
+def _asset_version() -> str:
+    """A hash of every UI module and stylesheet. The shell loads them from
+    /app/<hash>/…, so each deploy that changes the UI gets new URLs and no
+    cache — browser or CDN — can hand out a stale module next to a fresh
+    one (6.2 shipped while Cloudflare kept serving 6.1's links.js)."""
+    import hashlib
+    h = hashlib.sha256()
+    if APP_DIR.exists():
+        for f in sorted(APP_DIR.rglob("*")):
+            if f.is_file():
+                h.update(str(f.relative_to(APP_DIR)).encode())
+                h.update(f.read_bytes())
+    return h.hexdigest()[:12]
+
+
+ASSET_VERSION = _asset_version()
+
 
 @app.get("/")
 def index():
@@ -1752,8 +1772,28 @@ def index():
     # still appears). No-store forces every load to hit the auth gate.
     f = STATIC / "index.html"
     if f.exists():
-        return FileResponse(f, headers=_NO_STORE)
+        body = f.read_text().replace("/static/app/", f"/app/{ASSET_VERSION}/")
+        return HTMLResponse(body, headers=_NO_STORE)
     raise HTTPException(404, "UI not installed.")
+
+
+_ASSET_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
+                ".json": "application/json"}
+
+
+@app.get("/app/{version}/{path:path}")
+def app_asset(version: str, path: str):
+    """UI modules under a content-hashed prefix. The current version is
+    cacheable forever; any other (an old page still open after a deploy)
+    is served fresh with no-cache, so it keeps working until reloaded."""
+    root = APP_DIR.resolve()
+    f = (APP_DIR / path).resolve()
+    if root not in f.parents or not f.is_file() or f.suffix not in _ASSET_TYPES:
+        raise HTTPException(404, "Not found")
+    cache = ("public, max-age=31536000, immutable" if version == ASSET_VERSION
+             else "no-cache")
+    return FileResponse(f, media_type=_ASSET_TYPES[f.suffix],
+                        headers={"Cache-Control": cache})
 
 
 @app.get("/classic")

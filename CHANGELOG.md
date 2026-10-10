@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Fixed
+
+- **A deploy could leave browsers on the previous UI for hours.** Cloudflare's
+  Browser Cache TTL rewrote the modules' `no-cache` to `max-age=14400`, so
+  6.2 shipped while browsers kept running 6.1's JavaScript (TV Shows still
+  opened the classic page). The shell now loads every module and stylesheet
+  from `/app/<content hash>/…`: each deploy that changes the UI gets new
+  URLs, cached forever; an old page left open across a deploy keeps working.
+
 ### Added
 
 - **New UI, step 2: TV Shows and Movies.** Poster grids with filters
