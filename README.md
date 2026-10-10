@@ -162,6 +162,12 @@ All via environment / `.env`:
 | `GRAB_RETRY_HOURS` | `48` | A grab that hasn't landed on disk after this long goes back to wanted. |
 | `SERIES_REFRESH_HOURS` | `12` | How often a monitored show's episode list is re-read from TMDb (ended/canceled shows: weekly). |
 | `SERIES_REFRESH_PER_TICK` | `5` | Max shows refreshed per scheduler tick. `0` disables refreshing. |
+| `HUNT_HEALTHY_SEEDERS` | `5` | Releases with fewer seeders are ranked below a healthy release one resolution step lower. |
+| `HUNT_TRACKER_MIN_GRABS` | `4` | Settled grabs (stalled + completed, last 14 days) a tracker needs before its stall rate affects ranking. |
+| `HUNT_TRACKER_STALL_RATE` | `0.5` | Stall rate at which a tracker's releases are ranked down. |
+| `HUNT_LOG_DAYS` | `14` | How long hunt-log entries are kept. |
+| `INDEXER_PROBE_HOURS` | `24` | How often each Jackett indexer is probed individually. `0` = only on demand. |
+| `INDEXER_STATS_DAYS` | `7` | How long per-search telemetry is kept. |
 | `RSS_INTERVAL_SECONDS` | `1800` | How often the scheduler scans/reconciles/hunts. |
 | `SEARCH_LIMIT` | `150` | Max results per search. |
 | `BIG_DOWNLOAD_GB` | `20` | Threshold for the "big download" warning. |
