@@ -235,14 +235,20 @@ def api_search(q: str = Query(..., min_length=1), cat: str = Query("all"),
     if not (cfg().jackett_url and cfg().jackett_api_key):
         raise HTTPException(503, "Indexer not configured — set the Jackett URL and "
                                  "API key in Settings → Connections.")
+    from . import finder
     try:
-        results = searchmod.search(cfg().jackett_url, cfg().jackett_api_key,
-                                   cfg().jackett_indexer, q, cat, lim,
-                                   cfg().request_timeout)
+        results = finder.find("free", query=q, category=cat, limit=lim)
     except searchmod.SearchError as e:
         raise HTTPException(502, str(e))
     return {"query": q, "category": cat, "total": len(results), "results": results,
-            "hidden": getattr(results, "hidden", 0)}
+            "hidden": getattr(results, "hidden", 0), **_search_meta(results)}
+
+
+def _search_meta(results) -> dict:
+    """How many indexers were searched and which failed, for the UI."""
+    return {"indexers": getattr(results, "searched", 1),
+            "indexer_errors": [{"indexer": i, "error": e}
+                               for i, e in getattr(results, "errors", [])]}
 
 
 @app.post("/api/add")
@@ -782,6 +788,9 @@ def api_settings_patch(p: SettingsPatch):
                 warnings.append(f"{k}: {e}. Not saved.")
         else:
             warnings.append(f"{k}: not an editable setting. Ignored.")
+    if {"JACKETT_URL", "JACKETT_API_KEY", "JACKETT_INDEXER"} & set(env_updates):
+        from . import finder
+        finder.forget_indexers()
     if env_updates:
         try:
             save(env_updates)
@@ -884,10 +893,9 @@ def api_search_best(q: str = Query(..., min_length=1), cat: str = Query("all"),
     profile = dict(row)
     profile["resolutions"] = _json.loads(profile.get("resolutions") or "[]")
     profile["sources"] = _json.loads(profile.get("sources") or "[]")
+    from . import finder
     try:
-        results = searchmod.search(cfg().jackett_url, cfg().jackett_api_key,
-                                   cfg().jackett_indexer, q, cat, cfg().search_limit,
-                                   cfg().request_timeout)
+        results = finder.find("free", query=q, category=cat)
     except searchmod.SearchError as e:
         raise HTTPException(502, str(e))
     ranked = prof.rank(results, profile)
@@ -1053,10 +1061,10 @@ def api_episode_releases(sid: int, season: int, episode: int):
     if not s:
         raise HTTPException(404, "Series not found")
     query = f"{s['title']} S{season:02d}E{episode:02d}"
+    from . import finder
     try:
-        results = searchmod.search(cfg().jackett_url, cfg().jackett_api_key,
-                                   cfg().jackett_indexer, query, "all",
-                                   cfg().search_limit, cfg().request_timeout)
+        results = finder.find("episode", title=s["title"], season=season, episode=episode,
+                              ids=finder.ids_for("episode", sid))
     except searchmod.SearchError as e:
         raise HTTPException(502, str(e))
     matched = [r for r in results
@@ -1077,7 +1085,7 @@ def api_episode_releases(sid: int, season: int, episode: int):
     out.sort(key=lambda x: (not x["_passes"], -x["_score"], -x.get("seeders", 0)))
     return {"query": query, "profile": profile["name"] if profile else None,
             "considered": len(results), "releases": out,
-            "hidden": getattr(results, "hidden", 0)}
+            "hidden": getattr(results, "hidden", 0), **_search_meta(results)}
 
 
 @app.get("/api/series/{sid}/seasons/{season}/releases")
@@ -1090,10 +1098,10 @@ def api_season_releases(sid: int, season: int):
     if not s:
         raise HTTPException(404, "Series not found")
     query = f"{s['title']} S{season:02d}"
+    from . import finder
     try:
-        results = searchmod.search(cfg().jackett_url, cfg().jackett_api_key,
-                                   cfg().jackett_indexer, query, "all",
-                                   cfg().search_limit, cfg().request_timeout)
+        results = finder.find("season", title=s["title"], season=season,
+                              ids=finder.ids_for("season", sid))
     except searchmod.SearchError as e:
         raise HTTPException(502, str(e))
     matched = []
@@ -1117,7 +1125,7 @@ def api_season_releases(sid: int, season: int):
     out.sort(key=lambda x: (not x["_passes"], -x["_score"], -x.get("seeders", 0)))
     return {"query": query, "profile": profile["name"] if profile else None,
             "considered": len(results), "releases": out,
-            "hidden": getattr(results, "hidden", 0)}
+            "hidden": getattr(results, "hidden", 0), **_search_meta(results)}
 
 
 @app.post("/api/series/{sid}/seasons/{season}/grab")

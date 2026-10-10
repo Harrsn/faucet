@@ -25,3 +25,15 @@ def _fresh_login_throttle():
     netutil.reset_state()
     yield
     netutil.reset_state()
+
+
+@pytest.fixture(autouse=True)
+def _restore_environ():
+    """config._load_persisted() writes the persisted settings file straight
+    into os.environ, which monkeypatch can't undo; a JACKETT_INDEXER (or any
+    other key) saved by one test used to leak into every later one."""
+    import os
+    saved = dict(os.environ)
+    yield
+    os.environ.clear()
+    os.environ.update(saved)

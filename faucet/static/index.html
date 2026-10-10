@@ -764,6 +764,8 @@ function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;",
 function human(n){if(!n)return"0 B";const u=["B","KB","MB","GB","TB"];let i=0,v=n;while(v>=1024&&i<u.length-1){v/=1024;i++;}return v.toFixed(v<10&&i>0?1:0)+" "+u[i];}
 function csrfToken(){const m=document.cookie.match(/(?:^|;\s*)faucet_csrf=([^;]+)/);return m?decodeURIComponent(m[1]):"";}
 async function jget(u){const r=await fetch(u);if(!r.ok){const d=(await r.json().catch(()=>({}))).detail;throw new Error(d?`${d} (${r.status})`:String(r.status));}return r.json();}
+function ixNote(d){if(!d||!d.indexers||d.indexers<2)return'';const f=(d.indexer_errors||[]);
+  return ` · ${d.indexers} indexers searched${f.length?`, <span title="${esc(f.map(x=>x.indexer+': '+x.error).join('\n'))}" style="color:var(--warn)">${f.length} failed</span>`:''}`;}
 function hiddenNote(n){return n?` · ${n} unsafe result${n===1?'':'s'} hidden (executable files)`:'';}
 async function jsend(u,m,b){const r=await fetch(u,{method:m,headers:{"Content-Type":"application/json","X-CSRF-Token":csrfToken()},body:b?JSON.stringify(b):undefined});if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||r.status);return r.json();}
 // deterministic hue for gradient placeholder art (no poster available)
@@ -1194,12 +1196,12 @@ async function openEpisodeSearch(sid,showTitle,season,episode,epTitle){
   catch(e){ $("epsr").innerHTML=`<div class='empty'>Search failed: ${esc(e.message)}</div>`; return; }
   const rel=d.releases||[];
   if(!rel.length){
-    $("epsr").innerHTML=`<div class='empty'>No matching releases found (${d.considered||0} results checked — non-matching titles and season packs are filtered out${hiddenNote(d.hidden)}). Try again later; new releases appear over time.</div>`;
+    $("epsr").innerHTML=`<div class='empty'>No matching releases found (${d.considered||0} results checked — non-matching titles and season packs are filtered out${hiddenNote(d.hidden)}${ixNote(d)}). Try again later; new releases appear over time.</div>`;
     return;
   }
   $("epsr").innerHTML=`
     <div class="hint" style="margin-bottom:8px">${rel.length} verified release${rel.length===1?'':'s'} for this exact episode
-      ${d.profile?` · ranked by profile <b>${esc(d.profile)}</b>`:' · ranked by seeders'}${hiddenNote(d.hidden)}</div>
+      ${d.profile?` · ranked by profile <b>${esc(d.profile)}</b>`:' · ranked by seeders'}${hiddenNote(d.hidden)}${ixNote(d)}</div>
     <table><thead><tr><th>release</th><th>size</th><th>health</th><th></th></tr></thead>
     <tbody>${rel.map((r,i)=>`<tr>
       <td class="title">${esc(r.title)}${badgeHtml(r.badges)}
@@ -1226,11 +1228,11 @@ async function openSeasonSearch(sid,showTitle,season){
   catch(e){ $("spsr").innerHTML=`<div class='empty'>Search failed: ${esc(e.message)}</div>`; return; }
   const rel=d.releases||[];
   if(!rel.length){
-    $("spsr").innerHTML=`<div class='empty'>No verified season packs found (${d.considered||0} results checked${hiddenNote(d.hidden)}).</div>`;return;
+    $("spsr").innerHTML=`<div class='empty'>No verified season packs found (${d.considered||0} results checked${hiddenNote(d.hidden)}${ixNote(d)}).</div>`;return;
   }
   $("spsr").innerHTML=`
     <div class="hint" style="margin-bottom:8px">${rel.length} verified pack${rel.length===1?'':'s'} for S${String(season).padStart(2,'0')}
-      ${d.profile?` · ranked by profile <b>${esc(d.profile)}</b>`:''}${hiddenNote(d.hidden)}</div>
+      ${d.profile?` · ranked by profile <b>${esc(d.profile)}</b>`:''}${hiddenNote(d.hidden)}${ixNote(d)}</div>
     <table><thead><tr><th>release</th><th>size</th><th>health</th><th></th></tr></thead>
     <tbody>${rel.map((r,i)=>`<tr>
       <td class="title">${esc(r.title)}${badgeHtml(r.badges)}

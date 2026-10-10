@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Every indexer is searched on its own, in parallel.** Jackett's aggregate
+  `all` endpoint made each search as slow as the slowest indexer (a
+  Cloudflare challenge being solved held up every result) and failed the
+  whole search when one indexer timed out. Each configured indexer is now
+  queried directly, all at once, with its own `SEARCH_TIMEOUT` (60s); a slow
+  or broken one costs only its own results, reported per search ("8
+  indexers searched, 1 failed" in the interactive search).
+- **Structured queries.** Using each indexer's Torznab caps: `tvsearch` with
+  `season`/`ep` (and TVDB/IMDb/TMDb id when the indexer supports it),
+  `movie` by IMDb id; text-only indexers get the classic "Title S01E02" /
+  "Title Year". TV searches are limited to TV categories and movie
+  searches to movie categories. External ids come from TMDb (cached 30
+  days).
+- Results from several indexers are merged by info-hash, keeping the
+  best-seeded copy.
+- The indexer list (1h) and caps (24h) are cached; the indexer probe and a
+  Jackett settings change refresh them.
+
 ## 1.6.1 — 2026-10-10
 
 ### Fixed

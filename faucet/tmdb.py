@@ -188,6 +188,26 @@ def episodes(tmdb_id: int, total_seasons: int, fresh: bool = False) -> list[dict
     return out
 
 
+def external_ids(tmdb_id: int, media_type: str) -> dict:
+    """{'imdb_id': 'tt…', 'tvdb_id': 123} for a title, {} when unknown.
+    Torznab indexers that support ID search match on these exactly instead
+    of on the title. Cached 30 days (they don't change)."""
+    if not enabled() or not tmdb_id:
+        return {}
+    kind = "movie" if media_type == "movie" else "tv"
+    ck = f"extids:{kind}:{tmdb_id}"
+    cached = _cache_get(ck)
+    if cached is not None:
+        return cached
+    try:
+        d = _get(f"/{kind}/{tmdb_id}/external_ids", {})
+    except (requests.RequestException, ValueError):
+        return {}
+    out = {k: d.get(k) for k in ("imdb_id", "tvdb_id") if d.get(k)}
+    db.set_setting(f"_tmdbcache:{ck}", {"exp": time.time() + 30 * 86400, "data": out})
+    return out
+
+
 def details(tmdb_id: int, media_type: str, fresh: bool = False) -> dict:
     if not enabled():
         return {}

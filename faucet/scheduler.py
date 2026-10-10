@@ -89,9 +89,8 @@ def check_subscription(sub: dict) -> dict:
         return result
 
     try:
-        results = searchmod.search(
-            _cfg().jackett_url, _cfg().jackett_api_key, _cfg().jackett_indexer,
-            query, "all", _cfg().search_limit, _cfg().request_timeout)
+        from . import finder
+        results = finder.find("free", query=query)
     except searchmod.SearchError as e:
         result["error"] = f"search failed: {e}"
         return result
@@ -142,18 +141,17 @@ def check_subscription(sub: dict) -> dict:
 _last_pack: dict = {}       # stats from the most recent _try_season_pack, for the hunt log
 
 
-def _try_season_pack(title, season, profile):
+def _try_season_pack(title, season, profile, series_id=None):
     """Search for a season pack for this show/season. Returns the best matching
     pack release (a dict with title/href) or None. Only returns true season
     packs (classify_pack -> 'season' for the right season); ignores series packs
     (too large, per design) and individual episodes."""
     from . import packs
     from . import releasematch
-    query = f"{title} S{int(season):02d}"
+    from . import finder
     try:
-        results = searchmod.search(
-            _cfg().jackett_url, _cfg().jackett_api_key, _cfg().jackett_indexer,
-            query, "all", _cfg().search_limit, _cfg().request_timeout)
+        results = finder.find("season", title=title, season=int(season),
+                              ids=finder.ids_for("season", series_id) if series_id else None)
     except searchmod.SearchError as e:
         _last_pack.update(error=str(e))
         return None
@@ -435,7 +433,7 @@ def _hunt_wanted(series_filter=None, max_override=None) -> dict:
                 continue                     # own too much of it — episode grabs instead
             searches += 1
             _last_pack.clear()
-            pack = _try_season_pack(title, season, _load_profile_for_series(sid))
+            pack = _try_season_pack(title, season, _load_profile_for_series(sid), sid)
             pack_key = {"kind": "pack", "series_id": sid, "season": season,
                         "query": f"{title} S{int(season):02d}"}
             if not pack:
@@ -530,10 +528,17 @@ def _hunt_wanted(series_filter=None, max_override=None) -> dict:
                    "season": None if kind == "movie" else season,
                    "episode": None if kind == "movie" else episode, "query": query}
         searches += 1
+        from . import finder
         try:
-            results = searchmod.search(
-                _cfg().jackett_url, _cfg().jackett_api_key, _cfg().jackett_indexer,
-                query, "all", _cfg().search_limit, _cfg().request_timeout)
+            if kind == "movie" and movie_title:
+                results = finder.find("movie", title=movie_title, year=movie_year,
+                                      ids=finder.ids_for("movie", series_id))
+            elif kind == "movie":
+                results = finder.find("free", query=query)
+            else:
+                results = finder.find("episode", title=title, season=int(season),
+                                      episode=int(episode),
+                                      ids=finder.ids_for("episode", w.get("series_id")))
         except searchmod.SearchError as e:
             # transient (indexer down / timed out): no backoff, retry next tick
             res["error"] = f"search failed: {e}"
