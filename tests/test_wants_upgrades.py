@@ -463,6 +463,7 @@ def test_superseded_action_keep(env, monkeypatch):
 
 def test_nothing_retired_when_the_mount_looks_sick(env):
     old = _rags_upgrade(env)
+    (env.lib / "tvshows").mkdir(exist_ok=True)    # the library is there; its files aren't
     with env.db.connect() as c:                   # 20 rows whose files "vanished"
         for i in range(20):
             c.execute("INSERT INTO library_episodes (show_name,season,episode,path,size,mtime) "
