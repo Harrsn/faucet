@@ -270,6 +270,9 @@ def init() -> None:
                     "VALUES (?,?,?,?,?)",
                     ("Default", 3, json.dumps(["1080p", "720p"]),
                      json.dumps(["WEB-DL", "BluRay", "WEBRip"]), 8.0))
+        # the settings store holds credentials: keep the file owner-only
+        from . import config as _config
+        _config.harden_permissions()
         _initialized = True
 
 
@@ -385,7 +388,9 @@ def all_settings() -> dict:
         rows = c.execute("SELECT key, value FROM settings").fetchall()
     out = {}
     for r in rows:
-        if r["key"].startswith("_") or r["key"] in _EXCLUDE:
+        # '_' = internal caches; 'cfg.' = the settings store (config.py),
+        # which holds the client password and API keys
+        if r["key"].startswith(("_", "cfg.")) or r["key"] in _EXCLUDE:
             continue
         try:
             out[r["key"]] = json.loads(r["value"])
