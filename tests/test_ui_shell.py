@@ -1,4 +1,4 @@
-"""Phase 6.1: the new UI shell, the classic UI at /classic, /api/home."""
+"""Phase 6.1: the UI shell and /api/home (6.4b: the classic UI is gone)."""
 from __future__ import annotations
 
 import importlib
@@ -75,9 +75,8 @@ def test_routes_and_caching(app):
     r = app.admin.get("/")
     assert r.status_code == 200 and "/main.js" in r.text
     assert "no-store" in r.headers["cache-control"]
-    c = app.admin.get("/classic")
-    assert c.status_code == 200 and "classicDeepLink" in c.text
-    assert app.anon.get("/").status_code == 302 and app.anon.get("/classic").status_code == 302
+    assert app.admin.get("/classic").status_code == 404
+    assert app.anon.get("/").status_code == 302
     m = app.anon.get("/static/app/main.js")                     # static: public, revalidated
     assert m.status_code == 200 and m.headers["cache-control"] == "no-cache"
 
