@@ -166,3 +166,16 @@ def test_asset_version_changes_with_content(app, tmp_path, monkeypatch):
     v1 = m._asset_version()
     (d / "ui" / "x.js").write_text("b")
     assert v1 != m._asset_version() and before != v1
+
+
+def test_favicon_is_content_hashed_too(app):
+    """Browsers and Cloudflare hold on to favicons; serving it from the
+    hashed /app/<version>/ path means a new icon shows on the next load."""
+    v = app.m["app"].ASSET_VERSION
+    for page in ("/", "/login"):
+        c = app.admin if page == "/" else app.anon
+        assert f'rel="icon" type="image/svg+xml" href="/app/{v}/favicon.svg"' in c.get(page).text
+    r = app.anon.get(f"/app/{v}/favicon.svg")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/svg+xml"
+    assert "#D9A441" in r.text and "immutable" in r.headers["cache-control"]
+    assert app.anon.get("/favicon.svg").status_code == 200        # the old address still works

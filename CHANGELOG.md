@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased
+## 2.2.1 — 2026-10-11
+
+### Changed
+
+- **New icon**: the app's gold drop on a dark tile, as the browser favicon
+  and the README logo. The favicon is served from the content-hashed
+  `/app/<version>/` path like the UI modules, so a new icon shows on the next
+  load instead of after the browser's (and Cloudflare's) favicon cache
+  expires; `/favicon.svg` and `/static/favicon.svg` still work.
+
+## Unreleased (documentation, shipped with 2.2.1)
 
 ### Changed
 
