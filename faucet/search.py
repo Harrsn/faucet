@@ -33,8 +33,11 @@ class SearchError(Exception):
 
 class Results(list):
     """Search results; `hidden` counts releases dropped as unsafe
-    (faucet.safety.filter_release_names)."""
+    (faucet.safety.filter_release_names); `errors` lists (indexer, message)
+    for indexers that failed in a multi-indexer search."""
     hidden: int = 0
+    errors: list = []
+    searched: int = 1
 
 
 def human_size(n: int) -> str:
@@ -137,14 +140,50 @@ def indexers(jackett_url: str, api_key: str, timeout: int = 15) -> list[dict]:
     return out
 
 
+def caps(jackett_url: str, api_key: str, indexer: str, timeout: int = 15) -> dict:
+    """An indexer's Torznab capabilities: {function: set(supported params)}
+    for each available function among 'search', 'tv-search', 'movie-search'.
+    Raises SearchError when they can't be read."""
+    url = (f"{jackett_url}/api/v2.0/indexers/{quote(indexer, safe='')}"
+           f"/results/torznab/api?apikey={quote(api_key, safe='')}&t=caps")
+    try:
+        r = requests.get(url, timeout=timeout)
+    except requests.RequestException as e:
+        raise SearchError(f"caps query failed: {e}", api_key) from None
+    status = getattr(r, "status_code", 200) or 200
+    if status >= 400:
+        raise SearchError(f"HTTP {status}: {torznab_error(r.content) or 'caps failed'}",
+                          api_key)
+    try:
+        root = ET.fromstring(r.content)
+    except ET.ParseError as e:
+        raise SearchError(f"Bad caps XML: {e}", api_key) from None
+    out: dict = {}
+    searching = root.find("searching")
+    for el in (list(searching) if searching is not None else []):
+        if el.tag not in ("search", "tv-search", "movie-search"):
+            continue
+        if (el.get("available") or "no").lower() != "yes":
+            continue
+        out[el.tag] = {p.strip().lower() for p in (el.get("supportedParams") or "q").split(",")
+                       if p.strip()}
+    return out
+
+
 def search(jackett_url: str, api_key: str, indexer: str, query: str,
-           category: str, limit: int, timeout: int = 30, record: bool = True) -> Results:
+           category: str, limit: int, timeout: int = 30, record: bool = True,
+           mode: str = "search", params: dict | None = None) -> Results:
     """Torznab search. Every call is timed and recorded for the indexer-health
-    view (faucet.indexerhealth) unless `record` is False."""
+    view (faucet.indexerhealth) unless `record` is False.
+
+    `mode` is the Torznab function: 'search' (free text), 'tvsearch' or
+    'movie'; `params` adds its structured parameters (season, ep, imdbid,
+    tvdbid, tmdbid). faucet.finder picks them per indexer from its caps."""
     import time
     t0 = time.monotonic()
     try:
-        out = _search(jackett_url, api_key, indexer, query, category, limit, timeout)
+        out = _search(jackett_url, api_key, indexer, query, category, limit, timeout,
+                      mode=mode, params=params)
     except SearchError as e:
         if record:
             _record(indexer, False, t0, error=str(e))
@@ -168,12 +207,20 @@ def _record(indexer, ok, t0, **kw) -> None:
 
 
 def _search(jackett_url: str, api_key: str, indexer: str, query: str,
-            category: str, limit: int, timeout: int = 30) -> Results:
+            category: str, limit: int, timeout: int = 30, mode: str = "search",
+            params: dict | None = None) -> Results:
     if not api_key:
         raise SearchError("Indexer API key not configured.")
+    if mode not in ("search", "tvsearch", "movie"):
+        raise SearchError(f"unsupported Torznab mode {mode!r}")
     cat = CATS.get(category, "")
     url = (f"{jackett_url}/api/v2.0/indexers/{quote(indexer or 'all', safe='')}"
-           f"/results/torznab/api?apikey={quote(api_key, safe='')}&t=search&q={quote(query)}")
+           f"/results/torznab/api?apikey={quote(api_key, safe='')}&t={mode}")
+    if query:
+        url += f"&q={quote(query)}"
+    for k, v in (params or {}).items():
+        if v not in (None, ""):
+            url += f"&{quote(str(k), safe='')}={quote(str(v), safe='')}"
     if cat:
         url += f"&cat={cat}"
     try:
