@@ -170,6 +170,29 @@ def delete_request_ep(req_id: int, request: Request,
     return {"status": "ok"}
 
 
+class LibraryAccessBody(BaseModel):
+    libraries: list[int] | None = None          # None / [] = every library
+    request_tv_library: int | None = None
+    request_movie_library: int | None = None
+
+
+@router.put("/api/admin/users/{uid}/libraries")
+def admin_set_libraries(uid: int, body: LibraryAccessBody, request: Request,
+                        admin: dict = Depends(require_admin)):
+    """Limit a member to some libraries and choose where their approved
+    requests are filed. Admins always see everything."""
+    verify_csrf(request)
+    from . import access
+    try:
+        access.set_access(uid, body.libraries, body.request_tv_library,
+                          body.request_movie_library)
+    except LookupError:
+        raise HTTPException(404, "No such user")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"status": "ok"}
+
+
 @router.post("/api/admin/users/{uid}/autoapprove")
 def admin_set_autoapprove(uid: int, request: Request, enabled: int,
                           admin: dict = Depends(require_admin)):

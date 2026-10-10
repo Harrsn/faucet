@@ -212,6 +212,19 @@ def _admin_only(path: str, method: str) -> bool:
     return False
 
 
+def _user(request) -> dict:
+    return getattr(request.state, "user", None) or {}
+
+
+def _guard_title(request, kind: str, title_id: int) -> None:
+    """404 — not 403, so a member can't probe what's hidden from them — for a
+    show or movie in a library the user can't see."""
+    from . import access
+    visible = (access.visible_series_ids if kind == "tv" else access.visible_movie_ids)(_user(request))
+    if visible is not None and title_id not in visible:
+        raise HTTPException(404, "Not found")
+
+
 def cfg():
     """Always return the live (possibly hot-reloaded) config object."""
     return _cfg.config
@@ -660,7 +673,8 @@ def api_meta_discover(kind: str = Query("tv"), list_name: str = Query("trending"
 
 
 @app.get("/api/calendar")
-def api_calendar(past: int = Query(7, ge=0, le=30), days: int = Query(14, ge=1, le=60)):
+def api_calendar(request: _Request, past: int = Query(7, ge=0, le=30),
+                 days: int = Query(14, ge=1, le=60)):
     """Air-date calendar across monitored shows: every canonical episode airing
     from `past` days ago through `days` days ahead, with ownership + hunt
     status. Grouped client-side; this returns a flat, date-sorted list."""
@@ -681,8 +695,12 @@ def api_calendar(past: int = Query(7, ge=0, le=30), days: int = Query(14, ge=1, 
                    for r in c.execute("SELECT series_id, season, episode, status "
                                       "FROM wanted WHERE kind='episode'")}
     today = date.today().isoformat()
+    from . import access
+    visible = access.visible_series_ids(_user(request))
     out = []
     for e in eps:
+        if visible is not None and e["series_id"] not in visible:
+            continue
         owned = (e["season"], e["episode"]) in owned_for(idx, e["series_id"], e["title"])
         wstatus = grabbed.get((e["series_id"], e["season"], e["episode"]))
         if e["air_date"] > today:
@@ -1064,7 +1082,7 @@ class SeriesAdd(BaseModel):
 
 
 @app.get("/api/series")
-def api_series_list():
+def api_series_list(request: _Request):
     from . import series as series_mod
     from collections import defaultdict
     # one pass over shared tables instead of re-reading ALL library episodes
@@ -1098,7 +1116,8 @@ def api_series_list():
     default, enabled = _libs.effective_map("tv")
     for s in out:
         s["lib"] = _libs.resolve(s.get("library_id"), default, enabled)
-    return {"series": out}
+    from . import access
+    return {"series": access.filter_titles(_user(request), out)}
 
 
 @app.post("/api/series")
@@ -1142,7 +1161,8 @@ def api_movie_profile(mid: int, profile_id: int | None = Query(None)):
 
 
 @app.get("/api/series/{sid}/episodes")
-def api_series_episodes(sid: int):
+def api_series_episodes(sid: int, request: _Request):
+    _guard_title(request, "tv", sid)
     from . import series as series_mod
     return series_mod.episode_breakdown(sid)
 
@@ -1154,7 +1174,8 @@ def api_series_hunt(sid: int):
 
 
 @app.get("/api/series/{sid}/wanted")
-def api_series_wanted(sid: int):
+def api_series_wanted(sid: int, request: _Request):
+    _guard_title(request, "tv", sid)
     from . import series as series_mod
     return {"wanted": [w for w in series_mod.list_wanted() if w.get("series_id") == sid]}
 
@@ -1381,6 +1402,7 @@ def api_series_detail(sid: int, request: _Request):
     """Everything the show page needs: the series, TMDb metadata, every
     season with episode status (on disk / downloading / wanted / unaired /
     not monitored), stills, and — admins — profiles and folder links."""
+    _guard_title(request, "tv", sid)
     from . import series as series_mod
     user = getattr(request.state, "user", None) or {}
     bd = series_mod.episode_breakdown(sid)
@@ -2126,7 +2148,7 @@ class MovieAdd(BaseModel):
 
 
 @app.get("/api/movies")
-def api_movies_list():
+def api_movies_list(request: _Request):
     from . import movies as movies_mod
     out = movies_mod.list_movies()
     # annotate outstanding wants (missing vs upgrade) for the UI chips
@@ -2139,15 +2161,18 @@ def api_movies_list():
     for m in out:
         m["want_reason"] = wants.get(m["id"])
         m["lib"] = _libs.resolve(m.get("library_id"), default, enabled)
-    return {"movies": out}
+    from . import access
+    return {"movies": access.filter_titles(_user(request), out)}
 
 
 @app.get("/api/nav")
-def api_nav():
-    """Library sections for the sidebar (members too): each library as its
-    own entry, like Plex."""
-    from . import libraries
-    return {"sections": libraries.sections()}
+def api_nav(request: _Request):
+    """Library sections for the sidebar (members too, only the libraries they
+    can see): each library as its own entry, like Plex."""
+    from . import access, libraries
+    a = access.allowed(_user(request))
+    secs = libraries.sections()
+    return {"sections": secs if a is None else [x for x in secs if x["id"] in a]}
 
 
 @app.post("/api/movies")
@@ -2159,6 +2184,7 @@ def api_movies_add(m: MovieAdd):
 
 @app.get("/api/movies/{mid}/detail")
 def api_movie_detail(mid: int, request: _Request):
+    _guard_title(request, "movie", mid)
     from . import movies as movies_mod
     out = movies_mod.movie_detail(mid)
     if not out.get("movie"):
@@ -2379,6 +2405,13 @@ def api_home(request: _Request):
                 pct = (100 * have // len(tot)) if tot else 0
                 hunting.append({"id": r["id"], "title": r["title"], "poster": r["poster"],
                                 "wanted": r["n"], "pct": min(pct, 99)})
+    from . import access
+    vis_series = access.visible_series_ids(user)
+    vis_movies = access.visible_movie_ids(user)
+    if vis_series is not None:
+        rows = [r for r in rows if r["series_id"] in vis_series]
+    if vis_movies is not None:
+        monitored = [m for m in monitored if m["id"] in vis_movies]
     stills: dict = {}
     episodes = []
     for r in rows:

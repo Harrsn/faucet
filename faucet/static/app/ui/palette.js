@@ -213,6 +213,8 @@ async function addTmdb(i) {
       const r = await api.post("/api/requests", { media_type: x.media_type, ...body });
       toast(r.status === "auto_approved" ? `Requested ${x.title} — approved.`
         : r.status === "already_requested" ? `${x.title} was already requested.`
+        : r.status === "already_elsewhere" ? r.error
+        : r.status === "already_available" ? `${x.title} is already in the library.`
         : `Requested ${x.title}. An admin will review it.`);
       close();
     }

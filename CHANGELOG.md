@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased (Phase 7)
+
+### Added
+
+- **Per-user library access.** An admin can limit a member to some
+  libraries (Settings → Users & requests → ⋯ → Library access): the
+  sidebar, Home, Calendar, search, the TV and movie lists and every show and
+  movie page then only show those — enforced by the server, which answers
+  404 for anything hidden. A member's approved requests are filed into
+  their "requests go to" library (or, when they can see only one library of
+  a kind, that one). Requesting a title that's already in a library they
+  can't see says so without revealing where. Admins always see everything;
+  members with no limit see everything, as before.
+  `PUT /api/admin/users/{id}/libraries`.
+
 ## 2.2.1 — 2026-10-11
 
 ### Changed

@@ -305,6 +305,11 @@ def _migrate(c) -> None:
         ("requests", "series_id", "INTEGER"),   # link once it becomes monitored
         ("requests", "movie_id", "INTEGER"),
         ("users", "can_autoapprove", "INTEGER DEFAULT 0"),
+        # per-user library access (JSON list of libraries.id; NULL = all) and
+        # where that user's approved requests are filed
+        ("users", "library_access", "TEXT"),
+        ("users", "request_tv_library", "INTEGER"),
+        ("users", "request_movie_library", "INTEGER"),
         # movie quality upgrades: remember whether the on-disk file is a
         # cam-family rip (always upgrade-eligible)
         ("library_movies", "source", "TEXT"),

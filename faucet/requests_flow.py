@@ -67,6 +67,14 @@ def create_request(user: dict, media_type: str, tmdb_id: int, title: str,
     # already in the library?
     match = _existing_library_match(media_type, tmdb_id)
     if match:
+        from . import access
+        vis = (access.visible_series_ids if match["kind"] in ("tv", "series", "show")
+               else access.visible_movie_ids)(user)
+        if vis is not None and match["id"] not in vis:
+            # it's here, in a library this member can't see: say so without
+            # revealing where
+            return {"status": "already_elsewhere",
+                    "error": "Faucet already has this, in a library you don't have access to."}
         return {"status": "already_available", "kind": match["kind"], "id": match["id"]}
 
     # already requested (and not declined)?
@@ -95,6 +103,22 @@ def create_request(user: dict, media_type: str, tmdb_id: int, title: str,
     return {"status": "pending", "request_id": req_id, "auto_approved": False}
 
 
+def _file_for_requester(requester: dict | None, kind: str, title_id: int) -> None:
+    """File an approved request into the requester's "requests go to"
+    library — unless the title already has a library chosen."""
+    if not requester or not title_id:
+        return
+    from . import access, libraries
+    lib = access.request_library(requester, kind)
+    if lib is None:
+        return
+    table = "series" if kind == "tv" else "movies"
+    with db.connect() as c:
+        cur = c.execute(f"SELECT library_id FROM {table} WHERE id=?", (title_id,)).fetchone()
+    if cur is not None and cur["library_id"] is None:
+        libraries.set_title_library(kind, title_id, lib)
+
+
 def approve_request(req_id: int, decider: dict, profile_id: int | None = None) -> dict:
     """Approve a request: add the title to the monitored library and mark the
     request approved. Idempotent-ish (re-approving an approved request re-adds
@@ -108,17 +132,20 @@ def approve_request(req_id: int, decider: dict, profile_id: int | None = None) -
         return {"status": "declined"}
 
     link = {}
+    requester = {"id": r.get("user_id"), "role": "user"} if r.get("user_id") else None
     try:
         if r["media_type"] == "tv":
             from . import series as series_mod
             sid = series_mod.add_series(r["tmdb_id"], r["title"], r.get("year"),
                                         r.get("poster"), profile_id)
+            _file_for_requester(requester, "tv", sid)
             series_mod.reconcile(sid)
             link = {"series_id": sid}
         else:
             from . import movies as movies_mod
             mid = movies_mod.add_movie(r["tmdb_id"], r["title"], r.get("year"),
                                        r.get("poster"), profile_id)
+            _file_for_requester(requester, "movie", mid)
             link = {"movie_id": mid}
     except Exception as e:                       # noqa: BLE001
         log.warning("approve add failed for request %s: %s", req_id, e)
