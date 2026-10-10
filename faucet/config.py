@@ -59,7 +59,7 @@ def _db_read() -> dict:
             rows = conn.execute("SELECT key, value FROM settings WHERE key LIKE 'cfg.%'").fetchall()
         finally:
             conn.close()
-    except sqlite3.Error as e:
+    except (OSError, sqlite3.Error) as e:
         log.error("settings store unreadable (%s); using the environment", e)
         return {}
     out = {}
@@ -124,9 +124,16 @@ def _load_persisted(into_env: bool = True) -> dict:
     if not _db_path().exists() and not Path(CONFIG_FILE).exists() \
             and not any(os.environ.get(k) for k in WIZARD_KEYS):
         return {}                     # nothing stored, nothing to import: don't create files
-    stored = _db_read()
-    if IMPORTED_KEY not in stored:
-        stored = _import_once(stored)
+    try:
+        stored = _db_read()
+        if IMPORTED_KEY not in stored:
+            stored = _import_once(stored)
+    except (OSError, sqlite3.Error) as e:
+        # an unwritable/missing data volume must not stop the app (or a CLI
+        # tool) from importing config: fall back to the environment as-is
+        log.error("settings store unavailable at %s (%s); using the environment",
+                  _db_path(), e)
+        return {}
     data = {k[len(PREFIX):]: str(v) for k, v in stored.items()
             if k.startswith(PREFIX) and k != IMPORTED_KEY and k[len(PREFIX):] in WIZARD_KEYS}
     if into_env:
