@@ -19,15 +19,34 @@ function hero(h) {
         <div class="eps">${eps}${n > 3 ? ` · +${n - 3} more` : ""}</div>
         ${h.overview ? html`<p>${h.overview}</p>` : ""}
       </div>
-      <div class="acts"><a class="btn" href="${links.show(h.series_id)}">Open show</a></div>
+      <div class="acts"><a class="btn" href="${links.show(h.series_id, h.new.length ? h.new[0].season : undefined)}">Open show</a></div>
     </div></section>`;
 }
 
-const epCard = (e) => html`<a class="card ep" role="listitem" href="${links.show(e.series_id)}">
-  <span class="art" style="${e.still ? bg(e.still) : e.poster ? bg(e.poster) : tint(e.title)}">
-    <span class="tag">${sxe(e.season, e.episode)}${e.quality ? ` · ${e.quality}` : ""}</span></span>
-  <span class="t">${e.title}</span>
-  <span class="s">${e.ep_title || "—"} · ${ago(e.added)}</span></a>`;
+// A season pack lands as a run of episodes from one season: one card for
+// the run instead of seven identical ones.
+function group(eps) {
+  const out = [];
+  for (const e of eps) {
+    const last = out[out.length - 1];
+    if (last && last.series_id === e.series_id && last.season === e.season) last.items.push(e);
+    else out.push({ ...e, items: [e] });
+  }
+  return out;
+}
+
+function epCard(g) {
+  const n = g.items.length;
+  const still = (g.items.find((x) => x.still) || {}).still;
+  const nums = g.items.map((x) => x.episode).sort((a, b) => a - b);
+  const tag = n > 1 ? `S${String(g.season).padStart(2, "0")} · ${n} episodes` : `${sxe(g.season, g.episode)}${g.quality ? ` · ${g.quality}` : ""}`;
+  const sub = n > 1 ? `E${String(nums[0]).padStart(2, "0")}–E${String(nums[n - 1]).padStart(2, "0")}` : (g.ep_title || "—");
+  return html`<a class="card ep" role="listitem" href="${links.show(g.series_id, g.season)}">
+    <span class="art" style="${still ? bg(still) : g.poster ? bg(g.poster) : tint(g.title)}">
+      <span class="tag">${tag}</span></span>
+    <span class="t">${g.title}</span>
+    <span class="s">${sub} · ${ago(g.added)}</span></a>`;
+}
 
 const movieCard = (m) => html`<a class="card poster" role="listitem" href="${links.movie(m.id)}">
   <span class="art" style="${m.poster ? bg(m.poster) : tint(m.title)}">
@@ -71,7 +90,7 @@ export async function render(view, ctx) {
   ctx.status(d.stats);
   const parts = [hero(d.hero)];
   parts.push(section("Recently added episodes", "", ["TV Shows", links.shows],
-    d.episodes.length ? rail("Recently added episodes", d.episodes.map(epCard))
+    d.episodes.length ? rail("Recently added episodes", group(d.episodes).slice(0, 24).map(epCard))
       : html`<div class="empty">Nothing added yet. New episodes show up here as they land.</div>`));
   if (d.admin) parts.push(html`<div id="dl-sec">${downloads(d)}</div>`);
   parts.push(section("Movies", "", ["All movies", links.movies],
