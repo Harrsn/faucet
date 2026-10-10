@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.0.1 — 2026-10-10
+
+### Fixed
+
+- **Home and Activity could take a minute or more to load.** They asked the
+  download client for its transfer list inside the request. Transmission
+  answers RPC on the thread that does its disk I/O, so while a finished
+  download was being copied onto the NAS the page waited out the client
+  timeout (90s on this install). The list now comes from a background
+  poller (every `TRANSFERS_POLL_SECONDS`, 5; at most a 10s wait per poll;
+  idle after a minute without readers): pages read the last good list
+  instantly and say so when the client is slow. Grabs and pause / resume /
+  remove trigger an immediate refresh.
+
 ## 2.0.0 — 2026-10-10
 
 A new interface and a new configuration model. **Upgrading:** settings that
