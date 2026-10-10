@@ -1,8 +1,19 @@
 # Changelog
 
-## Unreleased
+## 1.6.0 — 2026-10-10
+
+Full-repo review: hunt correctness, security hardening, ops visibility.
 
 ### Added
+
+- **Database backup** from Settings → Advanced: a consistent online copy of
+  `cascade.db` (SQLite backup API) with sessions, reset tokens and the TMDb
+  cache left out. The same panel shows the database size and its largest
+  tables. `GET /api/settings/backup`.
+- **`/metrics`** in the Prometheus text format, no client library: wants by
+  status/reason, library counts, history and hunt outcomes over 24h, search
+  results/latency, per-indexer probe status, disk free, DB size, last cycle.
+  Bearer `METRICS_TOKEN` or an admin session; 404 when neither is set up.
 
 - **Hunt log.** Every hunt attempt is recorded: query, how many results the
   indexer returned, how many were rejected and why (already tried, wrong
@@ -23,6 +34,18 @@
 
 ### Changed
 
+- **Jackett's own error text** is shown in the indexer probe, the hunt log and
+  search errors ("eztv: Challenge detected but FlareSolverr is not
+  configured") instead of "400 Client Error: Bad Request".
+- **The indexer probe allows for FlareSolverr**: 60s per indexer, two at a
+  time, and it runs in the background (the UI polls) — a full probe can
+  outlast a reverse proxy's request timeout.
+- **Housekeeping each tick**: expired TMDb cache rows are pruned, the
+  database is VACUUMed (at most daily) when mostly free pages,
+  `events.jsonl` rotates at 5 MiB, and Activity reads only the end of it.
+- **The sweep logs a leftover it can never sort once**, not every tick.
+- **Lint is enforced**: ruff (pinned) with a correctness rule set runs on
+  `faucet/` and `tests/` and fails CI.
 - **Ranking favours live swarms.** Seeders count logarithmically, and a
   release under `HUNT_HEALTHY_SEEDERS` (5) ranks below a healthy release one
   resolution step lower — most backlog grabs were near-dead torrents that
@@ -87,6 +110,10 @@
   hunted forever. A multi-episode file is never retired as superseded.
 - **Stuck grabs are re-queued** after `GRAB_RETRY_HOURS` even when reconcile
   doesn't revisit the episode.
+- **Telegram notifications** use escaped HTML instead of Markdown, which
+  rejected most release names (`_`, `*`) with HTTP 400; ntfy titles go in a
+  query parameter (headers are latin-1). Notification HTTP errors are now
+  logged instead of silently ignored.
 
 ## 1.5.0
 

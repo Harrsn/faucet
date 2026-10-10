@@ -8,8 +8,10 @@ Three views of "is searching working":
 * per-indexer probe — Jackett's aggregate 'all' endpoint waits for the
   slowest indexer, so one hung tracker turns every search into a 30s read
   timeout with no hint which one. The probe queries each configured indexer
-  on its own, with its own timeout, and reports latency and errors. Runs on
-  demand and every INDEXER_PROBE_HOURS (24; 0 = only on demand).
+  on its own (INDEXER_PROBE_CONCURRENCY at a time, default 2, each with
+  INDEXER_PROBE_TIMEOUT seconds, default 60) and reports latency and
+  Jackett's own error text. Runs on demand and every INDEXER_PROBE_HOURS
+  (24; 0 = only on demand).
 * grab outcomes per tracker — from the hunt log: how many of a tracker's
   releases stalled vs completed.
 """
@@ -114,7 +116,14 @@ def probe(timeout: int | None = None) -> dict:
     from . import config as cfgmod
     from . import search as searchmod
     c = cfgmod.config
-    timeout = timeout or min(20, max(5, c.request_timeout))
+    # A Cloudflare challenge through FlareSolverr takes 10-15s, and one
+    # FlareSolverr solves them one at a time — a 20s timeout with 4 workers
+    # reported healthy indexers as dead while they waited their turn.
+    try:
+        timeout = timeout or max(5, int(os.environ.get("INDEXER_PROBE_TIMEOUT", "60")))
+        workers = max(1, int(os.environ.get("INDEXER_PROBE_CONCURRENCY", "2")))
+    except ValueError:
+        timeout, workers = timeout or 60, 2
     out = {"ts": datetime.now().isoformat(timespec="seconds"), "indexers": []}
     if not (c.jackett_url and c.jackett_api_key):
         out["error"] = "indexer not configured"
@@ -136,7 +145,7 @@ def probe(timeout: int | None = None) -> dict:
             return {**ix, "ok": False, "ms": int((time.monotonic() - t0) * 1000),
                     "results": 0, "error": str(e)[:200]}
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=workers) as pool:
         out["indexers"] = list(pool.map(one, items))
     out["indexers"].sort(key=lambda x: (x["ok"], -x["ms"]))
     db.set_setting(PROBE_KEY, out)
@@ -145,6 +154,32 @@ def probe(timeout: int | None = None) -> dict:
         log.warning("Indexer probe: %d/%d failing: %s", len(bad), len(out["indexers"]),
                     ", ".join(bad))
     return out
+
+
+_probe_lock = __import__("threading").Lock()
+
+
+def probing() -> bool:
+    return _probe_lock.locked()
+
+
+def probe_async() -> bool:
+    """Start a probe in the background. Returns False if one is running.
+    A full probe can take minutes (cold Cloudflare solves), far past a
+    reverse proxy's request timeout, so the API never waits on it."""
+    import threading
+    if not _probe_lock.acquire(blocking=False):
+        return False
+
+    def run():
+        try:
+            probe()
+        except Exception as e:                   # noqa: BLE001
+            log.warning("Indexer probe failed: %s", e)
+        finally:
+            _probe_lock.release()
+    threading.Thread(target=run, name="indexer-probe", daemon=True).start()
+    return True
 
 
 def last_probe() -> dict | None:
@@ -163,12 +198,15 @@ def probe_if_due() -> dict | None:
         age = (datetime.now() - datetime.fromisoformat(last.get("ts", ""))).total_seconds()
     except ValueError:
         age = float("inf")
-    if age < hours * 3600:
+    if age < hours * 3600 or not _probe_lock.acquire(blocking=False):
         return None
-    return probe()
+    try:
+        return probe()
+    finally:
+        _probe_lock.release()
 
 
 def report() -> dict:
     from . import huntlog
-    return {"search": summary(24), "probe": last_probe(),
+    return {"search": summary(24), "probe": last_probe(), "probing": probing(),
             "grabs": huntlog.tracker_outcomes()}

@@ -71,6 +71,31 @@ def parse_badges(title: str) -> dict:
     return badges
 
 
+def torznab_error(body: bytes) -> str:
+    """The human part of a Torznab/Jackett <error description="...">, or "".
+
+    Jackett's descriptions are .NET exception dumps; keep the first line and
+    drop the exception class names, e.g. "Jackett.Common.IndexerException:
+    Exception (eztv): Challenge detected but FlareSolverr is not configured"
+    -> "eztv: Challenge detected but FlareSolverr is not configured"."""
+    try:
+        root = ET.fromstring(body)
+    except ET.ParseError:
+        return ""
+    if root.tag != "error":
+        return ""
+    desc = (root.get("description") or "").strip().splitlines()
+    first = desc[0].strip() if desc else ""
+    m = re.match(r"^[\w.]+Exception:\s*Exception \(([^)]+)\):\s*(.*)$", first)
+    if m:
+        first = f"{m.group(1)}: {m.group(2)}"
+    else:
+        first = re.sub(r"^[\w.]+Exception:\s*", "", first)
+    # Jackett wraps raw site HTML into some messages; keep it short and tag-free
+    first = re.sub(r"<[^>]+>", " ", first)
+    return " ".join(first.split())[:240]
+
+
 def _attr(item, name):
     for a in item.findall(f"{_NS}attr"):
         if a.get("name") == name:
@@ -153,9 +178,17 @@ def _search(jackett_url: str, api_key: str, indexer: str, query: str,
         url += f"&cat={cat}"
     try:
         r = requests.get(url, timeout=timeout)
-        r.raise_for_status()
     except requests.RequestException as e:
         raise SearchError(f"Indexer query failed: {e}", api_key) from None
+    status = getattr(r, "status_code", 200) or 200
+    if status >= 400:
+        # Jackett explains failures in a Torznab <error> body on the 4xx/5xx
+        # ("Challenge detected but FlareSolverr is not configured", a 403 from
+        # the site, a disabled indexer). raise_for_status() threw that away
+        # and left only "400 Bad Request".
+        raise SearchError(
+            f"HTTP {status}: {torznab_error(r.content) or getattr(r, 'reason', '') or 'error'}",
+            api_key)
     try:
         root = ET.fromstring(r.content)
     except ET.ParseError as e:
@@ -164,7 +197,7 @@ def _search(jackett_url: str, api_key: str, indexer: str, query: str,
         # Torznab reports failures (bad API key, disabled indexer) as HTTP 200
         # with an <error> document — previously read as "no results"
         raise SearchError(f"Indexer error {root.get('code', '?')}: "
-                          f"{root.get('description', 'unknown')}", api_key)
+                          f"{torznab_error(r.content) or 'unknown'}", api_key)
 
     results = []
     for item in root.iter("item"):

@@ -168,6 +168,11 @@ All via environment / `.env`:
 | `HUNT_LOG_DAYS` | `14` | How long hunt-log entries are kept. |
 | `INDEXER_PROBE_HOURS` | `24` | How often each Jackett indexer is probed individually. `0` = only on demand. |
 | `INDEXER_STATS_DAYS` | `7` | How long per-search telemetry is kept. |
+| `INDEXER_PROBE_TIMEOUT` | `60` | Seconds each indexer gets in the probe (Cloudflare challenges through FlareSolverr take 10–15s each). |
+| `INDEXER_PROBE_CONCURRENCY` | `2` | Indexers probed at once (one FlareSolverr solves challenges serially). |
+| `METRICS_TOKEN` | — | Enables `/metrics` (Prometheus text format) for `Authorization: Bearer <token>`. Admin sessions can always read it; with neither, `/metrics` is 404. |
+| `EVENTS_MAX_BYTES` | `5242880` | Rotate `events.jsonl` to `events.jsonl.1` past this size. |
+| `DB_VACUUM_FREE_PCT` | `25` | VACUUM the database (at most daily) when free pages exceed this percentage. |
 | `RSS_INTERVAL_SECONDS` | `1800` | How often the scheduler scans/reconciles/hunts. |
 | `SEARCH_LIMIT` | `150` | Max results per search. |
 | `BIG_DOWNLOAD_GB` | `20` | Threshold for the "big download" warning. |

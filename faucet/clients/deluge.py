@@ -122,10 +122,13 @@ class DelugeClient(DownloadClient):
         return out
 
     def pause(self, transfer_id: str) -> None:
-        self._ensure_auth(); self._call("core.pause_torrent", [[transfer_id]])
+        self._ensure_auth()
+        self._call("core.pause_torrent", [[transfer_id]])
 
     def resume(self, transfer_id: str) -> None:
-        self._ensure_auth(); self._call("core.resume_torrent", [[transfer_id]])
+        self._ensure_auth()
+        self._call("core.resume_torrent", [[transfer_id]])
 
     def remove(self, transfer_id: str, delete_data: bool = False) -> None:
-        self._ensure_auth(); self._call("core.remove_torrent", [transfer_id, delete_data])
+        self._ensure_auth()
+        self._call("core.remove_torrent", [transfer_id, delete_data])

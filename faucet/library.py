@@ -16,7 +16,6 @@ import os
 from pathlib import Path
 
 from . import db
-from .config import config
 
 # quality detection/ranking is shared with the sorter; the private aliases keep
 # existing call sites (fixmatch, tests) working

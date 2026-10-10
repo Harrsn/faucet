@@ -1,6 +1,6 @@
 [project]
 name = "faucet-media"
-version = "1.5.0"
+version = "1.6.0"
 description = "Self-hosted search, download, sort, and manage for your media library."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -26,3 +26,21 @@ faucet-tidy = "faucet.libtidy:main"
 
 [tool.setuptools.packages.find]
 include = ["faucet*"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 110
+
+[tool.ruff.lint]
+# Correctness, not style: syntax/import errors, undefined names, unused
+# imports/variables, and the bugbear set. CI fails on any of these.
+select = ["E4", "E7", "E9", "F", "B"]
+ignore = [
+  "B008",   # FastAPI's Depends()/Query() in argument defaults is the idiom
+  "B904",   # HTTPException raised in except blocks is intentional
+]
+
+[tool.ruff.lint.per-file-ignores]
+# app.py wires logging, the DB and the auth gate before importing routers
+"faucet/app.py" = ["E402"]
+"tests/*" = ["E401", "E702", "E741", "F841", "B"]
