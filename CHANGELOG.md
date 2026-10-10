@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.2.0 — 2026-10-11
+
+### Added
+
+- **Every library is its own section in the sidebar**, like Plex: "TV
+  Shows", "Mamaw's Shows", "Movies", "Mamaw's Movies", each with its title
+  count, each opening a grid of only that library's titles (filters and sort
+  remembered per section). A title belongs to the library it's filed into, so
+  a relative's shows no longer mix into yours. Show and movie pages put their
+  library in the breadcrumb and highlight its section; the sidebar updates
+  when a title's "Save to" changes or a library is added. Members see the
+  same sections. `GET /api/nav`; `/api/series` and `/api/movies` carry each
+  title's library.
+
 ## 2.1.0 — 2026-10-11
 
 ### Added
