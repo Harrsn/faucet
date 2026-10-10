@@ -399,7 +399,8 @@ def add_history(event: str, title: str = "", detail: str = "", size: int = 0) ->
     from datetime import datetime
     with connect() as c:
         c.execute("INSERT INTO history (ts, event, title, detail, size) VALUES (?,?,?,?,?)",
-                  (datetime.now().isoformat(timespec="seconds"), event, title, detail, size))
+                  (datetime.now().isoformat(timespec="seconds"), event, (title or "")[:500],
+                   (detail or "")[:500], size))
 
 
 def recent_history(limit: int = 100) -> list[dict]:
