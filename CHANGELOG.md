@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.1.0 — 2026-10-11
+
+### Added
+
+- **Each show and movie has a library it's filed into** ("Save to", like
+  Sonarr/Radarr root folders) — for a separate collection such as a
+  relative's own Plex libraries. Titles whose files live in a non-default
+  library are assigned to it automatically (shows by their linked folder,
+  movies by their file); a choice made by hand is never overridden. The
+  completion hook and sweep route each finished download to its title's
+  library; anything unmatched or ambiguous goes to the defaults.
+  `POST /api/series/{id}/library`, `POST /api/movies/{id}/library`.
+- **Import titles per library** (Settings → Libraries): adopt one
+  library's shows or movies without touching the rest of what's on disk, and
+  choose what happens next — just track them, get new episodes, or hunt the
+  back catalogue. `POST /api/libraries/{id}/import`,
+  `GET /api/libraries/import`.
+
 ## 2.0.2 — 2026-10-11
 
 ### Fixed
