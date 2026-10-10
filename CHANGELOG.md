@@ -14,6 +14,13 @@
   can't see says so without revealing where. Admins always see everything;
   members with no limit see everything, as before.
   `PUT /api/admin/users/{id}/libraries`.
+- **Calendar feed.** Calendar → "Subscribe on your phone" creates a private
+  link (`/cal/<token>.ics`) for Apple, Google or Outlook calendars: every
+  episode of your shows from two weeks back to three months ahead as an
+  all-day event, refreshing every few hours, limited to the libraries you
+  can see. Only a hash of the link is stored, so it's shown once; making a
+  new one revokes the old, and a disabled account's link stops working.
+  `GET/POST/DELETE /api/me/calendar`.
 
 ## 2.2.1 — 2026-10-11
 
