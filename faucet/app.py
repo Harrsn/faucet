@@ -180,7 +180,8 @@ async def _security_headers(request: _Request, call_next):
 # Endpoints regular users may READ: browse the monitored library, search
 # TMDb (to request), browse Discover, and see the calendar. Safe, non-indexer,
 # non-torrent reads.
-_USER_READABLE = ("/api/series", "/api/movies", "/api/meta/", "/api/calendar", "/api/home")
+_USER_READABLE = ("/api/series", "/api/movies", "/api/meta/", "/api/calendar", "/api/home",
+                  "/api/nav")
 
 # Always admin-only regardless of method — raw indexer search, torrent client,
 # download management, settings, profiles, subscriptions, hunts, library ops.
@@ -1093,6 +1094,10 @@ def api_series_list():
                  tv_status=meta.get("status"),
                  ended=meta.get("status") in ("Ended", "Canceled"))
         out.append(s)
+    from . import libraries as _libs
+    default, enabled = _libs.effective_map("tv")
+    for s in out:
+        s["lib"] = _libs.resolve(s.get("library_id"), default, enabled)
     return {"series": out}
 
 
@@ -1418,7 +1423,10 @@ def api_series_detail(sid: int, request: _Request):
                         "episodes": eps, **{k: v for k, v in counts.items() if k != "have"}})
     if missing_stills:
         _fill_stills_async(s["tmdb_id"], missing_stills)
+    from . import libraries as _libs
+    _lib = _libs.title_library("tv", sid)
     out = {"series": s, "meta": meta, "seasons": seasons,
+           "library": {"id": _lib["id"], "name": _lib["name"]} if _lib else None,
            "have": bd["have"], "total": bd["total"],
            "wanted": sum(x["wanted"] for x in seasons),
            "downloading": sum(x["downloading"] for x in seasons),
@@ -2126,9 +2134,20 @@ def api_movies_list():
         wants = {r["series_id"]: r["reason"] for r in c.execute(
             "SELECT series_id, reason FROM wanted WHERE kind='movie' "
             "AND status IN ('wanted','grabbed')")}
+    from . import libraries as _libs
+    default, enabled = _libs.effective_map("movie")
     for m in out:
         m["want_reason"] = wants.get(m["id"])
+        m["lib"] = _libs.resolve(m.get("library_id"), default, enabled)
     return {"movies": out}
+
+
+@app.get("/api/nav")
+def api_nav():
+    """Library sections for the sidebar (members too): each library as its
+    own entry, like Plex."""
+    from . import libraries
+    return {"sections": libraries.sections()}
 
 
 @app.post("/api/movies")
@@ -2153,6 +2172,9 @@ def api_movie_detail(mid: int, request: _Request):
                       "FROM wanted WHERE kind='movie' AND series_id=?", (mid,)).fetchone()
     out["want"] = dict(w) if w else None
     out["profiles"] = _profiles_for(user)
+    from . import libraries as _libs
+    _lib = _libs.title_library("movie", mid)
+    out["library"] = {"id": _lib["id"], "name": _lib["name"]} if _lib else None
     if user.get("role") == "admin":
         out["save_to"] = _save_to("movie", mid, out["movie"].get("library_id"))
     return out
