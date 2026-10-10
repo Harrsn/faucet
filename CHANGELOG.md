@@ -4,6 +4,16 @@
 
 ### Added
 
+- **New UI, step 4a: the remaining pages.** **Discover** (TMDb lists as
+  rails for TV and movies; titles you have link to their page, the rest
+  get Monitor or Request on the card), **Calendar** (last week and the
+  next three, by day, filterable), **Requests** (members see theirs; admins
+  approve, decline or delete, waiting first), **Activity** (live downloads
+  with pause / resume / remove, history, event log) and **Wanted** (every
+  title the hunter is after, what's due now and when each is searched
+  next). Nothing in the new UI opens the classic one any more.
+  `GET /api/wanted/summary`.
+
 - **New UI, step 3b: the rest of Settings.** **General** (default audio
   language and quality profile, plus everyday behaviour), **Quality
   profiles** (list and editor), **Users & requests** (approve, disable,
