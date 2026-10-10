@@ -154,3 +154,23 @@ def test_per_indexer_stats(fenv):
     assert by["eztv"] == {"indexer": "eztv", "searches": 3, "failed": 0, "empty": 0,
                           "results": 120, "avg_ms": 800, "p95_ms": 800}
     assert by["1337x"]["empty"] == 6 and by["1337x"]["failed"] == 1 and by["1337x"]["results"] == 0
+
+
+def test_unwritable_data_dir_falls_back_to_environment(tmp_path, monkeypatch):
+    """CI caught this: a setting in the environment and no writable data
+    directory made importing faucet.config raise PermissionError."""
+    blocked = tmp_path / "ro"
+    blocked.mkdir()
+    blocked.chmod(0o500)
+    monkeypatch.setenv("EVENTS_FILE", str(blocked / "config" / "events.jsonl"))
+    monkeypatch.setenv("BROWSE_ROOT", "/somewhere")
+    from faucet import config as c0
+    import os as _os
+    if _os.geteuid() == 0:
+        monkeypatch.setattr(c0.Path, "mkdir", lambda *a, **k: (_ for _ in ()).throw(
+            PermissionError("denied")))
+        cfg = c0
+        assert cfg._load_persisted(into_env=True) == {}
+    else:
+        cfg = importlib.reload(c0)
+    assert cfg.Config().browse_root == "/somewhere"
