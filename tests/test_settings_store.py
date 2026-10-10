@@ -29,21 +29,21 @@ def _fresh(tmp_path, monkeypatch, env=None, legacy=None):
 
 def test_import_once_from_file_and_environment(tmp_path, monkeypatch, caplog):
     cfg = _fresh(tmp_path, monkeypatch,
-                 env={"JACKETT_URL": "http://from-env:9117", "APP_TITLE": "EnvTitle"},
-                 legacy="# old\nJACKETT_API_KEY=abc123\nAPP_TITLE=FileTitle\nEVIL=1\n")
+                 env={"JACKETT_URL": "http://from-env:9117", "UI_THEME": "envtheme"},
+                 legacy="# old\nJACKETT_API_KEY=abc123\nUI_THEME=filetheme\nEVIL=1\n")
     st = cfg.stored()
     assert st == {"JACKETT_URL": "http://from-env:9117", "JACKETT_API_KEY": "abc123",
-                  "APP_TITLE": "FileTitle"}                        # the file won, as before
-    assert cfg.config.app_title == "FileTitle"
+                  "UI_THEME": "filetheme"}                         # the file won, as before
+    assert cfg.config.ui_theme == "filetheme"
     assert not (tmp_path / "config" / "faucet.env").exists()
     assert (tmp_path / "config" / "faucet.env.imported").exists()
 
     # afterwards the database is the source: a new environment value is ignored
-    monkeypatch.setenv("APP_TITLE", "ChangedInCompose")
+    monkeypatch.setenv("UI_THEME", "ChangedInCompose")
     caplog.set_level(logging.WARNING, logger="faucet.config")
     cfg.reload()
-    assert cfg.config.app_title == "FileTitle"
-    assert any("APP_TITLE is set in the environment" in r.getMessage() for r in caplog.records)
+    assert cfg.config.ui_theme == "filetheme"
+    assert any("UI_THEME is set in the environment" in r.getMessage() for r in caplog.records)
 
 
 def test_import_happens_once(tmp_path, monkeypatch):
@@ -174,3 +174,12 @@ def test_unwritable_data_dir_falls_back_to_environment(tmp_path, monkeypatch):
     else:
         cfg = importlib.reload(c0)
     assert cfg.Config().browse_root == "/somewhere"
+
+
+def test_app_title_is_fixed_and_no_longer_stored(tmp_path, monkeypatch):
+    cfg = _fresh(tmp_path, monkeypatch, env={"APP_TITLE": "Something Else"},
+                 legacy="APP_TITLE=Other\nJACKETT_URL=http://j:9117\n")
+    assert cfg.config.app_title == "Faucet"
+    assert "APP_TITLE" not in cfg.stored()
+    cfg.save({"APP_TITLE": "Nope"})
+    assert "APP_TITLE" not in cfg.stored() and cfg.config.app_title == "Faucet"

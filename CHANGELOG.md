@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Added
+
+- **New UI, step 3a: Settings.** A full Settings page with its own section
+  list. **Libraries**: library cards (folder, file count, last scan,
+  unreachable / read-only warnings), add and edit with a folder picker over
+  the container's mounts, remove, scan all; and **Show folders**: every show
+  folder with the show it's linked to — link or relink by hand, or monitor
+  a show from TMDb and link it in one step. **Integrations**: Jackett (with
+  per-indexer health over 24h and Probe now), download client, TMDb, and
+  notifications — each with a live Test. **Path mappings**: edit the table
+  and translate a test path. Sections not moved yet open the classic UI.
+- `GET /api/libraries/browse`, `GET/PUT /api/settings/notifications`,
+  `POST /api/settings/notifications/test`, `POST /api/settings/test-tmdb`.
+
+### Changed
+
+- **The app title is fixed: Faucet.** `APP_TITLE` is no longer a setting;
+  a stored value is ignored.
+- **Notification targets are write-only**, like keys and passwords: the
+  API shows each one's service and host, never the webhook path or token.
+  The classic settings form no longer edits them (so it can't blank them).
+
 ### Fixed
 
 - **A deploy could leave browsers on the previous UI for hours.** Cloudflare's

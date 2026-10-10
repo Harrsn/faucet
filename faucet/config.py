@@ -200,7 +200,8 @@ class Config:
 
     # --- UI ---
     ui_theme: str = field(default_factory=lambda: os.environ.get("UI_THEME", "dark"))
-    app_title: str = field(default_factory=lambda: os.environ.get("APP_TITLE", "Faucet"))
+    # The product name is fixed (it was a setting until 1.7).
+    app_title: str = "Faucet"
 
     def configured(self) -> bool:
         """True when the minimum required settings are present."""
@@ -227,7 +228,7 @@ WIZARD_KEYS = {
     "REMOVE_ON_COMPLETE", "REQUEST_TIMEOUT", "SEARCH_LIMIT", "BIG_DOWNLOAD_GB",
     "NOTIFY_URLS", "NOTIFY_ON", "AIR_DELAY_DAYS",
     # metadata / ui
-    "UI_THEME", "APP_TITLE",
+    "UI_THEME",
 }
 
 # Subset that point at filesystem locations — the editor validates these before
