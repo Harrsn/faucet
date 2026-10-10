@@ -217,6 +217,7 @@ def test_tmdb_parse_and_cache(tmp_path, monkeypatch):
 # ---------------- setup wizard ----------------
 def test_config_save_reload(tmp_path, monkeypatch):
     monkeypatch.setenv("FAUCET_CONFIG_FILE", str(tmp_path / "faucet.env"))
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "events.jsonl"))
     # other tests may have set these in the process env; clear for isolation
     for k in ("JACKETT_API_KEY", "CLIENT_URL", "DOWNLOAD_CLIENT", "APP_TITLE"):
         monkeypatch.delenv(k, raising=False)
@@ -233,13 +234,14 @@ def test_config_save_reload(tmp_path, monkeypatch):
 
 def test_config_save_whitelist(tmp_path, monkeypatch):
     monkeypatch.setenv("CASCADE_CONFIG_FILE", str(tmp_path / "cascade.env"))
+    monkeypatch.setenv("EVENTS_FILE", str(tmp_path / "events.jsonl"))
     import importlib
     from faucet import config as cfgmod
     importlib.reload(cfgmod)
     cfgmod.save({"EVIL": "x", "JACKETT_INDEXER": "1337x"})
-    body = (tmp_path / "cascade.env").read_text()
-    assert "EVIL" not in body
-    assert "JACKETT_INDEXER=1337x" in body
+    stored = cfgmod.stored()
+    assert "EVIL" not in stored
+    assert stored["JACKETT_INDEXER"] == "1337x"
 
 
 # ---------------- content classification ----------------

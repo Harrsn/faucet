@@ -344,8 +344,7 @@ def test_hunter_skips_want_that_aired_too_recently(env, monkeypatch):
 # ── hunter / config fixes ────────────────────────────────────────────────────
 
 def test_hunt_short_circuits_without_indexer_key(env, monkeypatch):
-    monkeypatch.setenv("JACKETT_API_KEY", "")
-    env.config.reload()
+    env.config.save({"JACKETT_API_KEY": ""})      # settings live in the database
     sid = _series(env.db, "Show", [(1, 1, "2020-01-01")])
     env.series.reconcile(sid)
     called = []
@@ -432,8 +431,7 @@ def test_transfers_carry_the_flag(env, api):
 
 
 def test_missing_key_is_explained_everywhere(env, api, monkeypatch):
-    monkeypatch.setenv("JACKETT_API_KEY", "")
-    env.config.reload()
+    env.config.save({"JACKETT_API_KEY": ""})      # settings live in the database
     r = api.http.get("/api/search?q=south+park")
     assert r.status_code == 503 and "API key" in r.json()["detail"]
     d = api.http.get("/api/dashboard").json()
