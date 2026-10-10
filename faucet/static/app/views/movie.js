@@ -2,6 +2,7 @@
 import { api, qs } from "../api.js";
 import { bg, bytes, day, html, mount, raw, stamp, tint, until } from "../dom.js";
 import { links } from "../links.js";
+import { pickVideo } from "../ui/filepicker.js";
 import { fixMatch } from "../ui/fixmatch.js";
 import { wireMenu } from "../ui/menu.js";
 import { confirmDialog } from "../ui/modal.js";
@@ -58,7 +59,7 @@ export async function render(el, ctx) {
               <details class="menu"><summary aria-label="More actions">${raw('<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>')}</summary>
                 <div class="items">
                   <button type="button" data-act="fix">Fix match…</button>
-                  <a href="${links.classicMovie(m.id)}">Fix location (classic UI)</a>
+                  <button type="button" data-act="locate">Fix location…</button>
                   <button type="button" class="danger" data-act="remove">Remove movie…</button>
                 </div></details>
             </div>` : ""}
@@ -114,6 +115,17 @@ export async function render(el, ctx) {
     menu.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", async () => {
       menu.open = false;
       if (b.dataset.act === "fix") fixMatch({ kind: "movie", id: mid, title: d.movie.title, onDone: reload });
+      else if (b.dataset.act === "locate") pickVideo({
+        title: `Which file is ${d.movie.title}?`, sub: "Point the movie at a file Faucet didn't recognise. Nothing is moved.",
+        onPick: async (rel) => {
+          try {
+            const r = await api.post(`/api/admin/movie/${mid}/link-file`, { rel });
+            if (r.error) throw new Error(r.error);
+            toast("Linked — the movie counts as on disk.");
+            reload();
+            return true;
+          } catch (e) { toast(e.message, "err"); return false; }
+        } });
       else if (await confirmDialog("Remove movie?", `${d.movie.title} stops being monitored. The file on disk is not touched.`, "Remove", true)) {
         try {
           await api.del(`/api/movies/${mid}`);

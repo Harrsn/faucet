@@ -2,7 +2,7 @@
 import { api } from "./api.js";
 import { $, html, mount, rate } from "./dom.js";
 import { icons } from "./icons.js";
-import { isClassic, links } from "./links.js";
+import { links } from "./links.js";
 import { open as openPalette } from "./ui/palette.js";
 
 const NAV = [
@@ -34,7 +34,7 @@ export function renderShell(me, active) {
       <h2>${label}</h2>
       <nav aria-label="${label}">${items.map(([id, name, icon, href]) => html`
         <a class="nav-a" href="${href}" data-nav="${id}"${id === active ? html` aria-current="page"` : ""}>
-          ${icon}${name}<span class="slot" data-slot="${id}">${isClassic(href) ? html`<span class="ext" title="Opens in the classic UI">${icons.external}</span>` : ""}</span>
+          ${icon}${name}<span class="slot" data-slot="${id}"></span>
         </a>`)}</nav>`)}
     <div class="me">
       <span class="avatar" aria-hidden="true">${(me.username || "?").slice(0, 1).toUpperCase()}</span>
@@ -81,8 +81,7 @@ export function updateStatus(stats) {
     pill.querySelector(".lbl").textContent = !stats.client_ok ? "Client offline"
       : stats.downloading ? `${stats.downloading} downloading · ${rate(stats.down_rate)}` : "Nothing downloading";
   }
-  const ext = (id) => (isClassic(links[id] || "") ? html`<span class="ext" title="Opens in the classic UI">${icons.external}</span>` : "");
-  const slot = (id, markup) => { const el = $(`#side [data-slot="${id}"]`); if (el) mount(el, html`${markup}${ext(id)}`); };
+  const slot = (id, markup) => { const el = $(`#side [data-slot="${id}"]`); if (el) mount(el, markup); };
   if (stats) {
     slot("activity", stats.downloading ? html`<span class="pill">${stats.downloading}</span>` : "");
     slot("wanted", html`<span class="count">${stats.wanted}</span>`);

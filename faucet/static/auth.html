@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sign in · Faucet</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;display=swap">
+<link rel="stylesheet" href="/static/app/styles/tokens.css">
+<link rel="stylesheet" href="/static/app/styles/app.css">
+<script type="module" src="/static/app/auth.js"></script>
+</head>
+<body class="auth">
+<main class="auth-card" aria-labelledby="auth-title">
+  <div class="auth-brand">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#D9A441" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3c3 4 6 7.2 6 10.5A6 6 0 0 1 6 13.5C6 10.2 9 7 12 3z"/></svg>
+    <b>Faucet</b>
+  </div>
+  <h1 id="auth-title">Sign in</h1>
+  <p class="auth-sub" id="auth-sub">Your shows and movies, hunted, sorted and ready.</p>
+  <div class="seg auth-tabs" id="auth-tabs" role="group" aria-label="Sign in or register">
+    <button type="button" data-mode="login" aria-pressed="true">Sign in</button>
+    <button type="button" data-mode="register" aria-pressed="false">Request an account</button>
+  </div>
+  <form id="auth-form" class="stack" novalidate>
+    <label class="fld" id="row-user">Username
+      <input class="field" id="username" name="username" autocomplete="username" required></label>
+    <label class="fld" id="row-email" hidden>Email (optional)
+      <input class="field" id="email" type="email" name="email" autocomplete="email"></label>
+    <label class="fld"><span id="lbl-pass">Password</span>
+      <input class="field" id="password" type="password" name="password" autocomplete="current-password" required></label>
+    <button class="btn" type="submit" id="submit">Sign in</button>
+    <p class="auth-msg" id="msg" role="status" aria-live="polite"></p>
+  </form>
+  <p class="auth-hint" id="hint"></p>
+</main>
+<noscript>Faucet needs JavaScript.</noscript>
+</body>
+</html>
