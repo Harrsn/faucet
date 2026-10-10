@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.6.1 — 2026-10-10
+
+### Fixed
+
+- **Indexer links that redirect to a magnet now add.** Jackett's download
+  link for a public tracker answers `302 Location: magnet:?…`; following
+  that with `requests` raised "No connection adapters were found", so the
+  grab failed. Trackers whose results carry no magnet URL (EZTV and 1337x
+  among them) could never be grabbed from. Redirects are now followed by
+  hand for Transmission and Deluge, and a response that isn't a torrent
+  file is refused instead of being sent to the client.
+- **A failed add backs the want off** like a fruitless search. It used to be
+  retried every tick, writing a `grab_failed` history row each time —
+  38,731 rows (50 MB of the 53 MB database) in September.
+- **History retention**: `HISTORY_DAYS` (365), and `HISTORY_FAILED_DAYS` (14)
+  for failure noise; title/detail capped at 500 characters. The first tick
+  after upgrading removes the backlog and the daily VACUUM reclaims it.
+
 ## 1.6.0 — 2026-10-10
 
 Full-repo review: hunt correctness, security hardening, ops visibility.
