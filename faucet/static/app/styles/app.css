@@ -574,3 +574,8 @@ body.auth { min-height: 100vh; display: grid; place-items: center; padding: 24px
 .pk-row:first-child { border-top: 0; }
 .pk-row .fname { flex: 1 1 220px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .pk-row .fname .muted { font-size: 12.5px; }
+.frow.grab { align-items: flex-start; }
+.frow.grab .when { min-width: 118px; padding-top: 2px; }
+.frow.grab .fname { gap: 3px; }
+.frow.grab .relname { font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.frow.grab .fname .muted { font-size: 12.5px; }

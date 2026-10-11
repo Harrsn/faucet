@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (Phase 8)
+## 2.4.0 — 2026-10-11
 
 ### Added
 
@@ -33,6 +33,18 @@
   `GET/POST /api/me/passkeys`, `POST /api/me/passkeys/options`,
   `PATCH/DELETE /api/me/passkeys/{id}`. New dependency: `webauthn` (Duo's
   py_webauthn), pinned with its own dependencies.
+
+- **Grab history** (Activity → Grabs): every grab of the last 30 days —
+  automatic, season pack or manual — with the show or movie it was for,
+  tracker, seeders and size, *why it was picked* (for automatic grabs: how
+  many releases were found, how many survived, and what was skipped — e.g.
+  "picked from 4 of 11 found; skipped 2 wrong show, 5 too few seeders") and
+  what became of it: done, a problem (stalled, failed, flagged, couldn't be
+  added), removed, or still downloading. Filterable. `GET /api/grabs`.
+- **Blocklist** (Activity → Blocklist): every release Faucet won't grab
+  again, "Went wrong" first (stalled, failed, flagged), with *Allow again*
+  for one blocked by mistake. `GET /api/blocklist`,
+  `DELETE /api/blocklist/{id}`.
 
 ### Changed
 

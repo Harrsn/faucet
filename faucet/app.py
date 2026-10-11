@@ -2131,6 +2131,36 @@ def _public_base(request) -> str:
     return f"{'https' if netutil.is_https(request) else 'http'}://{host}"
 
 
+@app.get("/api/grabs")
+def api_grabs(days: int = Query(30, ge=1, le=365), limit: int = Query(300, ge=1, le=1000),
+              q: str = Query("", max_length=200)):
+    """Every grab — automatic, season pack, manual — with why it was picked
+    (for automatic ones: found / kept / rejected-by-reason, tracker, seeders)
+    and what became of it (done, problem, removed, still pending)."""
+    from . import grabhistory
+    return {"grabs": grabhistory.grabs(days, limit, q.strip())}
+
+
+@app.get("/api/blocklist")
+def api_blocklist(filter: str = Query("problems", pattern="^(problems|all)$"),
+                  q: str = Query("", max_length=200)):
+    """Releases the hunter won't grab again. 'problems' = the ones that went
+    wrong (stalled, failed, flagged); 'all' includes every past grab."""
+    from . import grabhistory
+    return grabhistory.blocklist(filter == "problems", q.strip())
+
+
+@app.delete("/api/blocklist/{entry_id}")
+def api_blocklist_allow(entry_id: int):
+    """Allow a release again (e.g. a stall that was the tracker's fault)."""
+    from . import grabhistory
+    title = grabhistory.allow(entry_id)
+    if title is None:
+        raise HTTPException(404, "Not on the blocklist")
+    log.info("blocklist: allowed %s again", title)
+    return {"status": "ok", "release": title}
+
+
 @app.get("/api/alerts")
 def api_alerts():
     """Conditions that need attention right now (also on Home for admins)."""
