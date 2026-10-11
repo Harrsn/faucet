@@ -143,6 +143,15 @@ async def _auth_gate(request: _Request, call_next):
             return _JSONResponse({"detail": "Admin access required."}, status_code=403)
         from fastapi.responses import RedirectResponse as _Redirect
         return _Redirect(url="/", status_code=302)
+    # admins must have two-factor sign-in: until they do, the API only answers
+    # what setting it up needs (pages still load, so the app can walk them
+    # through it)
+    if (user.get("role") == "admin" and path.startswith("/api/")
+            and not path.startswith(("/api/me/2fa", "/api/auth/"))):
+        from . import mfa
+        if mfa.required_for(user) and not mfa.enabled(user["id"]):
+            return _JSONResponse({"detail": "Set up two-factor sign-in first.",
+                                  "code": "mfa_setup_required"}, status_code=403)
     request.state.user = user
     return await call_next(request)
 

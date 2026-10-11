@@ -44,3 +44,6 @@ ignore = [
 # app.py wires logging, the DB and the auth gate before importing routers
 "faucet/app.py" = ["E402"]
 "tests/*" = ["E401", "E702", "E741", "F841", "B"]
+
+[tool.pytest.ini_options]
+markers = ["requires_admin_2fa: run with two-factor required for admins (the production default)"]

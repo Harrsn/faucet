@@ -193,6 +193,19 @@ def admin_set_libraries(uid: int, body: LibraryAccessBody, request: Request,
     return {"status": "ok"}
 
 
+@router.post("/api/admin/users/{uid}/2fa/reset")
+def admin_reset_mfa(uid: int, request: Request, admin: dict = Depends(require_admin)):
+    """Turn off someone's two-factor sign-in (lost phone). Admins are asked
+    to set it up again at their next sign-in."""
+    verify_csrf(request)
+    from . import mfa
+    if not auth.get_user(uid):
+        raise HTTPException(404, "No such user")
+    mfa.disable(uid)
+    log.info("two-factor sign-in reset for user %s by %s", uid, admin["username"])
+    return {"status": "ok"}
+
+
 @router.post("/api/admin/users/{uid}/autoapprove")
 def admin_set_autoapprove(uid: int, request: Request, enabled: int,
                           admin: dict = Depends(require_admin)):
@@ -289,9 +302,12 @@ def auth_me(request: Request):
     u = current_user(request)
     if not u:
         return {"authenticated": False, "setup_needed": auth.user_count() == 0}
+    from . import mfa
+    on = mfa.enabled(u["id"])
     return {"authenticated": True, "user": {
         "id": u["id"], "username": u["username"], "email": u.get("email"),
-        "role": u["role"], "status": u["status"]}}
+        "role": u["role"], "status": u["status"], "mfa": on},
+        "mfa_setup_required": mfa.required_for(u) and not on}
 
 
 @router.post("/api/auth/register")
@@ -329,11 +345,112 @@ def auth_login(body: LoginIn, request: Request, response: Response):
             netutil.login_failed(ip, body.username)
             log.warning("failed login for %r from %s", body.username[:60], ip)
         raise HTTPException(401, err)
+    from . import mfa
+    if mfa.enabled(user["id"]):
+        # password is right; the session waits for the code (a short-lived,
+        # signed ticket carries the step across)
+        return {"status": "mfa_required", "ticket": mfa.issue_ticket(user["id"])}
     netutil.login_succeeded(ip, body.username)
     ua = request.headers.get("user-agent", "")
     signed = auth.create_session(user["id"], ip, ua)
     _set_session_cookies(response, signed, _secure_request(request))
-    return {"status": "ok", "user": {"username": user["username"], "role": user["role"]}}
+    return {"status": "ok", "user": {"username": user["username"], "role": user["role"]},
+            "mfa_setup_required": mfa.required_for(user)}
+
+
+class MfaLoginIn(BaseModel):
+    ticket: str
+    code: str
+
+
+@router.post("/api/auth/login/mfa")
+def auth_login_mfa(body: MfaLoginIn, request: Request, response: Response):
+    """Second step: an authenticator code (or a recovery code) for the ticket
+    the password step returned."""
+    from . import mfa, netutil
+    ip = netutil.client_ip(request)
+    uid = mfa.redeem_ticket(body.ticket)
+    user = auth.get_user(uid) if uid else None
+    if not user or user.get("status") != "active":
+        raise HTTPException(401, "That sign-in expired — enter your password again.")
+    wait = netutil.login_blocked(ip, user["username"])
+    if wait:
+        raise _retry_after(wait)
+    kind = mfa.verify(user["id"], body.code)
+    if not kind:
+        netutil.login_failed(ip, user["username"])
+        log.warning("wrong two-factor code for %r from %s", user["username"][:60], ip)
+        raise HTTPException(401, "That code didn't work. Codes change every 30 seconds.")
+    netutil.login_succeeded(ip, user["username"])
+    signed = auth.create_session(user["id"], ip, request.headers.get("user-agent", ""))
+    _set_session_cookies(response, signed, _secure_request(request))
+    left = mfa.status(user["id"])["recovery_left"]
+    return {"status": "ok", "user": {"username": user["username"], "role": user["role"]},
+            "used": kind, "recovery_left": left}
+
+
+# ── two-factor management (the signed-in user's own) ──
+class MfaPasswordIn(BaseModel):
+    password: str
+
+
+class MfaEnableIn(BaseModel):
+    code: str
+
+
+@router.get("/api/me/2fa")
+def me_mfa(user: dict = Depends(require_user)):
+    from . import mfa
+    return {**mfa.status(user["id"]), "required": mfa.required_for(user)}
+
+
+@router.post("/api/me/2fa/setup")
+def me_mfa_setup(body: MfaPasswordIn, request: Request, user: dict = Depends(require_user)):
+    """Start setup: a new secret as a QR code (and as text). Needs the
+    password, so a borrowed signed-in browser can't bind its own phone."""
+    verify_csrf(request)
+    from . import mfa
+    if not auth.verify_password(body.password, user["pw_hash"]):
+        raise HTTPException(400, "Password is incorrect.")
+    secret = mfa.begin(user["id"])
+    uri = mfa.otpauth_uri(secret, user["username"], request.url.hostname or "faucet")
+    return {"secret": secret, "uri": uri, "qr_svg": mfa.qr_svg(uri)}
+
+
+@router.post("/api/me/2fa/enable")
+def me_mfa_enable(body: MfaEnableIn, request: Request, user: dict = Depends(require_user)):
+    verify_csrf(request)
+    from . import mfa
+    codes = mfa.confirm(user["id"], body.code)
+    if codes is None:
+        raise HTTPException(400, "That code didn't match — check the time on your phone and try the next one.")
+    log.info("two-factor sign-in enabled for %s", user["username"])
+    return {"enabled": True, "recovery_codes": codes}
+
+
+@router.post("/api/me/2fa/recovery")
+def me_mfa_recovery(body: MfaPasswordIn, request: Request, user: dict = Depends(require_user)):
+    verify_csrf(request)
+    from . import mfa
+    if not auth.verify_password(body.password, user["pw_hash"]):
+        raise HTTPException(400, "Password is incorrect.")
+    if not mfa.enabled(user["id"]):
+        raise HTTPException(400, "Two-factor sign-in isn't on.")
+    return {"recovery_codes": mfa.new_recovery_codes(user["id"])}
+
+
+@router.post("/api/me/2fa/disable")
+def me_mfa_disable(body: MfaPasswordIn, request: Request, user: dict = Depends(require_user)):
+    verify_csrf(request)
+    from . import mfa
+    if mfa.required_for(user):
+        raise HTTPException(400, "Admins must keep two-factor sign-in on. Set it up again "
+                                 "on a new device instead.")
+    if not auth.verify_password(body.password, user["pw_hash"]):
+        raise HTTPException(400, "Password is incorrect.")
+    mfa.disable(user["id"])
+    log.info("two-factor sign-in disabled by %s", user["username"])
+    return {"enabled": False}
 
 
 @router.post("/api/auth/logout")

@@ -21,6 +21,7 @@ export async function render(el, ctx) {
       <span class="muted">${u.email || "no email"} · ${u.last_login ? `last seen ${ago(u.last_login)}` : "never signed in"}</span></span>
     <span class="ubadges"><span class="status ${u.status === "active" ? "have" : u.status === "pending" ? "upgrade" : "skipped"}">${u.status}</span>
       <span class="tagpill">${u.role === "admin" ? "Admin" : "Member"}</span>
+      ${u.mfa ? html`<span class="tagpill good">2FA</span>` : u.role === "admin" ? html`<span class="tagpill warn">no 2FA yet</span>` : ""}
       ${u.role !== "admin" && u.can_autoapprove ? html`<span class="tagpill good">requests auto-approved</span>` : ""}
       ${u.role !== "admin" && access(u) ? html`<span class="tagpill">sees ${access(u).map((id) => (libs.find((l) => l.id === id) || {}).name || "?").join(", ")}</span>` : ""}</span>
     <details class="menu"><summary aria-label="Actions for ${u.username}">${raw('<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>')}</summary>
@@ -32,6 +33,7 @@ export async function render(el, ctx) {
         ${u.role !== "admin" ? html`<button type="button" data-a="trust" data-u="${u.id}">${u.can_autoapprove ? "Review their requests" : "Auto-approve their requests"}</button>` : ""}
         ${u.role !== "admin" ? html`<button type="button" data-a="libs" data-u="${u.id}">Library access…</button>` : ""}
         <button type="button" data-a="reset" data-u="${u.id}">Password reset link…</button>
+        ${u.mfa && u.id !== me ? html`<button type="button" data-a="mfa" data-u="${u.id}">Reset two-factor…</button>` : ""}
         ${u.id !== me ? html`<button type="button" class="danger" data-a="delete" data-u="${u.id}">Delete…</button>` : ""}
       </div></details></div>`;
   mount(el, html`<div class="stack">
@@ -68,6 +70,9 @@ export async function render(el, ctx) {
       else if (a === "delete") {
         if (!await confirmDialog(`Delete ${u.username}?`, "Their account and sessions are removed. Requests they made stay.", "Delete", true)) return;
         await api.del(`/api/admin/users/${u.id}`);
+      } else if (a === "mfa") {
+        if (!await confirmDialog(`Reset ${u.username}'s two-factor sign-in?`, "For a lost phone: they sign in with just their password" + (u.role === "admin" ? " and are asked to set it up again straight away." : ", and can set it up again from their account."), "Reset", true)) return;
+        await api.post(`/api/admin/users/${u.id}/2fa/reset`);
       } else if (a === "libs") {
         libraryAccess(u, () => render(el, ctx));
         return;

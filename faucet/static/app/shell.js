@@ -47,8 +47,9 @@ export function renderShell(me, active, sections = []) {
           ${icon}<span class="nav-name">${name}</span><span class="slot" data-slot="${id}">${count != null ? html`<span class="count">${count}</span>` : ""}</span>
         </a>`)}</nav>`)}
     <div class="me">
-      <span class="avatar" aria-hidden="true">${(me.username || "?").slice(0, 1).toUpperCase()}</span>
-      <span class="who"><span>${me.username}</span><span>${admin ? "Admin" : "Member"}</span></span>
+      <a class="me-link" href="#/account" title="Account & security">
+        <span class="avatar" aria-hidden="true">${(me.username || "?").slice(0, 1).toUpperCase()}</span>
+        <span class="who"><span>${me.username}</span><span>${admin ? "Admin" : "Member"}</span></span></a>
       <a href="#" data-logout>Sign out</a>
     </div>`);
   $("#side [data-logout]").addEventListener("click", async (e) => {
