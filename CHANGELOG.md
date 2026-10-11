@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (Phase 8)
+## 2.4.0 — 2026-10-11
 
 ### Added
 
@@ -34,6 +34,18 @@
   `PATCH/DELETE /api/me/passkeys/{id}`. New dependency: `webauthn` (Duo's
   py_webauthn), pinned with its own dependencies.
 
+- **Grab history** (Activity → Grabs): every grab of the last 30 days —
+  automatic, season pack or manual — with the show or movie it was for,
+  tracker, seeders and size, *why it was picked* (for automatic grabs: how
+  many releases were found, how many survived, and what was skipped — e.g.
+  "picked from 4 of 11 found; skipped 2 wrong show, 5 too few seeders") and
+  what became of it: done, a problem (stalled, failed, flagged, couldn't be
+  added), removed, or still downloading. Filterable. `GET /api/grabs`.
+- **Blocklist** (Activity → Blocklist): every release Faucet won't grab
+  again, "Went wrong" first (stalled, failed, flagged), with *Allow again*
+  for one blocked by mistake. `GET /api/blocklist`,
+  `DELETE /api/blocklist/{id}`.
+
 ### Changed
 
 - **Dependencies are pinned, with hashes.** The ranges moved to
@@ -53,6 +65,11 @@
   The sign-in page now tells the server it knows the code step; an older
   page signing in to a two-factor account gets "Faucet was updated —
   refresh this page to sign in" instead.
+- CI's lock-file check re-resolved dependencies from scratch, so it failed
+  whenever any library published a new release (pydantic 2.14.1 did, a day
+  after pinning) even with nothing changed. It now resolves starting from the
+  committed locks and only fails when a `.in` file was edited without
+  regenerating its lock.
 - **⋯ menus were cut off** inside lists with rounded corners (Settings →
   Users & requests). Menus now float above the page and open upward when
   there isn't room below.
