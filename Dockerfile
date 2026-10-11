@@ -3,8 +3,10 @@ FROM python:3.12-slim
 # guessit needs nothing exotic; keep the image lean
 WORKDIR /app
 
+# exact, hash-checked versions (requirements.txt is compiled from
+# requirements.in): a rebuild can't silently pick up a new major release
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --require-hashes -r requirements.txt
 
 COPY faucet ./faucet
 COPY pyproject.toml .

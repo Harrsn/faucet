@@ -20,8 +20,14 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -r requirements-dev.txt
+          pip install --require-hashes -r requirements.txt -r requirements-dev.txt
+      - name: Lock files match the .in files
+        run: |
+          pip install uv
+          uv pip compile requirements.in --universal --python-version 3.10 --generate-hashes -o /tmp/req.txt -q
+          uv pip compile requirements-dev.in -c requirements.txt --universal --python-version 3.10 --generate-hashes -o /tmp/req-dev.txt -q
+          diff <(grep -E '^[a-z]' requirements.txt) <(grep -E '^[a-z]' /tmp/req.txt) || { echo "requirements.txt is stale: regenerate it from requirements.in"; exit 1; }
+          diff <(grep -E '^[a-z]' requirements-dev.txt) <(grep -E '^[a-z]' /tmp/req-dev.txt) || { echo "requirements-dev.txt is stale: regenerate it"; exit 1; }
       - name: Lint
         run: ruff check faucet/ tests/
       - name: UI modules parse

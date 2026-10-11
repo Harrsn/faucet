@@ -1,0 +1,8 @@
+# Test/dev dependencies (not needed at runtime), as ranges; constrained to the
+# runtime pins. Regenerate requirements-dev.txt after editing:
+#
+#   uv pip compile requirements-dev.in -c requirements.txt --universal \
+#       --python-version 3.10 --generate-hashes -o requirements-dev.txt
+pytest>=8.0
+httpx>=0.27          # required by fastapi.testclient.TestClient
+ruff==0.17.0          # pinned: CI lint is enforced, a new rule set must be a deliberate bump
