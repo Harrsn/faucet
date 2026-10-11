@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (Phase 7)
+## 2.3.0 — 2026-10-11
 
 ### Added
 
@@ -21,6 +21,15 @@
   can see. Only a hash of the link is stored, so it's shown once; making a
   new one revokes the old, and a disabled account's link stops working.
   `GET/POST/DELETE /api/me/calendar`.
+- **Alerts.** Faucet tells you when something needs attention — once when
+  it starts, once when it clears — through your notification targets, and
+  shows it on Home while it lasts: an indexer failing every search for an
+  hour, a library's (or the downloads folder's) disk under 10% free, the
+  download client not answering for 10 minutes, the same episode or movie
+  stalling three times in a day, and Faucet restarting after an unclean
+  exit (killed, out of memory, power loss — not a deploy). Each check and
+  its threshold is in Settings → Integrations → Alerts, with "Check now".
+  Checks run every five minutes. `GET /api/alerts`, `POST /api/alerts/check`.
 
 ## 2.2.1 — 2026-10-11
 

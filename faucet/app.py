@@ -37,6 +37,12 @@ from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # an unclean previous exit (killed, OOM, power loss) raises an alert
+    try:
+        from . import alerts
+        alerts.started()
+    except Exception as e:                       # noqa: BLE001 - never block startup
+        log.warning("Startup alert check failed: %s", e)
     # start the background auto-grab scheduler
     try:
         from . import scheduler
@@ -47,6 +53,11 @@ async def lifespan(app: FastAPI):
     try:
         from . import scheduler
         scheduler.stop()
+    except Exception:                            # noqa: BLE001
+        pass
+    try:
+        from . import alerts
+        alerts.stopped()
     except Exception:                            # noqa: BLE001
         pass
 
@@ -1969,7 +1980,7 @@ def api_settings_test_tmdb(body: TmdbTest):
 
 # --- behaviour settings (Settings → General / Hunting / Maintenance) ---
 @app.get("/api/settings/tunables")
-def api_tunables(section: str = Query(..., pattern="^(general|hunting|maintenance)$")):
+def api_tunables(section: str = Query(..., pattern="^(general|hunting|maintenance|alerts)$")):
     from . import tunables
     groups: dict = {}
     for k, s in tunables.SPEC.items():
@@ -2107,6 +2118,21 @@ def _public_base(request) -> str:
     from . import netutil
     host = request.headers.get("host") or request.url.netloc
     return f"{'https' if netutil.is_https(request) else 'http'}://{host}"
+
+
+@app.get("/api/alerts")
+def api_alerts():
+    """Conditions that need attention right now (also on Home for admins)."""
+    from . import alerts
+    return {"alerts": alerts.active()}
+
+
+@app.post("/api/alerts/check")
+def api_alerts_check():
+    """Run the checks now instead of waiting for the next few minutes."""
+    from . import alerts
+    r = alerts.check()
+    return {**r, "alerts": alerts.active()}
 
 
 # --- personal calendar feed ---
@@ -2532,6 +2558,11 @@ def api_home(request: _Request):
         with db.connect() as c:
             wanted_total = c.execute("SELECT COUNT(*) FROM wanted WHERE status='wanted'"
                                      ).fetchone()[0]
+        try:
+            from . import alerts as _alerts
+            out["alerts"] = _alerts.active()
+        except Exception:                        # noqa: BLE001 - Home never fails on this
+            out["alerts"] = []
         out["stats"] = {"downloading": active, "down_rate": rate, "client_ok": client_ok,
                         "client_slow": snap["ok"] is False and bool(snap["items"]),
                         "client_as_of": snap["as_of"], "wanted": wanted_total}

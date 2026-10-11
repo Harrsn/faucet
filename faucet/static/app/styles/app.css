@@ -544,3 +544,11 @@ body.auth { min-height: 100vh; display: grid; place-items: center; padding: 24px
 .wiz-nav .spacer { flex: 1; }
 .wiz-done { display: flex; flex-direction: column; gap: 10px; }
 .wiz-done ul { margin: 0; padding-left: 18px; color: var(--text-2); line-height: 1.8; }
+
+/* ══ alerts ═════════════════════════════════════════════════════════════ */
+.alerts { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
+.alert-row { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; padding: 10px 14px; border-radius: var(--r); background: rgb(224 107 87 / .1); border: 1px solid rgb(224 107 87 / .35); }
+.alert-row b { color: var(--bad-text); font-weight: 600; }
+.alert-row .muted { font-size: 13px; }
+.home-alerts { margin: 0; }
+.home-alerts .more { align-self: flex-end; font-size: 13px; }

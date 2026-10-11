@@ -88,7 +88,13 @@ function section(name, meta, more, body) {
 export async function render(view, ctx) {
   const d = await api.get("/api/home");
   ctx.status(d.stats);
-  const parts = [hero(d.hero)];
+  const parts = [];
+  if (d.admin && d.alerts && d.alerts.length) {
+    parts.push(html`<section class="alerts home-alerts" aria-label="Needs attention">
+      ${d.alerts.map((a) => html`<div class="alert-row"><b>⚠ ${a.title}</b><span class="muted">${a.detail}</span></div>`)}
+      <a href="#/settings/integrations" class="more">Alert settings</a></section>`);
+  }
+  parts.push(hero(d.hero));
   parts.push(section("Recently added episodes", "", ["TV Shows", links.shows],
     d.episodes.length ? rail("Recently added episodes", group(d.episodes).slice(0, 24).map(epCard))
       : html`<div class="empty">Nothing added yet. New episodes show up here as they land.</div>`));

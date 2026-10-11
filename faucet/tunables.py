@@ -64,6 +64,22 @@ _SPEC = [
     ("SWEEP_ENABLED", "hunting", "Downloads folder", "Sort finished downloads the hook missed", "bool", True, None, None, "",
      "", None),
 
+    # ── Alerts (Settings → Integrations) ───────────────────────────────────
+    ("ALERT_INDEXER", "alerts", "Send an alert when…", "An indexer is down", "bool", True, None, None, "",
+     "Every search it was asked failed for the time below.", None),
+    ("ALERT_INDEXER_MINUTES", "alerts", "Send an alert when…", "…for", "int", 60, 10, 1440, "minutes", "", None),
+    ("ALERT_DISK", "alerts", "Send an alert when…", "A library's disk is nearly full", "bool", True, None, None, "",
+     "Checks each library's disk and the downloads folder's.", None),
+    ("ALERT_DISK_FREE_PCT", "alerts", "Send an alert when…", "…below", "int", 10, 1, 50, "% free", "", None),
+    ("ALERT_CLIENT", "alerts", "Send an alert when…", "The download client stops answering", "bool", True, None, None, "",
+     "", None),
+    ("ALERT_CLIENT_MINUTES", "alerts", "Send an alert when…", "…for", "int", 10, 2, 240, "minutes", "", None),
+    ("ALERT_STALLS", "alerts", "Send an alert when…", "The same episode or movie keeps stalling", "bool", True, None, None, "",
+     "Its releases are probably dead.", None),
+    ("ALERT_STALL_COUNT", "alerts", "Send an alert when…", "…this many times in a day", "int", 3, 2, 20, "", "", None),
+    ("ALERT_CRASH", "alerts", "Send an alert when…", "Faucet restarted unexpectedly", "bool", True, None, None, "",
+     "Killed, out of memory, or the host lost power — not a normal deploy or restart.", None),
+
     # ── Maintenance ────────────────────────────────────────────────────────
     ("SUPERSEDED_ACTION", "maintenance", "Library", "After an upgrade lands", "choice", "move", None, None, "",
      "Move parks the old copy in _superseded/ beside its library (reversible).",

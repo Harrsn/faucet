@@ -4,6 +4,7 @@
 import { api } from "../../api.js";
 import { html, mount, raw, stamp } from "../../dom.js";
 import { toast } from "../../ui/toast.js";
+import { tunablesForm } from "../../ui/tunables.js";
 
 const CLIENTS = [["transmission", "Transmission"], ["qbittorrent", "qBittorrent"], ["deluge", "Deluge"]];
 
@@ -105,12 +106,38 @@ export async function render(el) {
         <div class="acts"><button class="btn" type="button" data-nsave>Save events</button></div>
       </article>
 
+      <article class="panel integ" data-card="alerts">
+        <div class="integ-h"><h3>Alerts</h3>
+          <button class="btn line" type="button" data-acheck>Check now</button></div>
+        <p class="muted" style="margin:0 0 4px">Sent to the notification targets above — once when a problem starts and once when it clears — and shown on Home while they last.</p>
+        <div data-active></div>
+        <div class="stack" data-alertform></div>
+      </article>
+
       <article class="panel integ dim">
         <div class="integ-h"><h3>Media server · Plex</h3><span class="muted">coming later</span></div>
         <p class="muted" style="margin:0">Library refreshes after a download lands and “recently added” from Plex are planned for a later phase.</p>
       </article>
     </div>`);
     wire();
+    alertsCard().catch((err) => toast(err.message, "err"));
+  }
+
+  async function alertsCard() {
+    const showActive = (list) => mount(el.querySelector('[data-card="alerts"] [data-active]'), list.length
+      ? html`<div class="alerts">${list.map((a) => html`<div class="alert-row"><b>${a.title}</b><span class="muted">${a.detail}</span></div>`)}</div>`
+      : html`<p class="istatus ok" style="margin:6px 0"><span class="dot"></span>Nothing needs attention.</p>`);
+    showActive((await api.get("/api/alerts")).alerts);
+    await tunablesForm(el.querySelector("[data-alertform]"), "alerts");
+    el.querySelector("[data-acheck]").addEventListener("click", async (e) => {
+      e.target.disabled = true;
+      try {
+        const r = await api.post("/api/alerts/check");
+        showActive(r.alerts);
+        toast(r.fired || r.cleared ? `${r.fired} new, ${r.cleared} cleared.` : "Checked — no change.");
+      } catch (err) { toast(err.message, "err"); }
+      e.target.disabled = false;
+    });
   }
 
   const val = (card, k) => {
