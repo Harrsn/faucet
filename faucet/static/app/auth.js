@@ -1,6 +1,8 @@
 // Sign-in page: sign in, request an account, set a new password from a reset
 // link — and on a fresh install, create the first (admin) account, which
 // starts the setup wizard.
+import * as wa from "./webauthn.js";
+
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 let mode = location.pathname === "/reset" && params.get("token") ? "reset"
@@ -67,9 +69,31 @@ function render() {
   $("row-user").hidden = mode === "reset" && !firstRun;
   $("row-email").hidden = !(mode === "register" || firstRun);
   document.querySelectorAll("#auth-tabs [data-mode]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
+  $("passkey").hidden = !(wa.supported() && mode === "login" && !firstRun);
   $("hint").textContent = firstRun ? "This account can do everything; you can add members later." : "";
   msg("");
 }
+
+// ── passkeys ──
+let conditional = null;     // the quiet "suggest my passkey in the username field" request
+
+async function passkeySignIn(mediation) {
+  const opts = await post("/api/auth/passkey/options", {});
+  if (mediation === "conditional") conditional = new AbortController();
+  const credential = await wa.get(opts.options, mediation === "conditional"
+    ? { mediation, signal: conditional.signal } : {});
+  if (!credential) return;
+  const d = await post("/api/auth/passkey", { challenge_id: opts.challenge_id, credential });
+  location.href = d.mfa_setup_required ? "/#/account" : "/";
+}
+
+$("passkey").addEventListener("click", async () => {
+  if (conditional) { conditional.abort(); conditional = null; }
+  $("passkey").disabled = true;
+  try { await passkeySignIn(); }
+  catch (err) { if (!wa.cancelled(err)) msg(err.message, "err"); }
+  finally { $("passkey").disabled = false; }
+});
 
 $("alt").addEventListener("click", (e) => { e.preventDefault(); recovery = !recovery; codeStep(); });
 $("code").addEventListener("input", (e) => {
@@ -137,6 +161,10 @@ $("auth-form").addEventListener("submit", async (e) => {
     firstRun = !!d.setup_needed;
   } catch { /* offline: show the form anyway */ }
   render();
+  if (mode === "login" && !firstRun && await wa.conditionalAvailable()) {
+    // passkeys offered right in the username field's autofill
+    passkeySignIn("conditional").catch((err) => { if (!wa.cancelled(err)) msg(err.message, "err"); });
+  }
   if (params.get("retry")) {
     msg("Something interrupted signing in — please try again.", "err");
     history.replaceState(null, "", "/login");

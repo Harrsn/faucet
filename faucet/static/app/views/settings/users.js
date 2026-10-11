@@ -2,6 +2,7 @@
 import { api, qs } from "../../api.js";
 import { ago, html, mount, raw } from "../../dom.js";
 import { confirmDialog, openModal } from "../../ui/modal.js";
+import { wireMenu } from "../../ui/menu.js";
 import { toast } from "../../ui/toast.js";
 
 const access = (u) => {
@@ -33,7 +34,7 @@ export async function render(el, ctx) {
         ${u.role !== "admin" ? html`<button type="button" data-a="trust" data-u="${u.id}">${u.can_autoapprove ? "Review their requests" : "Auto-approve their requests"}</button>` : ""}
         ${u.role !== "admin" ? html`<button type="button" data-a="libs" data-u="${u.id}">Library access…</button>` : ""}
         <button type="button" data-a="reset" data-u="${u.id}">Password reset link…</button>
-        ${u.mfa && u.id !== me ? html`<button type="button" data-a="mfa" data-u="${u.id}">Reset two-factor…</button>` : ""}
+        ${u.mfa && u.id !== me ? html`<button type="button" data-a="mfa" data-u="${u.id}">Reset two-factor & passkeys…</button>` : ""}
         ${u.id !== me ? html`<button type="button" class="danger" data-a="delete" data-u="${u.id}">Delete…</button>` : ""}
       </div></details></div>`;
   mount(el, html`<div class="stack">
@@ -51,13 +52,7 @@ export async function render(el, ctx) {
       </form></div>
   </div>`);
 
-  el.querySelectorAll("details.menu").forEach((m) => {
-    m.addEventListener("toggle", () => {
-      if (!m.open) return;
-      const close = (e) => { if (!m.contains(e.target)) { m.open = false; document.removeEventListener("click", close, true); } };
-      document.addEventListener("click", close, true);
-    });
-  });
+  el.querySelectorAll("details.menu").forEach(wireMenu);
   el.querySelectorAll("[data-a]").forEach((b) => b.addEventListener("click", async () => {
     const u = d.users.find((x) => x.id === +b.dataset.u);
     const a = b.dataset.a;
@@ -71,7 +66,7 @@ export async function render(el, ctx) {
         if (!await confirmDialog(`Delete ${u.username}?`, "Their account and sessions are removed. Requests they made stay.", "Delete", true)) return;
         await api.del(`/api/admin/users/${u.id}`);
       } else if (a === "mfa") {
-        if (!await confirmDialog(`Reset ${u.username}'s two-factor sign-in?`, "For a lost phone: they sign in with just their password" + (u.role === "admin" ? " and are asked to set it up again straight away." : ", and can set it up again from their account."), "Reset", true)) return;
+        if (!await confirmDialog(`Reset ${u.username}'s two-factor sign-in?`, "For a lost phone: their passkeys are removed and they sign in with just their password" + (u.role === "admin" ? " and are asked to set it up again straight away." : ", and can set it up again from their account."), "Reset", true)) return;
         await api.post(`/api/admin/users/${u.id}/2fa/reset`);
       } else if (a === "libs") {
         libraryAccess(u, () => render(el, ctx));
