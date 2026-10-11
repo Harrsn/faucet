@@ -19,6 +19,18 @@
   `docker exec faucet python -m faucet.mfa disable <username>`.
 - **Account page**: two-factor and password in one place.
 
+### Changed
+
+- **Dependencies are pinned, with hashes.** The ranges moved to
+  `requirements.in` / `requirements-dev.in`; `requirements.txt` and
+  `requirements-dev.txt` are compiled from them (`uv pip compile --universal`,
+  valid on Python 3.10–3.12) with exact versions and hashes, and the image and
+  CI install with `--require-hashes`. A rebuild can no longer pick up a new
+  major release on its own (2.3.0's image had silently moved to Starlette
+  1.x); CI fails if the lock files drift from the `.in` files, and
+  Dependabot proposes upgrades (pip weekly, the base image weekly, Actions
+  monthly) as pull requests.
+
 ### Fixed
 
 - A sign-in page loaded before two-factor existed sent the password, took

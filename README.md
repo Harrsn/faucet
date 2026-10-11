@@ -125,11 +125,13 @@ Connection and behaviour settings found in the environment (`JACKETT_URL`, `CLIE
 ## For developers
 
 ```bash
-pip install -r requirements.txt -r requirements-dev.txt
+pip install --require-hashes -r requirements.txt -r requirements-dev.txt
 pytest -q
 ruff check faucet tests
 for f in $(find faucet/static/app -name '*.js'); do node --check "$f"; done
 ```
+
+Dependencies are pinned with hashes: edit the ranges in `requirements.in` / `requirements-dev.in` and regenerate the `.txt` files with the `uv pip compile` command at the top of each (CI fails if they drift). Dependabot proposes upgrades as pull requests.
 
 FastAPI and SQLite on the back end; the interface is plain ES modules served as-is — no bundler, no framework, no `node_modules`. Download clients implement `faucet/clients/base.py`, and everything the interface does goes through the JSON API under `/api`. Issues and pull requests are welcome.
 
