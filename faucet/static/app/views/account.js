@@ -2,13 +2,14 @@
 // codes) and password. Admins without two-factor land here until it's on.
 import { api } from "../api.js";
 import { html, mount, raw } from "../dom.js";
-import { openModal } from "../ui/modal.js";
+import { confirmDialog, openModal } from "../ui/modal.js";
 import { toast } from "../ui/toast.js";
+import * as wa from "../webauthn.js";
 
 export const title = "Account";
 
 export async function render(el, ctx) {
-  const s = await api.get("/api/me/2fa");
+  const [s, pk] = await Promise.all([api.get("/api/me/2fa"), api.get("/api/me/passkeys")]);
   const left = sessionStorage.getItem("faucet-recovery-left");
   sessionStorage.removeItem("faucet-recovery-left");
   mount(el, html`<div class="page" style="max-width:860px">
@@ -27,6 +28,18 @@ export async function render(el, ctx) {
           <button class="btn line" type="button" data-codes>New recovery codes</button>
           ${s.required ? "" : html`<button class="btn line" type="button" data-off>Turn off</button>`}</div>`
         : html`<div class="acts"><button class="btn" type="button" data-setup>Set up two-factor sign-in</button></div>`}
+    </section>
+
+    <section class="panel stack" aria-labelledby="pk-h">
+      <div class="integ-h"><h3 id="pk-h">Passkeys</h3>
+        ${wa.supported() ? html`<button class="btn line" type="button" data-addpk>Add a passkey</button>` : ""}</div>
+      <p class="muted" style="margin:0">Sign in with Face ID, Touch ID, Windows Hello, a security key or your password manager — no password or code. They can't be phished, and they work alongside two-factor rather than replacing it.</p>
+      ${!wa.supported() ? html`<p class="lib-warn" style="margin:0">This browser doesn't support passkeys.</p>` : ""}
+      ${pk.passkeys.length ? html`<div class="pk-list">${pk.passkeys.map((p) => html`<div class="pk-row">
+          <span class="fname"><b>${p.name}</b><span class="muted">added ${new Date(p.created_ts).toLocaleDateString()}${p.last_used ? ` · last used ${new Date(p.last_used).toLocaleString()}` : " · not used yet"}${p.synced ? " · synced across your devices" : " · on one device"}</span></span>
+          <span class="acts"><button class="btn line small" type="button" data-pkren="${p.id}">Rename</button>
+            <button class="btn line small" type="button" data-pkdel="${p.id}">Remove</button></span></div>`)}</div>`
+        : html`<p style="margin:0" class="muted">No passkeys yet.</p>`}
     </section>
 
     <section class="panel stack" aria-labelledby="pw-h">
@@ -56,6 +69,35 @@ export async function render(el, ctx) {
     toast("Two-factor sign-in is off.");
     again();
   }));
+  const add = el.querySelector("[data-addpk]");
+  if (add) add.addEventListener("click", () => withPassword("Add a passkey", "First, confirm it's you — then your device asks for your face, fingerprint or PIN.", async (password, close) => {
+    const o = await api.post("/api/me/passkeys/options", { password });
+    close();
+    let credential;
+    try { credential = await wa.create(o.options); }
+    catch (err) {
+      if (wa.cancelled(err)) { toast("Passkey not added."); return; }
+      throw err;
+    }
+    const guess = /iPhone|iPad|Mac/.test(navigator.userAgent) ? "Apple device"
+      : /Android/.test(navigator.userAgent) ? "Android phone" : /Windows/.test(navigator.userAgent) ? "Windows Hello" : "Passkey";
+    const name = (await askName("Name this passkey", "So you can tell them apart — e.g. iPhone, Bitwarden, work laptop.", guess)) || guess;
+    const r = await api.post("/api/me/passkeys", { challenge_id: o.challenge_id, credential, name });
+    toast(`Added "${r.name}". Next time, use "Sign in with a passkey".`);
+    again();
+  }));
+  el.querySelectorAll("[data-pkren]").forEach((b) => b.addEventListener("click", async () => {
+    const cur = pk.passkeys.find((p) => p.id === Number(b.dataset.pkren));
+    const name = await askName("Rename passkey", "", cur.name);
+    if (!name) return;
+    try { await api.patch(`/api/me/passkeys/${cur.id}`, { name }); again(); } catch (err) { toast(err.message, "err"); }
+  }));
+  el.querySelectorAll("[data-pkdel]").forEach((b) => b.addEventListener("click", async () => {
+    const cur = pk.passkeys.find((p) => p.id === Number(b.dataset.pkdel));
+    if (!await confirmDialog(`Remove "${cur.name}"?`, "It can't sign you in any more. Your device may still show it — delete it there too.", "Remove", true)) return;
+    try { await api.del(`/api/me/passkeys/${cur.id}`); toast("Passkey removed."); again(); } catch (err) { toast(err.message, "err"); }
+  }));
+
   el.querySelector("[data-pw]").addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = e.target;
@@ -131,5 +173,22 @@ function showCodes(codes, done, first = false) {
   m.body.querySelector("[data-done]").addEventListener("click", () => {
     m.close();
     if (first) { location.hash = "#/"; location.reload(); } else done();
+  });
+}
+
+function askName(title, sub, initial) {
+  return new Promise((resolve) => {
+    let done = false;
+    const m = openModal({ title, sub, body: html`<form class="stack" data-f>
+      <label class="fld">Name<input class="field" name="name" maxlength="60" value="${initial}" required data-autofocus></label>
+      <div class="acts" style="justify-content:flex-end"><button class="btn" type="submit">Save</button></div></form>`,
+      onClose: () => { if (!done) resolve(null); } });
+    m.body.querySelector("[data-f]").addEventListener("submit", (e) => {
+      e.preventDefault();
+      done = true;
+      const v = e.target.name.value.trim();
+      m.close();
+      resolve(v || null);
+    });
   });
 }

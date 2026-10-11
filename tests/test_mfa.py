@@ -44,9 +44,10 @@ def _enable(env, c, password):
     assert r["uri"].startswith("otpauth://totp/") and "<svg" in r["qr_svg"]
     wrong = "000000" if env.mfa.code_at(r["secret"]) != "000000" else "111111"
     assert c.post("/api/me/2fa/enable", json={"code": wrong}).status_code == 400
-    out = c.post("/api/me/2fa/enable", json={"code": env.mfa.code_at(r["secret"])}).json()
+    used = env.mfa.code_at(r["secret"])
+    out = c.post("/api/me/2fa/enable", json={"code": used}).json()
     assert out["enabled"] and len(out["recovery_codes"]) == 10
-    return r["secret"], out["recovery_codes"]
+    return r["secret"], out["recovery_codes"], used
 
 
 def test_two_step_login_recovery_and_replay(env):
@@ -55,15 +56,17 @@ def test_two_step_login_recovery_and_replay(env):
     c.post("/api/auth/login", json={"username": "admin", "password": "adminpass123"})
     env.csrf(c)
     assert c.post("/api/me/2fa/setup", json={"password": "wrong"}).status_code == 400
-    secret, codes = _enable(env, c, "adminpass123")
+    secret, codes, used = _enable(env, c, "adminpass123")
 
     d = env.client()
     r = d.post("/api/auth/login", json={"username": "admin", "password": "adminpass123"}).json()
     assert r["status"] == "mfa_required" and "faucet_session" not in d.cookies   # no session yet
     assert d.post("/api/auth/login/mfa", json={"ticket": r["ticket"], "code": "123456"}).status_code == 401
     assert d.post("/api/auth/login/mfa", json={"ticket": "forged", "code": "123456"}).status_code == 401
-    # the code used to enable can't be replayed
-    assert d.post("/api/auth/login/mfa", json={"ticket": r["ticket"], "code": env.mfa.code_at(secret)}).status_code == 401
+    # the exact code used to enable can't be replayed (asking code_at() again
+    # here would be flaky: the bcrypt-hashed recovery codes take long enough
+    # that the clock can tick into the next 30-second step — a fresh code)
+    assert d.post("/api/auth/login/mfa", json={"ticket": r["ticket"], "code": used}).status_code == 401
     ok = d.post("/api/auth/login/mfa", json={"ticket": r["ticket"], "code": codes[0]})
     assert ok.status_code == 200 and ok.json()["used"] == "recovery" and ok.json()["recovery_left"] == 9
     assert d.get("/api/auth/me").json()["authenticated"]

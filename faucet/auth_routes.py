@@ -195,13 +195,14 @@ def admin_set_libraries(uid: int, body: LibraryAccessBody, request: Request,
 
 @router.post("/api/admin/users/{uid}/2fa/reset")
 def admin_reset_mfa(uid: int, request: Request, admin: dict = Depends(require_admin)):
-    """Turn off someone's two-factor sign-in (lost phone). Admins are asked
-    to set it up again at their next sign-in."""
+    """Turn off someone's two-factor sign-in and remove their passkeys (lost
+    phone). Admins are asked to set two-factor up again at next sign-in."""
     verify_csrf(request)
-    from . import mfa
+    from . import mfa, passkeys
     if not auth.get_user(uid):
         raise HTTPException(404, "No such user")
     mfa.disable(uid)
+    passkeys.remove_all(uid)          # a lost phone took its passkeys with it
     log.info("two-factor sign-in reset for user %s by %s", uid, admin["username"])
     return {"status": "ok"}
 
@@ -391,6 +392,114 @@ def auth_login_mfa(body: MfaLoginIn, request: Request, response: Response):
     left = mfa.status(user["id"])["recovery_left"]
     return {"status": "ok", "user": {"username": user["username"], "role": user["role"]},
             "used": kind, "recovery_left": left}
+
+
+# ── passkeys ──
+def _rp(request: Request) -> tuple[str, str]:
+    """(relying-party id, expected origin) — the host and URL the browser used."""
+    from . import netutil
+    host = request.headers.get("host") or request.url.netloc
+    scheme = "https" if netutil.is_https(request) else "http"
+    return host.split(":")[0], f"{scheme}://{host}"
+
+
+class PasskeyLoginIn(BaseModel):
+    challenge_id: str
+    credential: dict
+
+
+@router.post("/api/auth/passkey/options")
+def auth_passkey_options(request: Request):
+    from . import passkeys
+    return passkeys.authentication_options(_rp(request)[0])
+
+
+@router.post("/api/auth/passkey")
+def auth_passkey(body: PasskeyLoginIn, request: Request, response: Response):
+    """Sign in with a passkey: the device checked who you are (biometrics or
+    PIN), so this is both factors — no password, no code."""
+    from . import netutil, passkeys
+    ip = netutil.client_ip(request)
+    wait = netutil.login_blocked(ip, "")
+    if wait:
+        raise _retry_after(wait)
+    rp_id, origin = _rp(request)
+    user = passkeys.authenticate(body.challenge_id, body.credential, rp_id, origin)
+    if not user:
+        netutil.login_failed(ip, "")
+        log.warning("failed passkey sign-in from %s", ip)
+        raise HTTPException(401, "That passkey didn't work here. Try again, or sign in with your password.")
+    netutil.login_succeeded(ip, user["username"])
+    signed = auth.create_session(user["id"], ip, request.headers.get("user-agent", ""))
+    _set_session_cookies(response, signed, _secure_request(request))
+    from . import mfa
+    return {"status": "ok", "user": {"username": user["username"], "role": user["role"]},
+            "mfa_setup_required": mfa.required_for(user) and not mfa.enabled(user["id"])}
+
+
+class PasskeyAddIn(BaseModel):
+    challenge_id: str
+    credential: dict
+    name: str = ""
+
+
+class PasskeyRenameIn(BaseModel):
+    name: str
+
+
+@router.get("/api/me/passkeys")
+def me_passkeys(user: dict = Depends(require_user)):
+    from . import passkeys
+    return {"passkeys": passkeys.list_for(user["id"])}
+
+
+@router.post("/api/me/passkeys/options")
+def me_passkey_options(body: MfaPasswordIn, request: Request, user: dict = Depends(require_user)):
+    """Adding a passkey needs the password, like setting up two-factor."""
+    verify_csrf(request)
+    from . import passkeys
+    if not auth.verify_password(body.password, user["pw_hash"]):
+        raise HTTPException(400, "Password is incorrect.")
+    return passkeys.registration_options(user, _rp(request)[0])
+
+
+@router.post("/api/me/passkeys")
+def me_passkey_add(body: PasskeyAddIn, request: Request, user: dict = Depends(require_user)):
+    verify_csrf(request)
+    from . import passkeys
+    rp_id, origin = _rp(request)
+    try:
+        out = passkeys.register(user, body.challenge_id, body.credential, body.name, rp_id, origin)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:                       # noqa: BLE001 - verification failures
+        log.warning("passkey registration failed for %s: %s", user["username"], e)
+        raise HTTPException(400, "Your device's answer didn't check out — try again.")
+    log.info("passkey %r added for %s", out["name"], user["username"])
+    return out
+
+
+@router.patch("/api/me/passkeys/{pid}")
+def me_passkey_rename(pid: int, body: PasskeyRenameIn, request: Request,
+                      user: dict = Depends(require_user)):
+    verify_csrf(request)
+    from . import passkeys
+    try:
+        if not passkeys.rename(user["id"], pid, body.name):
+            raise HTTPException(404, "No such passkey")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"status": "ok"}
+
+
+@router.delete("/api/me/passkeys/{pid}")
+def me_passkey_remove(pid: int, request: Request, user: dict = Depends(require_user)):
+    verify_csrf(request)
+    from . import passkeys
+    if not passkeys.remove(user["id"], pid):
+        raise HTTPException(404, "No such passkey")
+    log.info("passkey %s removed by %s", pid, user["username"])
+    return {"status": "ok"}
 
 
 # ── two-factor management (the signed-in user's own) ──

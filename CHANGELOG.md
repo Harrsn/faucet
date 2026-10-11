@@ -18,6 +18,21 @@
   two-factor) for a lost phone; locked out yourself, on the server:
   `docker exec faucet python -m faucet.mfa disable <username>`.
 - **Account page**: two-factor and password in one place.
+- **Passkeys.** Account → Passkeys → *Add a passkey* (password first), then
+  sign in with Face ID, Touch ID, Windows Hello, a security key or a
+  password manager's passkey: *Sign in with a passkey* on the sign-in page,
+  or pick it from the username field's autofill — no password, no code.
+  The device verifies the person (biometric or PIN, required), so a passkey
+  is both factors. Faucet checks the origin (phishing-resistant), a
+  one-time, five-minute server challenge and the signature counter, and
+  refuses devices that can't verify the user. Account lists each passkey
+  (synced or single-device, last used) to rename or remove; an admin's
+  *Reset two-factor & passkeys* removes them for a lost phone. Admins
+  still need authenticator codes set up — passkeys sit on top.
+  `POST /api/auth/passkey/options`, `POST /api/auth/passkey`,
+  `GET/POST /api/me/passkeys`, `POST /api/me/passkeys/options`,
+  `PATCH/DELETE /api/me/passkeys/{id}`. New dependency: `webauthn` (Duo's
+  py_webauthn), pinned with its own dependencies.
 
 ### Changed
 
@@ -38,6 +53,12 @@
   The sign-in page now tells the server it knows the code step; an older
   page signing in to a two-factor account gets "Faucet was updated —
   refresh this page to sign in" instead.
+- **⋯ menus were cut off** inside lists with rounded corners (Settings →
+  Users & requests). Menus now float above the page and open upward when
+  there isn't room below.
+- A two-factor test could fail about one run in ten (it asked for "the same"
+  code again after enough time to roll into the next 30-second step); it
+  now replays the exact code it used.
 - The code field's auto-submit only works on the code step: a password
   manager filling the (hidden) field as the page loads no longer submits the
   form. Its listeners were also being attached inside `render()`.

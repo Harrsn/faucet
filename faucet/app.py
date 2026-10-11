@@ -97,6 +97,8 @@ def _is_public(path: str) -> bool:
 # State-changing API endpoints that must work WITHOUT a CSRF token because no
 # session (and thus no CSRF cookie) exists yet when they're called.
 _CSRF_EXEMPT = ("/api/auth/login", "/api/auth/register", "/api/auth/reset/consume")
+# (/api/auth/* is public, so the gate never applies CSRF there anyway; the
+# sign-in endpoints — password, code, passkey — have no session to forge)
 
 
 def _csrf_ok(request: _Request) -> bool:
@@ -147,7 +149,7 @@ async def _auth_gate(request: _Request, call_next):
     # what setting it up needs (pages still load, so the app can walk them
     # through it)
     if (user.get("role") == "admin" and path.startswith("/api/")
-            and not path.startswith(("/api/me/2fa", "/api/auth/"))):
+            and not path.startswith(("/api/me/2fa", "/api/me/passkeys", "/api/auth/"))):
         from . import mfa
         if mfa.required_for(user) and not mfa.enabled(user["id"]):
             return _JSONResponse({"detail": "Set up two-factor sign-in first.",

@@ -26,7 +26,7 @@
   </div>
   <form id="auth-form" class="stack" method="post" action="/login" novalidate>
     <label class="fld" id="row-user">Username
-      <input class="field" id="username" name="username" autocomplete="username" required></label>
+      <input class="field" id="username" name="username" autocomplete="username webauthn" required></label>
     <label class="fld" id="row-email" hidden>Email (optional)
       <input class="field" id="email" type="email" name="email" autocomplete="email"></label>
     <label class="fld" id="row-pass"><span id="lbl-pass">Password</span>
@@ -34,6 +34,9 @@
     <label class="fld" id="row-code" hidden><span id="lbl-code">Code</span>
       <input class="field mono code-in" id="code" name="code" autocomplete="one-time-code" inputmode="numeric" maxlength="20"></label>
     <button class="btn" type="submit" id="submit">Sign in</button>
+    <button class="btn line passkey-btn" type="button" id="passkey" hidden>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="4"/><path d="M2 21a7 7 0 0 1 11.5-5.4"/><circle cx="18" cy="15" r="2.5"/><path d="M18 17.5V22m0-2h2"/></svg>
+      Sign in with a passkey</button>
     <p class="auth-msg" id="msg" role="status" aria-live="polite"></p>
   </form>
   <p class="auth-hint" id="hint"></p>
