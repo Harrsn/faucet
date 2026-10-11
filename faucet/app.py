@@ -2429,6 +2429,15 @@ def _shell(name: str):
     return HTMLResponse(body, headers=_NO_STORE)
 
 
+@app.post("/login")
+def auth_page_post():
+    """Only reached if the sign-in script didn't run and the browser submitted
+    the form itself: send it back to the page (POST keeps the password out of
+    the address bar; nothing submitted this way is used)."""
+    from fastapi.responses import RedirectResponse as _Redirect
+    return _Redirect(url="/login?retry=1", status_code=303)
+
+
 @app.get("/login")
 @app.get("/register")
 @app.get("/reset")

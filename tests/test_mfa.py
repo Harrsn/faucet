@@ -29,7 +29,9 @@ def env(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     def client():
-        return TestClient(mods["app"].app, follow_redirects=False)
+        c = TestClient(mods["app"].app, follow_redirects=False)
+        c.headers["X-Faucet-Auth"] = "2"        # what the sign-in page sends
+        return c
 
     def csrf(c):
         c.headers.update({"X-CSRF-Token": c.cookies.get("faucet_csrf")})
@@ -115,3 +117,26 @@ def test_cli_disable(env, capsys):
     assert env.mfa._cli(["x", "disable", "admin"]) == 0
     assert not env.mfa.enabled(1)
     assert env.mfa._cli(["x", "disable", "nobody"]) == 1
+
+
+def test_out_of_date_sign_in_page_is_told_to_refresh(env):
+    """A page loaded before two-factor existed would take 'enter your code' as
+    success and loop back to itself; it gets a message instead."""
+    c = env.client()
+    c.post("/api/auth/register", json={"username": "admin", "password": "adminpass123"})
+    c.post("/api/auth/login", json={"username": "admin", "password": "adminpass123"})
+    env.csrf(c)
+    _enable(env, c, "adminpass123")
+    from fastapi.testclient import TestClient
+    old = TestClient(env.m["app"].app, follow_redirects=False)            # no X-Faucet-Auth
+    r = old.post("/api/auth/login", json={"username": "admin", "password": "adminpass123"})
+    assert r.status_code == 409 and "refresh" in r.json()["detail"]
+    assert "faucet_session" not in old.cookies
+
+
+def test_native_form_post_never_signs_in(env):
+    from fastapi.testclient import TestClient
+    c = TestClient(env.m["app"].app, follow_redirects=False)
+    r = c.post("/login", data={"username": "x", "password": "y"})
+    assert r.status_code == 303 and r.headers["location"] == "/login?retry=1"
+    assert "faucet_session" not in c.cookies

@@ -34,7 +34,10 @@ function codeStep() {
 }
 
 async function post(url, body) {
-  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
+  const r = await fetch(url, { method: "POST",
+    // "this page knows the two-factor step": an out-of-date page that doesn't
+    // send it is told to refresh rather than silently bouncing back here
+    headers: { "Content-Type": "application/json", "X-Faucet-Auth": "2" },
     credentials: "same-origin", body: JSON.stringify(body) });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(typeof d.detail === "string" ? d.detail : `Request failed (${r.status})`);
@@ -63,16 +66,17 @@ function render() {
   $("auth-tabs").hidden = firstRun || mode === "reset";
   $("row-user").hidden = mode === "reset" && !firstRun;
   $("row-email").hidden = !(mode === "register" || firstRun);
-  $("alt").addEventListener("click", (e) => { e.preventDefault(); recovery = !recovery; codeStep(); });
-$("code").addEventListener("input", (e) => {
-  // a full 6-digit code submits itself, like most sign-in pages
-  if (!recovery && /^\d{6}$/.test(e.target.value.trim())) $("auth-form").requestSubmit();
-});
-
-document.querySelectorAll("#auth-tabs [data-mode]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
+  document.querySelectorAll("#auth-tabs [data-mode]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === mode)));
   $("hint").textContent = firstRun ? "This account can do everything; you can add members later." : "";
   msg("");
 }
+
+$("alt").addEventListener("click", (e) => { e.preventDefault(); recovery = !recovery; codeStep(); });
+$("code").addEventListener("input", (e) => {
+  // on the code step, a full 6-digit code submits itself — but never before
+  // it (a password manager can fill the hidden field as the page loads)
+  if (ticket && !recovery && /^\d{6}$/.test(e.target.value.trim())) $("auth-form").requestSubmit();
+});
 
 document.querySelectorAll("#auth-tabs [data-mode]").forEach((b) => b.addEventListener("click", () => {
   mode = b.dataset.mode;
@@ -116,6 +120,7 @@ $("auth-form").addEventListener("submit", async (e) => {
         codeStep();
         return;
       }
+      if (d.status !== "ok") throw new Error("Sign-in didn't finish — refresh the page and try again.");
       location.href = d.mfa_setup_required ? "/#/account" : "/";
     }
   } catch (err) {
@@ -132,5 +137,9 @@ $("auth-form").addEventListener("submit", async (e) => {
     firstRun = !!d.setup_needed;
   } catch { /* offline: show the form anyway */ }
   render();
+  if (params.get("retry")) {
+    msg("Something interrupted signing in — please try again.", "err");
+    history.replaceState(null, "", "/login");
+  }
   (firstRun || mode !== "reset" ? $("username") : $("password")).focus();
 })();

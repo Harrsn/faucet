@@ -346,6 +346,10 @@ def auth_login(body: LoginIn, request: Request, response: Response):
             log.warning("failed login for %r from %s", body.username[:60], ip)
         raise HTTPException(401, err)
     from . import mfa
+    if mfa.enabled(user["id"]) and request.headers.get("x-faucet-auth") != "2":
+        # a sign-in page from before two-factor existed would take the
+        # "enter your code" answer as success and bounce back to itself
+        raise HTTPException(409, "Faucet was updated — refresh this page to sign in.")
     if mfa.enabled(user["id"]):
         # password is right; the session waits for the code (a short-lived,
         # signed ticket carries the step across)
