@@ -866,15 +866,23 @@ _guard_task: asyncio.Task | None = None
 
 
 async def _guard_loop():
-    """Payload check on a short cadence: a 1 GB fake finishes in a couple of
-    minutes, far inside the main tick interval."""
-    from . import safety
+    """Payload check on a short cadence (a 1 GB fake finishes in a couple of
+    minutes, far inside the main tick interval), and alerts every ~5 minutes."""
+    from . import alerts, safety
     await asyncio.sleep(15)
+    n = 0
+    every = max(1, 300 // max(GUARD_INTERVAL, 1))    # alerts about every 5 minutes
     while True:
         try:
             await asyncio.to_thread(safety.check_transfers)
         except Exception as e:                       # noqa: BLE001 - never kill the loop
             log.warning("Safety guard error: %s", e)
+        if n % every == 0:
+            try:
+                await asyncio.to_thread(alerts.check)
+            except Exception as e:                   # noqa: BLE001
+                log.warning("Alert check error: %s", e)
+        n += 1
         await asyncio.sleep(GUARD_INTERVAL)
 
 
