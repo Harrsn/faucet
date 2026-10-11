@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (Phase 9)
+## 2.5.0 — 2026-10-11
 
 ### Added
 
@@ -16,6 +16,13 @@
   any errors. Plex being down never fails a sort. Windows Plex paths work.
   `GET /api/plex`, `POST /api/plex/test`, `PUT /api/plex/pairs`,
   `POST /api/plex/scan`.
+- **Watched status from Plex.** Every 30 minutes (and on *Sync now* in the
+  Plex card) Faucet reads what's been watched in every paired Plex library,
+  matched to Faucet's shows and movies by TMDb id (folder names don't
+  matter). Show pages mark watched episodes and count them per season;
+  movie pages show *Watched* (×n). It mirrors Plex, so un-watching there
+  clears it here. It's the watch history of the Plex account the token
+  belongs to. `POST /api/plex/watched/sync`.
 
 ## 2.4.0 — 2026-10-11
 

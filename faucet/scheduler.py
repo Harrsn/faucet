@@ -823,6 +823,14 @@ def _run_once() -> dict:
     except Exception as e:                       # noqa: BLE001 - never kill the tick
         log.warning("Maintenance error: %s", e)
 
+    # 4d. watched status from Plex (what you've watched shows on show pages)
+    try:
+        from . import plex
+        if plex.enabled():
+            plex.sync_watched()
+    except Exception as e:                       # noqa: BLE001 - never kill the tick
+        log.warning("Plex watched sync error: %s", e)
+
     # 5. housekeeping: purge expired sessions + used/expired reset tokens
     # (they previously accumulated forever)
     try:
