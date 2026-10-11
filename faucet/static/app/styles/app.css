@@ -552,3 +552,17 @@ body.auth { min-height: 100vh; display: grid; place-items: center; padding: 24px
 .alert-row .muted { font-size: 13px; }
 .home-alerts { margin: 0; }
 .home-alerts .more { align-self: flex-end; font-size: 13px; }
+
+/* ══ account / two-factor ═══════════════════════════════════════════════ */
+.me-link { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; color: inherit; border-radius: var(--r-sm); }
+.me-link:hover .who span:first-child { color: #fff; }
+.auth-alt { font-size: 13px; color: var(--accent); align-self: center; }
+.auth-alt[hidden], #row-code[hidden], #row-pass[hidden] { display: none; }
+.code-in { font-size: 22px; letter-spacing: .25em; text-align: center; }
+.mfa-setup { display: grid; grid-template-columns: auto 1fr; gap: 24px; align-items: start; }
+.mfa-setup .qr { background: #fff; padding: 8px; border-radius: var(--r); line-height: 0; }
+.mfa-setup .qr svg { width: 220px; height: 220px; }
+.mfa-setup .secret { display: block; padding: 10px 12px; background: var(--panel-2); border-radius: var(--r-sm); font-size: 14px; letter-spacing: .04em; word-break: break-all; user-select: all; }
+@media (max-width: 640px) { .mfa-setup { grid-template-columns: 1fr; justify-items: center; } }
+.rcodes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 24px; padding: 16px; background: var(--panel-2); border-radius: var(--r); font-size: 15px; user-select: all; }
+.tagpill.warn { color: var(--accent-hi); border-color: rgb(217 164 65 / .45); }

@@ -29,12 +29,15 @@
       <input class="field" id="username" name="username" autocomplete="username" required></label>
     <label class="fld" id="row-email" hidden>Email (optional)
       <input class="field" id="email" type="email" name="email" autocomplete="email"></label>
-    <label class="fld"><span id="lbl-pass">Password</span>
+    <label class="fld" id="row-pass"><span id="lbl-pass">Password</span>
       <input class="field" id="password" type="password" name="password" autocomplete="current-password" required></label>
+    <label class="fld" id="row-code" hidden><span id="lbl-code">Code</span>
+      <input class="field mono code-in" id="code" name="code" autocomplete="one-time-code" inputmode="numeric" maxlength="20"></label>
     <button class="btn" type="submit" id="submit">Sign in</button>
     <p class="auth-msg" id="msg" role="status" aria-live="polite"></p>
   </form>
   <p class="auth-hint" id="hint"></p>
+  <a href="#" class="auth-alt" id="alt" hidden></a>
 </main>
 <noscript>Faucet needs JavaScript.</noscript>
 </body>

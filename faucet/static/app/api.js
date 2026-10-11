@@ -32,6 +32,9 @@ async function call(method, url, body) {
     throw new ApiError(401, "Signed out");
   }
   const data = await r.json().catch(() => ({}));
+  if (r.status === 403 && data && data.code === "mfa_setup_required" && location.hash !== "#/account") {
+    location.hash = "#/account";            // admins set up two-factor before anything else
+  }
   if (!r.ok) {
     const d = data && data.detail;
     throw new ApiError(r.status, typeof d === "string" ? d : `Request failed (${r.status})`);

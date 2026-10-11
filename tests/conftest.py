@@ -37,3 +37,12 @@ def _restore_environ():
     yield
     os.environ.clear()
     os.environ.update(saved)
+
+
+@pytest.fixture(autouse=True)
+def _admin_2fa_optional_in_tests(monkeypatch, request):
+    """Production requires two-factor for admins; the suite's admins sign in
+    with a password unless a test opts in (marker `requires_admin_2fa`)."""
+    if request.node.get_closest_marker("requires_admin_2fa") is None:
+        monkeypatch.setenv("FAUCET_REQUIRE_ADMIN_2FA", "0")
+    yield

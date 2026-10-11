@@ -130,10 +130,13 @@ def get_user_by_name(username: str) -> dict | None:
 
 
 def list_users() -> list[dict]:
+    from . import mfa
     with db.connect() as c:
+        mfa.ensure_schema(c)
         rows = c.execute(
             "SELECT id, username, email, role, status, created_ts, last_login, "
-            "can_autoapprove, library_access, request_tv_library, request_movie_library "
+            "can_autoapprove, library_access, request_tv_library, request_movie_library, "
+            "EXISTS(SELECT 1 FROM user_mfa m WHERE m.user_id=users.id AND m.enabled=1) AS mfa "
             "FROM users ORDER BY id").fetchall()
     return [dict(r) for r in rows]
 

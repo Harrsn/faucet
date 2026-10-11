@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased (Phase 8)
+
+### Added
+
+- **Two-factor sign-in with an authenticator app** (TOTP: Bitwarden,
+  1Password, Google or Microsoft Authenticator). Set it up from **Account**
+  (click your name in the sidebar): scan a QR code, confirm a code, save ten
+  one-time recovery codes. Sign-in becomes password → code; a recovery code
+  works in place of a code (each once). Codes can't be replayed, wrong ones
+  count toward sign-in throttling, and setting up or changing it needs the
+  password.
+- **Required for admins.** An admin without it can sign in but only reach
+  the setup page until it's on (`FAUCET_REQUIRE_ADMIN_2FA=0` to turn the
+  requirement off). Optional for members.
+- Admins can reset someone's two-factor (Users & requests → ⋯ → Reset
+  two-factor) for a lost phone; locked out yourself, on the server:
+  `docker exec faucet python -m faucet.mfa disable <username>`.
+- **Account page**: two-factor and password in one place.
+
 ## 2.3.0 — 2026-10-11
 
 ### Added

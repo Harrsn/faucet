@@ -21,9 +21,11 @@ const ROUTES = [
   [/^\/activity\/?$/, "activity", () => import("./views/activity.js")],
   [/^\/wanted\/?$/, "wanted", () => import("./views/wanted.js")],
   [/^\/setup(?:\/([a-z]+))?\/?$/, "settings", () => import("./views/setup.js")],
+  [/^\/account\/?$/, null, () => import("./views/account.js")],
 ];
 
 let me = null;
+let mfaSetup = false;     // an admin without two-factor: only #/account until it's on
 let sections = [];
 let current = { stop() {} };
 
@@ -40,12 +42,14 @@ function match(path) {
 
 async function route() {
   current.stop();
+  if (mfaSetup && location.hash !== "#/account") { location.hash = "#/account"; return; }
   const path = decodeURIComponent((location.hash || "#/").slice(1));
   const r = match(path) || match("/");
   setActive(r.nav);
   const view = $("#view");
   mount(view, html`<div class="boot">Loading…</div>`);
-  const ctx = { me, params: r.params, status: updateStatus, sections, setNav: setActive, refreshNav };
+  const ctx = { me, params: r.params, status: updateStatus, sections, setNav: setActive, refreshNav,
+                mfaSetup, mfaDone: () => { mfaSetup = false; } };
   let timer = null;
   let alive = true;
   current = { stop() { alive = false; clearInterval(timer); } };
@@ -81,6 +85,7 @@ async function boot() {
     const d = await api.get("/api/auth/me");
     if (!d.authenticated) { location.href = "/login"; return; }
     me = d.user;
+    mfaSetup = !!d.mfa_setup_required;
   } catch (e) {
     toast(e.message, "err");
     return;
@@ -91,6 +96,7 @@ async function boot() {
   renderShell(me, "home", sections);
   initPalette(me);
   window.addEventListener("hashchange", route);
+  if (mfaSetup) { if (location.hash !== "#/account") location.hash = "#/account"; else route(); return; }
   if (me.role === "admin" && !location.hash.startsWith("#/setup")
       && !sessionStorage.getItem("faucet-setup-later")) {
     try {

@@ -317,7 +317,11 @@ def test_old_prod_schema_is_deduped_and_keyed(tmp_path, monkeypatch):
     importlib.reload(importlib.import_module("faucet.config"))
     db = importlib.reload(importlib.import_module("faucet.db"))
     path = db._db_path()
-    path.parent.mkdir(parents=True)
+    # a background thread left over from an earlier test (Home's still-fetcher,
+    # say) can touch the database path first; this test needs a pristine file
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for f in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
+        f.unlink(missing_ok=True)
     raw = sqlite3.connect(path)
     raw.executescript(OLD_PROD_WANTED)
     rows = [
