@@ -579,3 +579,10 @@ body.auth { min-height: 100vh; display: grid; place-items: center; padding: 24px
 .frow.grab .fname { gap: 3px; }
 .frow.grab .relname { font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .frow.grab .fname .muted { font-size: 12.5px; }
+
+/* ══ watched in Plex ════════════════════════════════════════════════════ */
+.ep-row .still { position: relative; }
+.seen-mark { position: absolute; right: 6px; bottom: 6px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--good); color: #0b1a12; box-shadow: 0 1px 6px rgb(0 0 0 / .45); }
+.seen-mark svg { width: 14px; height: 14px; stroke-width: 2.6; }
+.ep-row.seen .txt b { color: var(--text-2); }
+.seen-n { color: var(--good-text); }

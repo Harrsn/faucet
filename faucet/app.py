@@ -1442,6 +1442,8 @@ def api_series_detail(sid: int, request: _Request):
     mode = s.get("monitor_mode") or "all"
     missing_stills = []
     seasons = []
+    from . import plex as _plex
+    watched = _plex.watched_episodes(s["tmdb_id"]) if s.get("tmdb_id") else {}
     for sn in bd["seasons"]:
         cached = tmdbmod.cached_season(s["tmdb_id"], sn["season"]) if s.get("tmdb_id") else None
         if cached is None and s.get("tmdb_id"):
@@ -1462,11 +1464,14 @@ def api_series_detail(sid: int, request: _Request):
                 status = "skipped" if (not s.get("monitored") or mode == "none") else "missing"
             if status in counts:
                 counts[status] += 1
+            seen = watched.get((sn["season"], e["episode"]))
             eps.append({**e, "status": status, "still": stills.get(e["episode"]),
                         "upgrade": bool(w and w["reason"] == "upgrade"),
                         "next_search": w["next_search"] if w else None,
-                        "searches": w["search_count"] if w else 0})
+                        "searches": w["search_count"] if w else 0,
+                        "watched": seen["last_viewed"] or True if seen else None})
         seasons.append({"season": sn["season"], "have": sn["have"], "total": sn["total"],
+                        "watched": sum(1 for x in eps if x["watched"]),
                         "episodes": eps, **{k: v for k, v in counts.items() if k != "have"}})
     if missing_stills:
         _fill_stills_async(s["tmdb_id"], missing_stills)
@@ -2154,7 +2159,8 @@ def api_plex():
     paired (auto-pairing anything not set by hand)."""
     from . import libraries, plex
     out = {"configured": plex.enabled(), "url": plex.settings()[0], "ok": None,
-           "sections": [], "pairs": [], "scans": plex.recent_scans()}
+           "sections": [], "pairs": [], "scans": plex.recent_scans(),
+           "watched": plex.watched_status()}
     if not plex.enabled():
         return out
     t = plex.test()
@@ -2171,6 +2177,19 @@ def api_plex():
                              "section_title": lk.get("section_title"), "plex_path": lk.get("plex_path"),
                              "auto": bool(lk.get("auto", 1)), "set": bool(lk)})
     return out
+
+
+@app.post("/api/plex/watched/sync")
+def api_plex_watched_sync():
+    """Read what's been watched in Plex now, instead of at the next tick."""
+    from . import plex
+    try:
+        r = plex.sync_watched()
+    except plex.PlexError as e:
+        raise HTTPException(502, str(e))
+    if not r.get("ok"):
+        raise HTTPException(400, r.get("msg") or "Plex isn't set up")
+    return {**r, **plex.watched_status()}
 
 
 class PlexPairBody(BaseModel):
@@ -2400,6 +2419,9 @@ def api_movie_detail(mid: int, request: _Request):
     from . import libraries as _libs
     _lib = _libs.title_library("movie", mid)
     out["library"] = {"id": _lib["id"], "name": _lib["name"]} if _lib else None
+    from . import plex as _plex
+    m = out.get("movie") or {}
+    out["watched"] = _plex.watched_movie(m["tmdb_id"]) if m.get("tmdb_id") else None
     if user.get("role") == "admin":
         out["save_to"] = _save_to("movie", mid, out["movie"].get("library_id"))
     return out

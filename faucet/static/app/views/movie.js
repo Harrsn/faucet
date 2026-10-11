@@ -48,6 +48,7 @@ export async function render(el, ctx) {
               ${meta.rating ? html`<span>★ ${meta.rating}</span>` : ""}
               ${genres.map((g) => html`<span class="tagpill">${g}</span>`)}
               <span class="status ${cls}">${label}</span>
+              ${d.watched ? html`<span class="tagpill good" title="${d.watched.last_viewed ? `Last watched in Plex ${stamp(d.watched.last_viewed)}` : "Watched in Plex"}">Watched${d.watched.views > 1 ? ` ×${d.watched.views}` : ""}</span>` : ""}
             </div>
             ${meta.overview ? html`<p>${meta.overview}</p>` : ""}
             ${admin ? html`<div class="acts">

@@ -107,7 +107,7 @@ export async function render(el, ctx) {
       const p = pctOf(sn.have, sn.total);
       return html`<button class="season-card" type="button" role="listitem" data-season="${sn.season}" aria-pressed="${sn.season === season}">
         <span class="art" style="${d.series.poster ? bg(d.series.poster) : tint(d.series.title + sn.season)}"><span>Season ${sn.season}</span></span>
-        <span class="meta"><span class="${done ? "done" : ""}">${sn.have} / ${sn.total}</span>
+        <span class="meta"><span class="${done ? "done" : ""}">${sn.have} / ${sn.total}${sn.watched ? html`<span class="seen-n" title="${sn.watched} watched in Plex"> · ${sn.watched === sn.total ? "watched" : `${sn.watched} seen`}</span>` : ""}</span>
           <span class="progress${done ? " done" : ""}"><i style="width:${sn.wanted ? Math.min(p, 99) : p}%"></i></span></span>
       </button>`;
     });
@@ -135,11 +135,12 @@ export async function render(el, ctx) {
     const sn = d.seasons.find((x) => x.season === season);
     if (!sn) return html`<div class="empty">No episode list yet — TMDb hasn't been read for this show.</div>`;
     return html`<div class="season-h"><h2>Season ${sn.season}</h2>
-        <span class="mono">${sn.have} of ${sn.total} on disk${sn.wanted ? ` · ${sn.wanted} missing` : ""}${sn.downloading ? ` · ${sn.downloading} downloading` : ""}</span>
+        <span class="mono">${sn.have} of ${sn.total} on disk${sn.wanted ? ` · ${sn.wanted} missing` : ""}${sn.downloading ? ` · ${sn.downloading} downloading` : ""}${sn.watched ? ` · ${sn.watched} watched` : ""}</span>
         ${admin ? html`<button class="btn line" type="button" data-pack="${sn.season}">Search season pack</button>` : ""}</div>
       <div class="eps">${sn.episodes.map((e) => html`
-        <div class="ep-row">
-          <span class="still" style="${e.still ? bg(e.still) : tint(d.series.title + e.episode)}" aria-hidden="true"></span>
+        <div class="ep-row${e.watched ? " seen" : ""}">
+          <span class="still" style="${e.still ? bg(e.still) : tint(d.series.title + e.episode)}" aria-hidden="true">${e.watched
+            ? html`<span class="seen-mark" title="${typeof e.watched === "string" ? `Watched in Plex ${stamp(e.watched)}` : "Watched in Plex"}">${icons.check}</span>` : ""}</span>
           <span class="txt"><span class="k">E${String(e.episode).padStart(2, "0")}${e.air_date ? ` · ${day(e.air_date)}` : ""}</span>
             <b>${e.title || `Episode ${e.episode}`}</b><span class="d">${epDetail(e)}</span></span>
           <span class="status ${e.upgrade && e.status !== "downloading" ? "upgrade" : e.status}">${e.upgrade && e.status === "have" ? "Upgrade" : LABEL[e.status] || e.status}</span>

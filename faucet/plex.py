@@ -267,3 +267,121 @@ def scan_from_log(log_path: str) -> int:
         log.warning("Plex scan after sorting failed: %s", e)
         return 0
 
+
+
+# ── watched status ──────────────────────────────────────────────────────────
+#
+# Read from Plex (for the account the token belongs to) into plex_watched,
+# keyed by TMDb id so it lines up with Faucet's shows and movies whatever the
+# folders are called. Refreshed every scheduler tick and on demand.
+
+PAGE = 2000
+
+
+def ensure_watched_schema(c) -> None:
+    c.execute("CREATE TABLE IF NOT EXISTS plex_watched ("
+              "  kind TEXT NOT NULL,"                  # episode | movie
+              "  tmdb_id INTEGER NOT NULL,"
+              "  season INTEGER NOT NULL DEFAULT -1,"
+              "  episode INTEGER NOT NULL DEFAULT -1,"
+              "  views INTEGER NOT NULL DEFAULT 0,"
+              "  last_viewed TEXT,"
+              "  PRIMARY KEY (kind, tmdb_id, season, episode))")
+
+
+def _tmdb(item: dict) -> int | None:
+    for g in item.get("Guid") or []:
+        gid = str(g.get("id") or "")
+        if gid.startswith("tmdb://"):
+            try:
+                return int(gid[7:])
+            except ValueError:
+                return None
+    return None
+
+
+def _all(section: str, kind: int) -> list[dict]:
+    """Every item of one type in a section, page by page."""
+    out, start = [], 0
+    while True:
+        mc = _get(f"/library/sections/{quote(section, safe='')}/all?type={kind}&includeGuids=1"
+                  f"&X-Plex-Container-Start={start}&X-Plex-Container-Size={PAGE}", timeout=60)
+        items = mc.get("Metadata") or []
+        out += items
+        total = int(mc.get("totalSize") or mc.get("size") or len(items))
+        start += len(items)
+        if not items or start >= total:
+            return out
+
+
+def _when(ts) -> str | None:
+    try:
+        return datetime.fromtimestamp(int(ts)).isoformat(timespec="seconds")
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def sync_watched() -> dict:
+    """Pull watched episodes and movies from every paired Plex library."""
+    if not enabled():
+        return {"ok": False, "msg": "Plex isn't set up"}
+    secs = {s["key"]: s for s in sections()}
+    paired = {lk["section_key"] for lk in links().values() if lk.get("section_key")}
+    rows, unmatched = [], 0
+    for key in paired:
+        s = secs.get(key)
+        if not s:
+            continue
+        if s["type"] == "show":
+            shows = {str(x["ratingKey"]): _tmdb(x) for x in _all(key, 2)}
+            for ep in _all(key, 4):
+                if not ep.get("viewCount"):
+                    continue
+                tid = shows.get(str(ep.get("grandparentRatingKey")))
+                if tid is None or ep.get("parentIndex") is None or ep.get("index") is None:
+                    unmatched += 1
+                    continue
+                rows.append(("episode", tid, int(ep["parentIndex"]), int(ep["index"]),
+                             int(ep["viewCount"]), _when(ep.get("lastViewedAt"))))
+        elif s["type"] == "movie":
+            for mv in _all(key, 1):
+                if not mv.get("viewCount"):
+                    continue
+                tid = _tmdb(mv)
+                if tid is None:
+                    unmatched += 1
+                    continue
+                rows.append(("movie", tid, -1, -1, int(mv["viewCount"]), _when(mv.get("lastViewedAt"))))
+    with db.connect() as c:
+        ensure_watched_schema(c)
+        c.execute("DELETE FROM plex_watched")          # mirror Plex: un-watching counts too
+        c.executemany("INSERT OR REPLACE INTO plex_watched (kind, tmdb_id, season, episode, views, last_viewed) "
+                      "VALUES (?,?,?,?,?,?)", rows)
+    db.set_setting("_plex_watched_sync", datetime.now().isoformat(timespec="seconds"))
+    return {"ok": True, "episodes": sum(r[0] == "episode" for r in rows),
+            "movies": sum(r[0] == "movie" for r in rows), "unmatched": unmatched}
+
+
+def watched_episodes(tmdb_id: int) -> dict[tuple[int, int], dict]:
+    with db.connect() as c:
+        ensure_watched_schema(c)
+        return {(r["season"], r["episode"]): {"views": r["views"], "last_viewed": r["last_viewed"]}
+                for r in c.execute("SELECT season, episode, views, last_viewed FROM plex_watched "
+                                   "WHERE kind='episode' AND tmdb_id=?", (tmdb_id,))}
+
+
+def watched_movie(tmdb_id: int) -> dict | None:
+    with db.connect() as c:
+        ensure_watched_schema(c)
+        r = c.execute("SELECT views, last_viewed FROM plex_watched WHERE kind='movie' AND tmdb_id=?",
+                      (tmdb_id,)).fetchone()
+    return dict(r) if r else None
+
+
+def watched_status() -> dict:
+    with db.connect() as c:
+        ensure_watched_schema(c)
+        n = dict(c.execute("SELECT SUM(kind='episode') AS episodes, SUM(kind='movie') AS movies "
+                           "FROM plex_watched").fetchone())
+    return {"last_sync": db.get_setting("_plex_watched_sync"),
+            "episodes": n["episodes"] or 0, "movies": n["movies"] or 0}

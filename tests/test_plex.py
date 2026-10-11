@@ -151,3 +151,66 @@ def test_case_and_depth_break_ties(env):
     # Windows Plex: different case only, still pairs
     win = [{"key": "7", "title": "TV", "type": "show", "locations": [r"D:\\Media\\TVShows"]}]
     assert env.P.suggest({"kind": "tv", "path": "/nas/media/tvshows"}, win)["key"] == "7"
+
+
+def _plex_library(monkeypatch, env, watched_eps, page=2):
+    """A fake Plex with Family Guy (TMDb 1434) in section 1, Speedway (TMDb
+    5) in section 4, paginated `page` items at a time."""
+    shows = [{"ratingKey": "100", "title": "Family Guy", "Guid": [{"id": "imdb://tt0182576"}, {"id": "tmdb://1434"}]},
+             {"ratingKey": "200", "title": "Local Thing", "Guid": []}]
+    eps = [{"grandparentRatingKey": "100", "parentIndex": 23, "index": i, "viewCount": 1 if (23, i) in watched_eps else 0,
+            "lastViewedAt": 1791700000 + i} for i in range(1, 6)]
+    eps.append({"grandparentRatingKey": "200", "parentIndex": 1, "index": 1, "viewCount": 2})
+    movies = [{"title": "Speedway", "Guid": [{"id": "tmdb://5"}], "viewCount": 3, "lastViewedAt": 1791600000}]
+    base = env.P._get
+
+    def fake(path, url=None, token=None, timeout=10):
+        import urllib.parse as up
+        if "/all?" not in path:
+            return base(path, url, token, timeout)
+        q = dict(up.parse_qsl(path.split("?", 1)[1]))
+        sec = path.split("/")[3]
+        items = {("1", "2"): shows, ("1", "4"): eps, ("4", "1"): movies}.get((sec, q["type"]), [])
+        start, size = int(q["X-Plex-Container-Start"]), min(page, int(q["X-Plex-Container-Size"]))
+        return {"Metadata": items[start:start + size], "totalSize": len(items), "size": len(items[start:start + size])}
+    monkeypatch.setattr(env.P, "_get", fake)
+
+
+def test_watched_status_sync(env, monkeypatch):
+    env.P.auto_pair(SECTIONS)
+    _plex_library(monkeypatch, env, {(23, 1), (23, 2), (23, 4)})
+    r = env.P.sync_watched()
+    assert r == {"ok": True, "episodes": 3, "movies": 1, "unmatched": 1}     # Local Thing has no TMDb id
+    w = env.P.watched_episodes(1434)
+    assert sorted(w) == [(23, 1), (23, 2), (23, 4)] and w[(23, 1)]["last_viewed"]
+    assert env.P.watched_movie(5)["views"] == 3
+    _plex_library(monkeypatch, env, {(23, 1)})                              # un-watched in Plex
+    env.P.sync_watched()
+    assert sorted(env.P.watched_episodes(1434)) == [(23, 1)]
+    assert env.P.watched_status()["episodes"] == 1
+
+
+def test_watched_shows_on_detail_pages(env, monkeypatch):
+    from fastapi.testclient import TestClient
+    env.P.auto_pair(SECTIONS)
+    _plex_library(monkeypatch, env, {(23, 1), (23, 2)})
+    db = env.m["db"]
+    with db.connect() as c:
+        sid = c.execute("INSERT INTO series (tmdb_id,title,monitored) VALUES (1434,'Family Guy',1)").lastrowid
+        for i in (1, 2, 3):
+            c.execute("INSERT INTO series_episodes (series_id,season,episode,title,air_date) VALUES (?,23,?,?,'2025-01-01')",
+                      (sid, i, f"E{i}"))
+        mid = c.execute("INSERT INTO movies (tmdb_id,title,year) VALUES (5,'Speedway',1968)").lastrowid
+    c = TestClient(env.m["app"].app, follow_redirects=False)
+    c.headers["X-Faucet-Auth"] = "2"
+    c.post("/api/auth/register", json={"username": "admin", "password": "adminpass123"})
+    c.post("/api/auth/login", json={"username": "admin", "password": "adminpass123"})
+    c.headers["X-CSRF-Token"] = c.cookies.get("faucet_csrf")
+    monkeypatch.setattr(env.m["app"].tmdbmod, "details", lambda *a, **k: {})
+    monkeypatch.setattr(env.m["app"].tmdbmod, "cached_season", lambda *a, **k: [])
+    r = c.post("/api/plex/watched/sync").json()
+    assert (r["episodes"], r["movies"]) == (2, 1)
+    d = c.get(f"/api/series/{sid}/detail").json()
+    s23 = next(x for x in d["seasons"] if x["season"] == 23)
+    assert s23["watched"] == 2 and [bool(e["watched"]) for e in s23["episodes"]] == [True, True, False]
+    assert c.get(f"/api/movies/{mid}/detail").json()["watched"]["views"] == 3

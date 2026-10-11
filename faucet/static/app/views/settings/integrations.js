@@ -147,6 +147,11 @@ export async function render(el) {
           <span class="acts"><button class="btn line small" type="button" data-psavepair>Save</button>
             <button class="btn line small" type="button" data-pscan${x.section_key ? "" : raw(" disabled")}>Scan now</button></span>
           ${x.section_key && x.auto ? html`<span class="muted" style="font-size:12px;flex-basis:100%">paired automatically</span>` : ""}</div>`)}</div>
+        <h4 style="margin:6px 0 0">Watched status</h4>
+        <div class="acts"><span class="muted" style="font-size:13px;margin-right:auto">${p.watched.last_sync
+          ? `${p.watched.episodes} episodes and ${p.watched.movies} movies watched · read ${stamp(p.watched.last_sync)} · refreshed every 30 minutes`
+          : "Not read yet — it's read every 30 minutes."} Shown on show and movie pages, for the Plex account this token belongs to.</span>
+          <button class="btn line small" type="button" data-pwsync>Sync now</button></div>
         ${p.scans.length ? html`<h4 style="margin:6px 0 0">Recent scans</h4><div class="pk-list">${p.scans.slice(0, 6).map((x) =>
           html`<div class="pk-row"><span class="when mono muted" style="min-width:120px">${stamp(x.ts)}</span>
             <span class="fname"><span class="mono" style="font-size:12.5px;overflow-wrap:anywhere">${x.path}</span>${x.error ? html`<span class="lib-warn">${x.error}</span>` : ""}</span>
@@ -171,6 +176,15 @@ export async function render(el) {
         s = await api.get("/api/settings");
         await plexCard();
       } catch (err) { toast(err.message, "err"); }
+    });
+    const ws = box.querySelector("[data-pwsync]");
+    if (ws) ws.addEventListener("click", async () => {
+      ws.disabled = true;
+      try {
+        const r = await api.post("/api/plex/watched/sync");
+        toast(`Read ${r.episodes} watched episodes and ${r.movies} movies from Plex${r.unmatched ? ` (${r.unmatched} without a TMDb id skipped)` : ""}.`);
+        await plexCard();
+      } catch (err) { toast(err.message, "err"); ws.disabled = false; }
     });
     box.querySelectorAll("[data-pair]").forEach((row) => {
       const id = Number(row.dataset.pair);
