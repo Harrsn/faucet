@@ -42,11 +42,12 @@ def env(tmp_path, monkeypatch):
 def _enable(env, c, password):
     r = c.post("/api/me/2fa/setup", json={"password": password}).json()
     assert r["uri"].startswith("otpauth://totp/") and "<svg" in r["qr_svg"]
-    wrong = "000000" if env.mfa.code_at(r["secret"]) != "000000" else "111111"
+    setup_code = env.mfa.code_at(r["secret"])
+    wrong = "000000" if setup_code != "000000" else "111111"
     assert c.post("/api/me/2fa/enable", json={"code": wrong}).status_code == 400
-    out = c.post("/api/me/2fa/enable", json={"code": env.mfa.code_at(r["secret"])}).json()
+    out = c.post("/api/me/2fa/enable", json={"code": setup_code}).json()
     assert out["enabled"] and len(out["recovery_codes"]) == 10
-    return r["secret"], out["recovery_codes"]
+    return out["recovery_codes"], setup_code
 
 
 def test_two_step_login_recovery_and_replay(env):
@@ -55,7 +56,7 @@ def test_two_step_login_recovery_and_replay(env):
     c.post("/api/auth/login", json={"username": "admin", "password": "adminpass123"})
     env.csrf(c)
     assert c.post("/api/me/2fa/setup", json={"password": "wrong"}).status_code == 400
-    secret, codes = _enable(env, c, "adminpass123")
+    codes, setup_code = _enable(env, c, "adminpass123")
 
     d = env.client()
     r = d.post("/api/auth/login", json={"username": "admin", "password": "adminpass123"}).json()
@@ -63,7 +64,7 @@ def test_two_step_login_recovery_and_replay(env):
     assert d.post("/api/auth/login/mfa", json={"ticket": r["ticket"], "code": "123456"}).status_code == 401
     assert d.post("/api/auth/login/mfa", json={"ticket": "forged", "code": "123456"}).status_code == 401
     # the code used to enable can't be replayed
-    assert d.post("/api/auth/login/mfa", json={"ticket": r["ticket"], "code": env.mfa.code_at(secret)}).status_code == 401
+    assert d.post("/api/auth/login/mfa", json={"ticket": r["ticket"], "code": setup_code}).status_code == 401
     ok = d.post("/api/auth/login/mfa", json={"ticket": r["ticket"], "code": codes[0]})
     assert ok.status_code == 200 and ok.json()["used"] == "recovery" and ok.json()["recovery_left"] == 9
     assert d.get("/api/auth/me").json()["authenticated"]
