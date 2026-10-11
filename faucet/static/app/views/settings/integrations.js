@@ -114,13 +114,85 @@ export async function render(el) {
         <div class="stack" data-alertform></div>
       </article>
 
-      <article class="panel integ dim">
-        <div class="integ-h"><h3>Media server · Plex</h3><span class="muted">coming later</span></div>
-        <p class="muted" style="margin:0">Library refreshes after a download lands and “recently added” from Plex are planned for a later phase.</p>
-      </article>
+      <article class="panel integ" data-card="plex"><div class="empty">Loading Plex…</div></article>
     </div>`);
     wire();
     alertsCard().catch((err) => toast(err.message, "err"));
+    plexCard().catch((err) => toast(err.message, "err"));
+  }
+
+  async function plexCard() {
+    const box = el.querySelector('[data-card="plex"]');
+    const p = await api.get("/api/plex");
+    const secByKind = (kind) => p.sections.filter((x) => x.type === (kind === "tv" ? "show" : "movie"));
+    mount(box, html`
+      <div class="integ-h"><h3>Media server · Plex</h3>
+        ${p.configured ? html`<span class="istatus ${p.ok ? "ok" : "bad"}"><span class="dot"></span>${p.ok ? `${p.name}${p.version ? ` · ${p.version.split("-")[0]}` : ""}` : p.msg}</span>` : html`<span class="muted">not connected</span>`}</div>
+      <p class="muted" style="margin:0">When Faucet files a download it asks Plex to scan just that folder, so it appears in Plex within seconds. Plex can't watch a network share for changes on its own.</p>
+      <div class="form2">
+        <label class="fld">Address<input class="field" data-px="url" value="${p.url || ""}" placeholder="http://10.0.0.17:32400" autocomplete="off"></label>
+        <label class="fld">Token<input class="field" type="password" data-px="token" autocomplete="new-password"
+          placeholder="${s.env.PLEX_TOKEN_SET ? "•••••• saved — type to replace" : "X-Plex-Token"}"></label>
+      </div>
+      <div class="acts"><button class="btn line" type="button" data-ptest>Test</button><button class="btn" type="button" data-psave>Save</button>
+        <span class="istatus" data-pst><span class="dot"></span></span></div>
+      ${p.configured && p.ok ? html`<div class="stack" style="gap:8px">
+        <h4 style="margin:6px 0 0">Libraries</h4>
+        <p class="muted" style="margin:0;font-size:13px">Each Faucet library and the Plex library it feeds — paired by folder name automatically; change any that are wrong. The Plex folder is the same folder as Plex sees it.</p>
+        <div class="pk-list">${p.pairs.map((x) => html`<div class="pk-row" data-pair="${x.library_id}">
+          <span class="fname"><b>${x.name}</b><span class="muted mono">${x.path}</span></span>
+          <select class="field" data-psec style="max-width:220px"><option value="">Not paired</option>
+            ${secByKind(x.kind).map((sec) => html`<option value="${sec.key}"${sec.key === x.section_key ? raw(" selected") : ""}>${sec.title}</option>`)}</select>
+          <input class="field mono" data-ppath value="${x.plex_path || ""}" placeholder="Plex's path" style="flex:1 1 220px;font-size:13px">
+          <span class="acts"><button class="btn line small" type="button" data-psavepair>Save</button>
+            <button class="btn line small" type="button" data-pscan${x.section_key ? "" : raw(" disabled")}>Scan now</button></span>
+          ${x.section_key && x.auto ? html`<span class="muted" style="font-size:12px;flex-basis:100%">paired automatically</span>` : ""}</div>`)}</div>
+        ${p.scans.length ? html`<h4 style="margin:6px 0 0">Recent scans</h4><div class="pk-list">${p.scans.slice(0, 6).map((x) =>
+          html`<div class="pk-row"><span class="when mono muted" style="min-width:120px">${stamp(x.ts)}</span>
+            <span class="fname"><span class="mono" style="font-size:12.5px;overflow-wrap:anywhere">${x.path}</span>${x.error ? html`<span class="lib-warn">${x.error}</span>` : ""}</span>
+            <span class="istatus ${x.ok ? "ok" : "bad"}"><span class="dot"></span>${x.ok ? "asked" : "failed"}</span></div>`)}</div>` : ""}
+      </div>` : ""}`);
+    const val = (k) => box.querySelector(`[data-px="${k}"]`).value.trim();
+    const st = (ok, m) => { const x = box.querySelector("[data-pst]"); x.className = `istatus ${ok === null ? "" : ok ? "ok" : "bad"}`; x.lastChild.textContent = m; };
+    box.querySelector("[data-ptest]").addEventListener("click", async () => {
+      st(null, "testing…");
+      try {
+        const r = await api.post("/api/plex/test", { url: val("url") || null, token: val("token") || null });
+        st(r.ok, r.ok ? `${r.name} — ${r.sections.length} librar${r.sections.length === 1 ? "y" : "ies"}` : r.msg);
+      } catch (err) { st(false, err.message); }
+    });
+    box.querySelector("[data-psave]").addEventListener("click", async () => {
+      const values = { PLEX_URL: val("url") };
+      if (val("token")) values.PLEX_TOKEN = val("token");
+      try {
+        const r = await api.patch("/api/settings", { values });
+        (r.warnings || []).forEach((w) => toast(w));
+        toast("Saved.");
+        s = await api.get("/api/settings");
+        await plexCard();
+      } catch (err) { toast(err.message, "err"); }
+    });
+    box.querySelectorAll("[data-pair]").forEach((row) => {
+      const id = Number(row.dataset.pair);
+      const sel = row.querySelector("[data-psec]");
+      sel.addEventListener("change", () => {
+        const sec = p.sections.find((x) => x.key === sel.value);
+        row.querySelector("[data-ppath]").value = sec && sec.locations[0] ? sec.locations[0] : "";
+      });
+      row.querySelector("[data-psavepair]").addEventListener("click", async () => {
+        try {
+          await api.put("/api/plex/pairs", { library_id: id, section_key: sel.value || null,
+            plex_path: row.querySelector("[data-ppath]").value.trim() || null });
+          toast("Saved.");
+          await plexCard();
+        } catch (err) { toast(err.message, "err"); }
+      });
+      row.querySelector("[data-pscan]").addEventListener("click", async (e) => {
+        e.target.disabled = true;
+        try { await api.post("/api/plex/scan", { library_id: id }); toast("Plex is scanning it."); await plexCard(); }
+        catch (err) { toast(err.message, "err"); e.target.disabled = false; }
+      });
+    });
   }
 
   async function alertsCard() {

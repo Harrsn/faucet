@@ -135,8 +135,16 @@ def main():
         env.update(libraries.sorter_env(name or os.path.basename(path.rstrip("/"))))
     except Exception as e:                       # noqa: BLE001 - fall back to the fixed layout
         print(f"library lookup failed ({e}); using LIBRARY_ROOT layout", file=sys.stderr)
+    from . import plex
+    placed = plex.placed_log() if plex.enabled() else None
+    if placed:
+        env["FAUCET_PLACED_LOG"] = placed
     res = subprocess.run([sys.executable, str(sorter)], env=env)
     rc = res.returncode
+    if placed:
+        n = plex.scan_from_log(placed)          # new files in Plex within seconds
+        if n:
+            print(f"asked Plex to scan {n} folder(s)", file=sys.stderr)
     if rc not in (SORT_OK, SORT_QUARANTINED, SORT_SUSPICIOUS):
         record("sort_failed", name, f"sort failed (rc={rc}); torrent left in place")
         if "failed" in config.notify_on:

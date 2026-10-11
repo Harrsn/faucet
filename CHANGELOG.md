@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased (Phase 9)
+
+### Added
+
+- **Plex** (Settings → Integrations → Media server · Plex): address and
+  token (write-only), with *Test*. When the hook or the sweep files a
+  download, Faucet asks Plex to scan **just the folders that changed**, so
+  new episodes and movies appear in Plex within seconds — Plex can't watch a
+  network share for changes itself, so until now they waited for its next
+  scheduled scan. Each Faucet library is paired with a Plex library and the
+  path Plex sees it at, automatically by matching folder names (exact case
+  and the shallower path win ties; a true tie pairs nothing), or by hand,
+  including "don't pair". *Scan now* per library, and the last scans with
+  any errors. Plex being down never fails a sort. Windows Plex paths work.
+  `GET /api/plex`, `POST /api/plex/test`, `PUT /api/plex/pairs`,
+  `POST /api/plex/scan`.
+
 ## 2.4.0 — 2026-10-11
 
 ### Added
