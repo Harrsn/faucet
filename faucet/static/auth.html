@@ -24,7 +24,7 @@
     <button type="button" data-mode="login" aria-pressed="true">Sign in</button>
     <button type="button" data-mode="register" aria-pressed="false">Request an account</button>
   </div>
-  <form id="auth-form" class="stack" novalidate>
+  <form id="auth-form" class="stack" method="post" action="/login" novalidate>
     <label class="fld" id="row-user">Username
       <input class="field" id="username" name="username" autocomplete="username" required></label>
     <label class="fld" id="row-email" hidden>Email (optional)

@@ -19,6 +19,20 @@
   `docker exec faucet python -m faucet.mfa disable <username>`.
 - **Account page**: two-factor and password in one place.
 
+### Fixed
+
+- A sign-in page loaded before two-factor existed sent the password, took
+  "now enter your code" as success, and bounced back to itself in a loop.
+  The sign-in page now tells the server it knows the code step; an older
+  page signing in to a two-factor account gets "Faucet was updated —
+  refresh this page to sign in" instead.
+- The code field's auto-submit only works on the code step: a password
+  manager filling the (hidden) field as the page loads no longer submits the
+  form. Its listeners were also being attached inside `render()`.
+- If the sign-in script ever fails to run, the browser's own form submit is
+  a POST (the password can't end up in the address bar) and leads back to
+  the sign-in page with a "try again" message.
+
 ## 2.3.0 — 2026-10-11
 
 ### Added
