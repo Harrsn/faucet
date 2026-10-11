@@ -65,6 +65,11 @@
   The sign-in page now tells the server it knows the code step; an older
   page signing in to a two-factor account gets "Faucet was updated —
   refresh this page to sign in" instead.
+- CI's lock-file check re-resolved dependencies from scratch, so it failed
+  whenever any library published a new release (pydantic 2.14.1 did, a day
+  after pinning) even with nothing changed. It now resolves starting from the
+  committed locks and only fails when a `.in` file was edited without
+  regenerating its lock.
 - **⋯ menus were cut off** inside lists with rounded corners (Settings →
   Users & requests). Menus now float above the page and open upward when
   there isn't room below.

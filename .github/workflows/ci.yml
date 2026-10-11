@@ -22,12 +22,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install --require-hashes -r requirements.txt -r requirements-dev.txt
       - name: Lock files match the .in files
+        # Re-resolve starting FROM the committed locks: uv keeps every existing
+        # pin that still satisfies the .in files, so this only fails when a
+        # .in file changed without regenerating its lock — not whenever some
+        # library publishes a new release (Dependabot brings those as PRs).
         run: |
           pip install uv
+          cp requirements.txt /tmp/req.txt
+          cp requirements-dev.txt /tmp/req-dev.txt
           uv pip compile requirements.in --universal --python-version 3.10 --generate-hashes -o /tmp/req.txt -q
           uv pip compile requirements-dev.in -c requirements.txt --universal --python-version 3.10 --generate-hashes -o /tmp/req-dev.txt -q
-          diff <(grep -E '^[a-z]' requirements.txt) <(grep -E '^[a-z]' /tmp/req.txt) || { echo "requirements.txt is stale: regenerate it from requirements.in"; exit 1; }
-          diff <(grep -E '^[a-z]' requirements-dev.txt) <(grep -E '^[a-z]' /tmp/req-dev.txt) || { echo "requirements-dev.txt is stale: regenerate it"; exit 1; }
+          diff <(grep -E '^[a-z]' requirements.txt) <(grep -E '^[a-z]' /tmp/req.txt) || { echo "requirements.txt doesn't match requirements.in: regenerate it (command at the top of requirements.in)"; exit 1; }
+          diff <(grep -E '^[a-z]' requirements-dev.txt) <(grep -E '^[a-z]' /tmp/req-dev.txt) || { echo "requirements-dev.txt doesn't match requirements-dev.in: regenerate it"; exit 1; }
       - name: Lint
         run: ruff check faucet/ tests/
       - name: UI modules parse
