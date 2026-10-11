@@ -588,6 +588,19 @@ def _copy_atomic(src: Path, dest: Path) -> None:
         raise
 
 
+def _note_placed(dest: Path) -> None:
+    """Tell whoever ran us (the hook, the sweep) what was filed, so they can
+    ask Plex to scan just those folders. Best effort."""
+    log = os.environ.get("FAUCET_PLACED_LOG")
+    if not log:
+        return
+    try:
+        with open(log, "a", encoding="utf-8") as f:
+            f.write(f"{dest}\n")
+    except OSError:
+        pass
+
+
 def _transfer(src: Path, dest: Path) -> str:
     if MODE in ("auto", "hardlink") and _try_link(src, dest):
         return "LINKED"
@@ -621,6 +634,7 @@ def place(src: Path, dest: Path, dry: bool, replace_if=None) -> str:
     _reap_stale_partials(dest)
     how = _transfer(src, dest)
     logging.info("%s%s %s -> %s", "REPLACED/" if replacing else "", how, src.name, dest)
+    _note_placed(dest)
     return PLACED
 
 

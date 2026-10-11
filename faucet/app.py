@@ -773,6 +773,8 @@ def api_settings_get():
     # secrets are editable but never returned; show only whether one is set.
     env_view["CLIENT_PASS_SET"] = bool(c.client_pass)
     env_view["JACKETT_API_KEY_SET"] = bool(c.jackett_api_key)
+    env_view["PLEX_URL"] = os.environ.get("PLEX_URL", "")
+    env_view["PLEX_TOKEN_SET"] = bool(os.environ.get("PLEX_TOKEN"))
     # notification URLs carry webhook tokens: write-only, like the keys
     env_view["NOTIFY_URLS_COUNT"] = len(c.notify_urls)
     env_view["TMDB_KEY_SET"] = tmdbmod.enabled()
@@ -2129,6 +2131,82 @@ def _public_base(request) -> str:
     from . import netutil
     host = request.headers.get("host") or request.url.netloc
     return f"{'https' if netutil.is_https(request) else 'http'}://{host}"
+
+
+# --- Plex ---
+class PlexTestBody(BaseModel):
+    url: str | None = None
+    token: str | None = None          # omitted: the saved one
+
+
+@app.post("/api/plex/test")
+def api_plex_test(body: PlexTestBody):
+    from . import plex
+    url = (body.url or "").strip().rstrip("/") or None
+    if url and not url.lower().startswith(("http://", "https://")):
+        raise HTTPException(400, "The address starts with http:// or https://")
+    return plex.test(url, (body.token or "").strip() or None)
+
+
+@app.get("/api/plex")
+def api_plex():
+    """Connection, the server's libraries, and how each Faucet library is
+    paired (auto-pairing anything not set by hand)."""
+    from . import libraries, plex
+    out = {"configured": plex.enabled(), "url": plex.settings()[0], "ok": None,
+           "sections": [], "pairs": [], "scans": plex.recent_scans()}
+    if not plex.enabled():
+        return out
+    t = plex.test()
+    out.update(ok=t["ok"], msg=t.get("msg"), name=t.get("name"), version=t.get("version"))
+    secs = t.get("sections") or []
+    out["sections"] = secs
+    if t["ok"]:
+        plex.auto_pair(secs)
+    links = plex.links()
+    for lib in libraries.all_libraries():
+        lk = links.get(lib["id"]) or {}
+        out["pairs"].append({"library_id": lib["id"], "name": lib["name"], "kind": lib["kind"],
+                             "path": lib["path"], "section_key": lk.get("section_key"),
+                             "section_title": lk.get("section_title"), "plex_path": lk.get("plex_path"),
+                             "auto": bool(lk.get("auto", 1)), "set": bool(lk)})
+    return out
+
+
+class PlexPairBody(BaseModel):
+    library_id: int
+    section_key: str | None = None   # None = don't pair this library
+    plex_path: str | None = None
+
+
+@app.put("/api/plex/pairs")
+def api_plex_pair(body: PlexPairBody):
+    from . import libraries, plex
+    if not libraries.get(body.library_id):
+        raise HTTPException(404, "No such library")
+    secs = plex.sections() if body.section_key else []
+    try:
+        plex.set_link(body.library_id, body.section_key, body.plex_path, secs)
+    except (ValueError, plex.PlexError) as e:
+        raise HTTPException(400, str(e))
+    return {"status": "ok"}
+
+
+class PlexScanBody(BaseModel):
+    library_id: int
+
+
+@app.post("/api/plex/scan")
+def api_plex_scan(body: PlexScanBody):
+    """Scan a paired library's whole folder in Plex now."""
+    from . import plex
+    link = plex.links().get(body.library_id)
+    if not link or not link["section_key"]:
+        raise HTTPException(400, "That library isn't paired with a Plex library.")
+    ok = plex.scan_folder(link["section_key"], link["plex_path"])
+    if not ok:
+        raise HTTPException(502, plex.recent_scans(1)[0]["error"] if plex.recent_scans(1) else "Plex scan failed")
+    return {"status": "ok"}
 
 
 @app.get("/api/grabs")

@@ -114,7 +114,14 @@ def _sort_one(item: Path, dry: bool) -> int:
     cmd = [sys.executable, str(sorter)]
     if dry:
         cmd.append("--dry-run")
-    return subprocess.run(cmd, env=env).returncode
+    from . import plex
+    placed = plex.placed_log() if plex.enabled() and not dry else None
+    if placed:
+        env["FAUCET_PLACED_LOG"] = placed
+    rc = subprocess.run(cmd, env=env).returncode
+    if placed:
+        plex.scan_from_log(placed)
+    return rc
 
 
 # (item name, reason) pairs already logged at INFO. The sweep runs every tick,

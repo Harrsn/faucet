@@ -252,6 +252,7 @@ WIZARD_KEYS = {
     # connections
     "JACKETT_URL", "JACKETT_API_KEY", "JACKETT_INDEXER",
     "DOWNLOAD_CLIENT", "CLIENT_URL", "CLIENT_USER", "CLIENT_PASS",
+    "PLEX_URL", "PLEX_TOKEN",
     # paths
     "LIBRARY_ROOT", "DOWNLOAD_DIR", "DISK_PATH", "BROWSE_ROOT",
     "COMPLETE_DIR",     # finished downloads, as Faucet sees them (sweep, mount check)
