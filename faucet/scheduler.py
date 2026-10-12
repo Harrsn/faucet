@@ -303,6 +303,31 @@ def _is_recent(air_date: str) -> bool:
     return air_date >= (date.today() - timedelta(days=days)).isoformat()
 
 
+def _relaxed(w: dict) -> int | None:
+    """For a long-missing want, the seeder minimum to use instead of the
+    profile's — or None to keep the profile's.
+
+    Old episodes are often only on thinly seeded releases: every search finds
+    them and the profile turns them all down, forever. Once something has
+    aired at least HUNT_RELAX_AFTER_DAYS ago and been searched
+    HUNT_RELAX_AFTER_SEARCHES times without a grab, accept releases down to
+    HUNT_RELAX_MIN_SEEDERS. Ranking is unchanged (better-seeded releases still
+    win), and a grab that never gets going is dropped and blocklisted by the
+    stall handler. Never for upgrades."""
+    if os.environ.get("HUNT_RELAX_SEEDERS", "1").lower() in ("0", "false", "no", "off"):
+        return None
+    if w.get("reason") == "upgrade":
+        return None
+    if (w.get("search_count") or 0) < _int_env("HUNT_RELAX_AFTER_SEARCHES", 4):
+        return None
+    if w.get("kind") != "movie":
+        from datetime import date, timedelta
+        air = w.get("_air") or ""
+        if not air or air > (date.today() - timedelta(days=_int_env("HUNT_RELAX_AFTER_DAYS", 7))).isoformat():
+            return None
+    return max(0, _int_env("HUNT_RELAX_MIN_SEEDERS", 1))
+
+
 def hunt_wanted(series_filter=None, max_override=None) -> dict:
     """Search for and grab wanted items (missing + upgrades), within caps so an
     unattended run can't flood the client or the indexer:
@@ -598,7 +623,15 @@ def _hunt_wanted(series_filter=None, max_override=None) -> dict:
                     res["error"] = (f"no release better than owned "
                                     f"{owned_q or 'unknown'}{' CAM' if owned_cam else ''} "
                                     f"({before} candidates)")
-        ranked = _rank_for_hunt(fresh, profile, reasons, trackers)
+        relax = _relaxed(w)
+        use_profile = profile
+        if relax is not None and profile and int(profile.get("min_seeders") or 0) > relax:
+            use_profile = dict(profile, min_seeders=relax)
+        else:
+            relax = None                          # nothing to relax
+        ranked = _rank_for_hunt(fresh, use_profile, reasons, trackers)
+        if relax is not None:
+            res["relaxed"] = relax
         if not ranked:
             res["next_search"] = wants.record_miss(
                 w["id"], w.get("search_count") or 0, _is_recent(w.get("_air", "")))
@@ -618,12 +651,16 @@ def _hunt_wanted(series_filter=None, max_override=None) -> dict:
             client.add(pick["href"], _cfg().download_dir or None)
             res["grabbed"] = pick["title"]
             grabbed += 1
-            db.add_history("added", pick["title"], f"hunt: {query} ({w.get('reason')})")
+            db.add_history("added", pick["title"], f"hunt: {query} ({w.get('reason')}"
+                           + (f"; long-missing, accepted down to {relax} seeder{'s' if relax != 1 else ''}"
+                              if relax is not None else "") + ")")
             wants.mark_grabbed(w["id"])
             log.info("Hunt grabbed '%s' for %s (%s seeders, %s)", pick["title"], query,
                      pick.get("seeders"), pick.get("tracker") or "?")
             huntlog.record(**log_key, outcome="grabbed", results=len(results),
-                           kept=len(ranked), reasons=reasons, pick=pick)
+                           kept=len(ranked), reasons=reasons, pick=pick,
+                           detail=(f"long-missing: seeder minimum relaxed to {relax}"
+                                   if relax is not None else ""))
             _notify_grab(pick["title"], query,
                          series_id=None if kind == "movie" else w.get("series_id"),
                          movie_id=w.get("series_id") if kind == "movie" else None)

@@ -456,3 +456,74 @@ def test_refresh_profile_json_roundtrip_unaffected(env):
     sid = _series(env.db, "Show", profile_id=pid)
     env.S.refresh_episodes(sid, fresh=False)
     assert env.S.get_series(sid)["profile_id"] == pid
+
+
+# ── long-missing episodes: relax the seeder minimum ─────────────────────────
+
+def _profiled_show(env, title, air="2010-05-01", min_seeders=5):
+    with env.db.connect() as c:
+        pid = c.execute("INSERT INTO profiles (name, min_seeders, resolutions, sources) "
+                        "VALUES ('Strict', ?, '[]', '[]')", (min_seeders,)).lastrowid
+    sid = _series(env.db, title, air=air, profile_id=pid)
+    env.S.reconcile(sid)
+    return sid
+
+
+def _searched(env, n):
+    with env.db.connect() as c:
+        c.execute("UPDATE wanted SET search_count=?, next_search=NULL", (n,))
+
+
+def _thin(title):
+    r = _release(title, "magnet:thin")
+    r["seeders"] = 2
+    return r
+
+
+def test_long_missing_episode_takes_a_thinly_seeded_release(env, hunter):
+    _profiled_show(env, "American Dad")
+    hunter.results = [_thin("American.Dad.S01E01.720p.WEB.x264")]
+    _searched(env, 1)
+    env.SCH.hunt_wanted()
+    assert hunter.client.added == []                    # profile: 2 < 5 seeders
+    _searched(env, 4)                                   # searched enough, aired long ago
+    env.SCH.hunt_wanted()
+    assert hunter.client.added == ["magnet:thin"]
+    with env.db.connect() as c:
+        note = c.execute("SELECT detail FROM history WHERE event='added'").fetchone()[0]
+        hl = c.execute("SELECT detail FROM hunt_log WHERE outcome='grabbed'").fetchone()[0]
+    assert "long-missing" in note and "1 seeder" in note and "relaxed to 1" in hl
+
+
+def test_better_seeded_releases_still_win(env, hunter):
+    _profiled_show(env, "American Dad")
+    good = _release("American.Dad.S01E01.1080p.WEB.x264-GOOD", "magnet:good")
+    good["seeders"] = 3                                  # also below 5, but more than 2
+    hunter.results = [_thin("American.Dad.S01E01.720p.WEB.x264"), good]
+    _searched(env, 6)
+    env.SCH.hunt_wanted()
+    assert hunter.client.added == ["magnet:good"]
+
+
+@pytest.mark.parametrize("why", ["recent", "few_searches", "switched_off", "zero_seed_floor"])
+def test_relaxing_has_limits(env, hunter, monkeypatch, why):
+    from datetime import date, timedelta
+    air = (date.today() - timedelta(days=2)).isoformat() if why == "recent" else "2010-05-01"
+    _profiled_show(env, "American Dad", air=air)
+    rel = _thin("American.Dad.S01E01.720p.WEB.x264")
+    if why == "zero_seed_floor":
+        rel["seeders"] = 0                               # default floor is 1
+    hunter.results = [rel]
+    _searched(env, 2 if why == "few_searches" else 6)
+    if why == "switched_off":
+        monkeypatch.setenv("HUNT_RELAX_SEEDERS", "0")
+    env.SCH.hunt_wanted()
+    assert hunter.client.added == []
+
+
+def test_relaxing_never_applies_to_upgrades_and_movies_go_by_searches(env):
+    R = env.SCH._relaxed
+    assert R({"reason": "upgrade", "search_count": 50, "_air": "2001-01-01"}) is None
+    assert R({"reason": "missing", "kind": "movie", "search_count": 4}) == 1
+    assert R({"reason": "missing", "kind": "movie", "search_count": 3}) is None
+    assert R({"reason": "missing", "kind": "episode", "search_count": 9, "_air": ""}) is None   # TBA
