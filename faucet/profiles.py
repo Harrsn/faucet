@@ -14,6 +14,7 @@ Profiles live in the DB (see db.py `profiles` table). A profile dict looks like:
 from __future__ import annotations
 
 import json
+import re
 
 GB = 1024 ** 3
 
@@ -27,6 +28,67 @@ def _as_list(v) -> list:
         except ValueError:
             return [s.strip() for s in v.split(",") if s.strip()]
     return []
+
+
+CODECS = ("", "prefer-hevc", "prefer-h264", "only-hevc", "only-h264")
+HDR = ("", "prefer", "avoid", "never")
+
+
+def formats(profile: dict) -> dict:
+    """A profile's preferred-format rules, normalised (stored as JSON)."""
+    raw = profile.get("formats")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw) if raw else {}
+        except ValueError:
+            raw = {}
+    raw = raw if isinstance(raw, dict) else {}
+    norm = lambda xs: [str(x).strip() for x in (xs or []) if str(x).strip()]  # noqa: E731
+    return {"codec": raw.get("codec") if raw.get("codec") in CODECS else "",
+            "hdr": raw.get("hdr") if raw.get("hdr") in HDR else "",
+            "prefer_groups": norm(raw.get("prefer_groups")),
+            "never_groups": norm(raw.get("never_groups")),
+            "never_words": norm(raw.get("never_words"))}
+
+
+def _has_word(title: str, word: str) -> bool:
+    return re.search(r"(?<![a-z0-9])" + re.escape(word.lower()) + r"(?![a-z0-9])",
+                     (title or "").lower().replace(".", " ").replace("_", " ")) is not None
+
+
+def _format_reject(result: dict, f: dict) -> str | None:
+    badges = result.get("badges") or {}
+    title = result.get("title") or ""
+    group = (badges.get("group") or "").lower()
+    if group and group in {g.lower() for g in f["never_groups"]}:
+        return f"format: release group {badges['group']} is on the never list"
+    for w in f["never_words"]:
+        if _has_word(title, w):
+            return f"format: contains '{w}'"
+    if f["hdr"] == "never" and badges.get("hdr"):
+        return "format: HDR"
+    if f["codec"] == "only-hevc" and badges.get("codec") != "HEVC":
+        return f"format: {badges.get('codec') or 'unknown codec'}, profile wants HEVC only"
+    if f["codec"] == "only-h264" and badges.get("codec") != "H.264":
+        return f"format: {badges.get('codec') or 'unknown codec'}, profile wants H.264 only"
+    return None
+
+
+def format_score(result: dict, profile: dict) -> float:
+    f = formats(profile)
+    badges = result.get("badges") or {}
+    s = 0.0
+    want = {"prefer-hevc": "HEVC", "prefer-h264": "H.264"}.get(f["codec"])
+    if want and badges.get("codec") == want:
+        s += 30                       # beats a source step (20), never a resolution step (100)
+    if f["hdr"] == "prefer" and badges.get("hdr"):
+        s += 40
+    elif f["hdr"] == "avoid" and badges.get("hdr"):
+        s -= 40
+    group = (badges.get("group") or "").lower()
+    if group and group in {g.lower() for g in f["prefer_groups"]}:
+        s += 30
+    return s
 
 
 def passes(result: dict, profile: dict) -> tuple[bool, str]:
@@ -63,6 +125,9 @@ def passes(result: dict, profile: dict) -> tuple[bool, str]:
         from . import langdetect
         if not langdetect.matches(result, lang_pref):
             return False, f"language {langdetect.detect(result)} != {lang_pref}"
+    why = _format_reject(result, formats(profile))
+    if why:
+        return False, why
     return True, ""
 
 
@@ -82,6 +147,7 @@ def score(result: dict, profile: dict) -> float:
     if badges.get("source") in src_pref:
         s += (len(src_pref) - src_pref.index(badges["source"])) * 20
     s += health(result)
+    s += format_score(result, profile)
     # preferred-language bonus: an exact match outranks an undetermined one,
     # which outranks (but here we've already filtered out) the wrong language.
     lang_pref = _effective_language(profile)

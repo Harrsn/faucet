@@ -15,7 +15,7 @@ export const title = "Show";
 const REASONS = {
   blocklisted: "blocklisted", wrong_title: "wrong show", pack: "packs", not_upgrade: "not better",
   seeders: "too few seeders", size: "size", resolution: "resolution", cam: "cam",
-  language: "language", profile: "profile",
+  language: "language", format: "format rules", profile: "profile",
 };
 
 const pctOf = (have, total) => (total ? Math.floor((100 * have) / total) : 0);

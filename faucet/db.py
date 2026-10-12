@@ -297,6 +297,9 @@ def _migrate(c) -> None:
         # per-profile preferred release language (ISO-639-1, e.g. 'en'); 'any'
         # disables the filter. Falls back to the global default when blank.
         ("profiles", "language", "TEXT DEFAULT 'en'"),
+        # preferred-format rules (JSON): codec, hdr, preferred / never groups,
+        # never-words — see profiles.formats()
+        ("profiles", "formats", "TEXT"),
         # request/approval flow: tie requests to a real user account, track who
         # approved/decided and when; default-approve trusted users.
         ("requests", "user_id", "INTEGER"),

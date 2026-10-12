@@ -956,6 +956,23 @@ class ProfileBody(BaseModel):
             raise ValueError("between 0 and 1000 GB (0 = no limit)")
         return v
 
+    formats: dict = {}
+
+    @field_validator("formats")
+    @classmethod
+    def _formats(cls, v):
+        from . import profiles as _p
+        v = v or {}
+        if v.get("codec", "") not in _p.CODECS:
+            raise ValueError("codec: " + " | ".join(x or "(none)" for x in _p.CODECS))
+        if v.get("hdr", "") not in _p.HDR:
+            raise ValueError("hdr: " + " | ".join(x or "(none)" for x in _p.HDR))
+        for k in ("prefer_groups", "never_groups", "never_words"):
+            xs = v.get(k) or []
+            if not isinstance(xs, list) or len(xs) > 50 or any(len(str(x)) > 40 for x in xs):
+                raise ValueError(f"{k}: up to 50 entries of up to 40 characters")
+        return _p.formats({"formats": v})
+
     @field_validator("language")
     @classmethod
     def _lang(cls, v):
@@ -975,6 +992,8 @@ def api_profiles_list():
         d = dict(r)
         d["resolutions"] = _json.loads(d.get("resolutions") or "[]")
         d["sources"] = _json.loads(d.get("sources") or "[]")
+        from . import profiles as _p
+        d["formats"] = _p.formats(d)
         out.append(d)
     return {"profiles": out}
 
@@ -984,10 +1003,10 @@ def api_profiles_create(p: ProfileBody):
     import json as _json
     with db.connect() as c:
         cur = c.execute(
-            "INSERT INTO profiles (name, min_seeders, resolutions, sources, max_size_gb, min_size_gb, language) "
-            "VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO profiles (name, min_seeders, resolutions, sources, max_size_gb, min_size_gb, language, formats) "
+            "VALUES (?,?,?,?,?,?,?,?)",
             (p.name, p.min_seeders, _json.dumps(p.resolutions), _json.dumps(p.sources),
-             p.max_size_gb, p.min_size_gb, p.language))
+             p.max_size_gb, p.min_size_gb, p.language, _json.dumps(p.formats)))
         pid = cur.lastrowid
     return {"status": "ok", "id": pid}
 
@@ -1000,9 +1019,9 @@ def api_profiles_update(pid: int, p: ProfileBody):
             raise HTTPException(404, "No such profile")
         c.execute(
             "UPDATE profiles SET name=?, min_seeders=?, resolutions=?, sources=?, "
-            "max_size_gb=?, min_size_gb=?, language=? WHERE id=?",
+            "max_size_gb=?, min_size_gb=?, language=?, formats=? WHERE id=?",
             (p.name, p.min_seeders, _json.dumps(p.resolutions), _json.dumps(p.sources),
-             p.max_size_gb, p.min_size_gb, p.language, pid))
+             p.max_size_gb, p.min_size_gb, p.language, _json.dumps(p.formats), pid))
     return {"status": "ok"}
 
 
