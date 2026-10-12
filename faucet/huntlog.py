@@ -20,7 +20,7 @@ from . import db
 # Rejection buckets, in the order the hunter applies its filters. The keys are
 # stable (the UI maps them to labels); profile reasons are refined below.
 REASONS = ("blocklisted", "wrong_title", "pack", "not_upgrade", "seeders", "size",
-           "resolution", "cam", "language", "profile")
+           "resolution", "cam", "language", "format", "profile")
 
 
 def _ensure(c) -> None:
@@ -55,7 +55,7 @@ def profile_bucket(why: str) -> str:
     w = (why or "").lower()
     for key, bucket in (("seeders", "seeders"), ("size", "size"),
                         ("resolution", "resolution"), ("cam", "cam"),
-                        ("language", "language")):
+                        ("language", "language"), ("format", "format")):
         if w.startswith(key):
             return bucket
     return "profile"

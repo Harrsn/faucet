@@ -586,3 +586,4 @@ body.auth { min-height: 100vh; display: grid; place-items: center; padding: 24px
 .seen-mark svg { width: 14px; height: 14px; stroke-width: 2.6; }
 .ep-row.seen .txt b { color: var(--text-2); }
 .seen-n { color: var(--good-text); }
+.fset.fmt { display: block; padding-top: 10px; } .fset.fmt .form2 { width: 100%; }

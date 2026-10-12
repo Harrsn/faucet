@@ -13,7 +13,7 @@ const view = { tab: "downloads", blFilter: "problems", q: "" };
 const REASONS = {
   blocklisted: "already grabbed", wrong_title: "wrong show", pack: "packs", not_upgrade: "not better",
   seeders: "too few seeders", size: "size", resolution: "resolution", cam: "cam",
-  language: "language", profile: "profile",
+  language: "language", format: "format rules", profile: "profile",
 };
 const STATE = { done: ["have", "done"], problem: ["missing", "problem"], removed: ["skipped", "removed"],
                 pending: ["downloading", "downloading"] };

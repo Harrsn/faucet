@@ -73,7 +73,28 @@ def parse_badges(title: str) -> dict:
         if re.search(pat, t):
             badges["source"] = label
             break
+    badges["codec"] = ("HEVC" if re.search(r"\b(x\.?265|h\.?265|hevc)\b", t)
+                       else "H.264" if re.search(r"\b(x\.?264|h\.?264|avc)\b", t)
+                       else "AV1" if re.search(r"\bav1\b", t) else None)
+    badges["hdr"] = bool(re.search(r"\b(hdr|hdr10|hdr10\+|hdr10plus|dv|dovi|dolby[ .]?vision)\b", t))
+    badges["group"] = release_group(title)
     return badges
+
+
+def release_group(title: str) -> str | None:
+    """The release group: the '-GROUP' at the end of a scene name, before any
+    extension or tracker tag. 'Show.S01E01.1080p.WEB.h264-ETHEL[eztv.re].mkv'
+    → 'ETHEL'."""
+    t = re.sub(r"\.(mkv|mp4|avi|m4v|ts)$", "", (title or "").strip(), flags=re.I)
+    t = re.sub(r"(\s*[\[(][^\])]*[\])])+$", "", t)
+    m = re.search(r"-\s*([A-Za-z0-9][A-Za-z0-9_.]{1,24})$", t)
+    if not m:
+        return None
+    g = m.group(1).rstrip(".")
+    # resolution / codec tokens aren't groups ('…-1080p', 'WEB-DL')
+    if re.fullmatch(r"(?i)\d{3,4}p|dl|rip|x26[45]|h26[45]|hevc|avc", g):
+        return None
+    return g
 
 
 def torznab_error(body: bytes) -> str:

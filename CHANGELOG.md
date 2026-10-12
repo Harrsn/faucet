@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (Phase 10)
+## 2.6.0 — 2026-10-12
 
 ### Added
 
@@ -14,6 +14,18 @@
   and upgrades are never relaxed. Grab history notes "long-missing, accepted
   down to 1 seeder". Settings → Hunting → *Hard-to-find episodes* (on by
   default; thresholds adjustable).
+- **Preferred-format rules** in quality profiles (Settings → Quality
+  profiles → *Formats*): codec (prefer HEVC/x265 for smaller files or
+  H.264/x264 for players that can't decode HEVC, or either *only*), HDR
+  (prefer, avoid or never), preferred release groups, never-from groups, and
+  never-with words (`HC`, `KORSUB`, `DUBBED`…, whole words only). "Prefer"
+  ranks a release higher — enough to beat a better source, never a better
+  resolution; "only"/"never" refuses the rest with the reason shown in
+  release search and the hunt log ("format rules"). Releases are now parsed
+  for codec, HDR and release group. `formats` on `/api/profiles`.
+- Episode-order mapping was dropped from the plan: TMDb and TVDB number all
+  399 American Dad episodes identically — its gaps were thin seeding, which
+  the change above addresses.
 
 ## 2.5.0 — 2026-10-11
 
