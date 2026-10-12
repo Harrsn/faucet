@@ -171,3 +171,9 @@ $("auth-form").addEventListener("submit", async (e) => {
   }
   (firstRun || mode !== "reset" ? $("username") : $("password")).focus();
 })();
+
+// installable app: register the service worker (fast loads of the hashed
+// assets, an offline page; and, later, push notifications)
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {});
+}

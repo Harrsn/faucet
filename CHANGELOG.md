@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased (Phase 11)
+
+### Added
+
+- **Install Faucet as an app.** A web app manifest and icons (a regular one,
+  a maskable one Android crops to its own shape, and an Apple touch icon)
+  make it installable: *Add to Home Screen* on a phone, or the install
+  button in Chrome/Edge — it opens full-screen with its own icon, and
+  long-pressing the icon offers Calendar, Requests and Activity. A small
+  service worker serves the content-hashed scripts, styles and icons from a
+  cache (each deploy gets a fresh one) and shows an "offline" page instead
+  of the browser's error when the server can't be reached; the API is never
+  cached. `GET /manifest.webmanifest`, `GET /sw.js`.
+
 ## 2.6.0 — 2026-10-12
 
 ### Added

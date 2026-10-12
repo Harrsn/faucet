@@ -84,7 +84,7 @@ app.include_router(_auth_routes.router)
 # Paths reachable without a session. Everything else requires login. This is
 # fail-closed: any new route is protected by default unless added here.
 _PUBLIC_PREFIXES = ("/static/", "/app/", "/favicon", "/login", "/register", "/reset",
-                    "/api/auth/", "/health", "/cal/")
+                    "/api/auth/", "/health", "/cal/", "/sw.js", "/manifest.webmanifest")
 
 
 def _is_public(path: str) -> bool:
@@ -2554,7 +2554,7 @@ def index():
 
 
 _ASSET_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
-                ".json": "application/json", ".svg": "image/svg+xml"}
+                ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png"}
 
 
 @app.get("/app/{version}/{path:path}")
@@ -2578,6 +2578,37 @@ def _shell(name: str):
         raise HTTPException(404, "UI not installed.")
     body = f.read_text().replace("/static/app/", f"/app/{ASSET_VERSION}/")
     return HTMLResponse(body, headers=_NO_STORE)
+
+
+@app.get("/manifest.webmanifest")
+def web_manifest():
+    """Makes Faucet installable ("Add to Home Screen"): its own icon, opens
+    full-screen. Icons come from the content-hashed asset path."""
+    from fastapi.responses import JSONResponse as _J
+    v = f"/app/{ASSET_VERSION}/icons"
+    return _J({
+        "id": "/", "name": "Faucet", "short_name": "Faucet",
+        "description": "Your shows and movies — hunted, downloaded, sorted and requested.",
+        "start_url": "/", "scope": "/", "display": "standalone", "orientation": "any",
+        "background_color": "#0E1013", "theme_color": "#0E1013",
+        "icons": [{"src": f"{v}/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+                  {"src": f"{v}/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+                  {"src": f"{v}/icon-maskable-512.png", "sizes": "512x512", "type": "image/png",
+                   "purpose": "maskable"}],
+        "shortcuts": [{"name": "Calendar", "url": "/#/calendar"},
+                      {"name": "Requests", "url": "/#/requests"},
+                      {"name": "Activity", "url": "/#/activity"}],
+    }, media_type="application/manifest+json", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/sw.js")
+def service_worker():
+    """The service worker must be served from the root to control the whole
+    app; never cached, so a deploy's new version is picked up straight away."""
+    from fastapi.responses import Response as _R
+    body = (STATIC / "app" / "sw.js").read_text().replace("__ASSET_VERSION__", ASSET_VERSION)
+    return _R(body, media_type="text/javascript; charset=utf-8",
+              headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
 
 
 @app.post("/login")
