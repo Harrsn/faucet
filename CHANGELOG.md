@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased (Phase 10)
+
+### Added
+
+- **Hard-to-find episodes get found.** Old episodes are often only on
+  releases with a seeder or two — below a quality profile's minimum — so
+  every search found them and turned them all down, indefinitely (most of
+  American Dad's missing seasons 2–10 episodes). Once an episode aired at
+  least 7 days ago and has been searched 4 times without a grab, the hunter
+  accepts releases down to 1 seeder. Better-seeded releases still win, a
+  grab that never starts is dropped and blocklisted by the stall handler,
+  and upgrades are never relaxed. Grab history notes "long-missing, accepted
+  down to 1 seeder". Settings → Hunting → *Hard-to-find episodes* (on by
+  default; thresholds adjustable).
+
 ## 2.5.0 — 2026-10-11
 
 ### Added
