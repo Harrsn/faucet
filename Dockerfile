@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.15-slim
 
 # guessit needs nothing exotic; keep the image lean
 WORKDIR /app
